@@ -137,24 +137,23 @@
   }
   .week-count-selector{
     display: flex;
-    gap: 10px;
-    margin-bottom: 6px;
+    gap: 4px;
+    margin-left: auto;
   }
   .week-count-btn{
-    flex: 1;
     border: 1px solid var(--line);
-    background: #fdfcf9;
-    color: var(--main-dark);
-    font-weight: bold;
-    font-size: 0.92rem;
-    padding: 12px;
-    border-radius: 10px;
+    background: transparent;
+    color: #999;
+    font-weight: normal;
+    font-size: 0.72rem;
+    padding: 3px 8px;
+    border-radius: 100px;
     cursor: pointer;
   }
   .week-count-btn.active{
-    background: var(--main);
-    color: #fff;
-    border-color: var(--main);
+    background: #e2ddd0;
+    color: #777;
+    border-color: #e2ddd0;
   }
   .day-row{
     border: 1px solid var(--line);
@@ -291,11 +290,13 @@
     </section>
 
     <section>
-      <h2>参加可能個数の入力</h2>
-      <div class="week-count-selector" id="weekCountSelector">
-        <button type="button" class="week-count-btn" data-weeks="2">2週間分</button>
-        <button type="button" class="week-count-btn" data-weeks="3">3週間分</button>
-      </div>
+      <h2>
+        参加可能個数の入力
+        <span class="week-count-selector" id="weekCountSelector">
+          <button type="button" class="week-count-btn" data-weeks="2">2週間分</button>
+          <button type="button" class="week-count-btn" data-weeks="3">3週間分</button>
+        </span>
+      </h2>
       <div id="weeksArea"></div>
     </section>
 
