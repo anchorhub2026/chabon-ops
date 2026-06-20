@@ -359,7 +359,7 @@
   <div class="thanks-box" id="thanksBox" style="display:none;">
     <div class="icon">🍙</div>
     <h2>ありがとうございました！</h2>
-    <p>ニギニギ希望を受け付けました。</p>
+    <p>シフト希望を受け付けました。</p>
     <span class="reset-link" id="resetLink">もう一度入力する</span>
   </div>
 
@@ -529,13 +529,13 @@ form.addEventListener("submit", async (e) => {
   });
   const remarks = document.getElementById("remarks").value;
 
-  const neededItems = Array.from(document.querySelectorAll('input[name="item"]:checked')).map(cb => {
+  const supplyItems = Array.from(document.querySelectorAll('input[name="item"]:checked')).map(cb => {
     const qty = parseInt(cb.closest(".item-check").querySelector(".item-qty").value, 10) || 1;
     return `${cb.value}×${qty}`;
   });
   if(itemOtherCheck.checked && itemOtherText.value.trim()){
     const qty = parseInt(itemOtherQty.value, 10) || 1;
-    neededItems.push(`${itemOtherText.value.trim()}×${qty}`);
+    supplyItems.push(`${itemOtherText.value.trim()}×${qty}`);
   }
 
   const submitBtn = document.getElementById("submitBtn");
@@ -551,7 +551,7 @@ form.addEventListener("submit", async (e) => {
         name,
         entries,
         note: remarks,
-        neededItems: neededItems.join("、"),
+        supplies: supplyItems.join("、"),
         submittedAt: new Date().toISOString(),
       }),
     });
