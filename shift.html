@@ -1,0 +1,578 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>シフト入力｜Chabon Ops</title>
+<style>
+  :root{
+    --main: #4a7c59;
+    --main-dark: #335c3e;
+    --main-light: #e9f1ea;
+    --accent: #c9533f;
+    --bg: #faf8f3;
+    --card: #ffffff;
+    --ink: #2b2b28;
+    --line: #e2ddd0;
+  }
+  *{box-sizing:border-box;}
+  body{
+    margin:0;
+    font-family: "Hiragino Sans", "Yu Gothic", "Noto Sans JP", sans-serif;
+    background: var(--bg);
+    color: var(--ink);
+    line-height: 1.6;
+  }
+  header{
+    background: var(--main);
+    color: #fff;
+    padding: 22px 16px;
+    text-align: center;
+    position: relative;
+    overflow: hidden;
+  }
+  header::after{
+    content:"";
+    position:absolute;
+    inset:0;
+    background: repeating-linear-gradient(135deg, rgba(255,255,255,0.05) 0 8px, transparent 8px 16px);
+  }
+  .logo{
+    position: relative;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+  }
+  .logo-img{
+    height: 60px;
+    width: auto;
+    display: block;
+  }
+  header h1{
+    margin:0;
+    font-size: 1.4rem;
+    letter-spacing: 0.06em;
+  }
+  header p{
+    margin: 6px 0 0;
+    font-size: 0.85rem;
+    opacity: 0.9;
+    position: relative;
+  }
+  nav.back-link{
+    position: relative;
+    margin-top: 10px;
+  }
+  nav.back-link a{
+    color: #fff;
+    font-size: 0.78rem;
+    opacity: 0.85;
+    text-decoration: none;
+    border-bottom: 1px dotted rgba(255,255,255,0.6);
+  }
+  main{
+    max-width: 640px;
+    margin: 0 auto;
+    padding: 18px 14px 60px;
+  }
+  section{
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: 14px;
+    padding: 18px;
+    margin-bottom: 18px;
+    box-shadow: 0 2px 6px rgba(0,0,0,0.03);
+  }
+  section h2{
+    margin: 0 0 14px;
+    font-size: 1.05rem;
+    color: var(--main-dark);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    border-bottom: 2px solid var(--main-light);
+    padding-bottom: 8px;
+  }
+  label{
+    display: block;
+    font-weight: bold;
+    font-size: 0.92rem;
+    color: var(--main-dark);
+    margin-bottom: 6px;
+  }
+  select, textarea{
+    width: 100%;
+    font-size: 1rem;
+    padding: 12px;
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    background: #fdfcf9;
+    color: var(--ink);
+    font-family: inherit;
+  }
+  textarea{
+    min-height: 90px;
+    resize: vertical;
+  }
+  .name-field{ margin-bottom: 4px; }
+  .week-block{ margin-bottom: 22px; }
+  .week-block:last-child{ margin-bottom: 0; }
+  .week-title{
+    font-weight: bold;
+    color: var(--main-dark);
+    font-size: 0.98rem;
+    margin-bottom: 10px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .week-title .badge{
+    font-size: 0.65rem;
+    background: var(--main-light);
+    color: var(--main-dark);
+    padding: 2px 8px;
+    border-radius: 100px;
+    font-weight: normal;
+  }
+  .week-count-selector{
+    display: flex;
+    gap: 10px;
+    margin-bottom: 6px;
+  }
+  .week-count-btn{
+    flex: 1;
+    border: 1px solid var(--line);
+    background: #fdfcf9;
+    color: var(--main-dark);
+    font-weight: bold;
+    font-size: 0.92rem;
+    padding: 12px;
+    border-radius: 10px;
+    cursor: pointer;
+  }
+  .week-count-btn.active{
+    background: var(--main);
+    color: #fff;
+    border-color: var(--main);
+  }
+  .day-row{
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 12px;
+    margin-bottom: 10px;
+    background: #fdfcf9;
+  }
+  .day-row .day-date{
+    font-weight: bold;
+    font-size: 0.95rem;
+    color: var(--ink);
+    margin-bottom: 8px;
+  }
+  .other-input{
+    margin-top: 8px;
+  }
+  .items-grid{
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 10px;
+  }
+  .item-check{
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 12px;
+    background: #fdfcf9;
+    font-size: 0.95rem;
+    cursor: pointer;
+    flex-wrap: wrap;
+  }
+  .item-check input[type=checkbox]{
+    width: 24px;
+    height: 24px;
+    accent-color: var(--main);
+    flex-shrink: 0;
+  }
+  .item-name{ flex: 1; }
+  .item-qty{
+    display: none;
+    width: 56px;
+    padding: 8px;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    font-size: 0.95rem;
+    text-align: center;
+  }
+  .item-check.other-check{
+    grid-column: 1 / -1;
+  }
+  .item-other-input{
+    flex: 1 1 100%;
+    margin-top: 4px;
+    display: none;
+  }
+  .submit-btn{
+    width: 100%;
+    border: none;
+    border-radius: 12px;
+    background: var(--main);
+    color: #fff;
+    font-size: 1.1rem;
+    font-weight: bold;
+    padding: 16px;
+    cursor: pointer;
+    margin-top: 6px;
+  }
+  .submit-btn:active{ background: var(--main-dark); }
+  .remarks-section{ margin-top: 0; }
+  .thanks-box{
+    text-align: center;
+    padding: 40px 16px;
+  }
+  .thanks-box .icon{ font-size: 3rem; margin-bottom: 12px; }
+  .thanks-box h2{
+    border-bottom: none;
+    justify-content: center;
+    font-size: 1.3rem;
+    color: var(--main-dark);
+  }
+  .thanks-box p{ color: #666; font-size: 0.9rem; }
+  .reset-link{
+    display: inline-block;
+    margin-top: 16px;
+    color: var(--main-dark);
+    font-size: 0.88rem;
+    text-decoration: underline;
+    cursor: pointer;
+  }
+  .error-msg{
+    color: var(--accent);
+    font-size: 0.85rem;
+    margin-top: 8px;
+    display: none;
+  }
+  footer{
+    text-align:center;
+    font-size: 0.78rem;
+    color: #999;
+    padding: 20px 0 40px;
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="logo">
+    <img src="./chabon-logo.png" alt="CHABON STAND" class="logo-img">
+    <h1>CHABON STAND</h1>
+  </div>
+  <p>ニギニギ希望入力フォーム</p>
+  <nav class="back-link"><a href="index.html">← トップページへ戻る</a></nav>
+</header>
+
+<main>
+
+  <form id="shiftForm">
+    <section>
+      <h2>お名前</h2>
+      <div class="name-field">
+        <label for="nameSelect">ニギニギ隊メンバー</label>
+        <select id="nameSelect" required>
+          <option value="" disabled selected>選択してください</option>
+          <option value="YUMI">YUMI</option>
+          <option value="MARI">MARI</option>
+          <option value="CHIKAKO">CHIKAKO</option>
+          <option value="YUKARI">YUKARI</option>
+          <option value="MIKI">MIKI</option>
+        </select>
+      </div>
+    </section>
+
+    <section>
+      <h2>参加可能個数の入力</h2>
+      <div class="week-count-selector" id="weekCountSelector">
+        <button type="button" class="week-count-btn" data-weeks="2">2週間分</button>
+        <button type="button" class="week-count-btn" data-weeks="3">3週間分</button>
+      </div>
+      <div id="weeksArea"></div>
+    </section>
+
+    <section>
+      <h2>必要な物品</h2>
+      <div class="items-grid">
+        <label class="item-check">
+          <input type="checkbox" name="item" value="お米" class="item-checkbox">
+          <span class="item-name">お米</span>
+          <input type="number" class="item-qty" min="1" value="1">
+        </label>
+        <label class="item-check">
+          <input type="checkbox" name="item" value="海苔" class="item-checkbox">
+          <span class="item-name">海苔</span>
+          <input type="number" class="item-qty" min="1" value="1">
+        </label>
+        <label class="item-check">
+          <input type="checkbox" name="item" value="塩" class="item-checkbox">
+          <span class="item-name">塩</span>
+          <input type="number" class="item-qty" min="1" value="1">
+        </label>
+        <label class="item-check">
+          <input type="checkbox" name="item" value="お酢" class="item-checkbox">
+          <span class="item-name">お酢</span>
+          <input type="number" class="item-qty" min="1" value="1">
+        </label>
+        <label class="item-check">
+          <input type="checkbox" name="item" value="サランラップ" class="item-checkbox">
+          <span class="item-name">サランラップ</span>
+          <input type="number" class="item-qty" min="1" value="1">
+        </label>
+        <label class="item-check">
+          <input type="checkbox" name="item" value="テープ" class="item-checkbox">
+          <span class="item-name">テープ</span>
+          <input type="number" class="item-qty" min="1" value="1">
+        </label>
+        <label class="item-check">
+          <input type="checkbox" name="item" value="手袋" class="item-checkbox">
+          <span class="item-name">手袋</span>
+          <input type="number" class="item-qty" min="1" value="1">
+        </label>
+        <label class="item-check other-check">
+          <input type="checkbox" id="itemOtherCheck">
+          <span class="item-name">その他</span>
+          <input type="number" class="item-qty" id="itemOtherQty" min="1" value="1">
+          <input type="text" id="itemOtherText" class="item-other-input" placeholder="物品名を入力してください">
+        </label>
+      </div>
+    </section>
+
+    <section class="remarks-section">
+      <h2>備考</h2>
+      <textarea id="remarks" placeholder="連絡事項があればご記入ください"></textarea>
+    </section>
+
+    <button type="submit" class="submit-btn" id="submitBtn">送信する</button>
+    <p class="error-msg" id="errorMsg">お名前を選択してください。</p>
+  </form>
+
+  <div class="thanks-box" id="thanksBox" style="display:none;">
+    <div class="icon">🍙</div>
+    <h2>ありがとうございました！</h2>
+    <p>シフト希望を受け付けました。</p>
+    <span class="reset-link" id="resetLink">もう一度入力する</span>
+  </div>
+
+</main>
+
+<footer>Chabon Ops — Amsterdam Onigiri Truck</footer>
+
+<script>
+// TODO: シフト回答用スプレッドシート（1PHf1o3smqIQdeFkhBHjBZUEub7VtRcynQLllmSR7w-s）に
+// 紐づけたApps Script（Code.gs）のウェブアプリ公開URLに置き換えてください
+const SCRIPT_URL = "https://script.google.com/macros/s/AKfycbweaUIbjtiCj9mpbiklQjgmDT3OEZRtC4g8ZTjGlVT944-zpGD_Gp0x3W_xa_CV4uLN/exec";
+
+const DAY_NAMES = ["日","月","火","水","木","金","土"];
+const QTY_OPTIONS = ["希望しない", "30個", "45個", "60個", "その他（自由入力）"];
+
+function getMonday(date){
+  const d = new Date(date);
+  const day = d.getDay();
+  const diff = day === 0 ? -6 : 1 - day;
+  d.setDate(d.getDate() + diff);
+  d.setHours(0, 0, 0, 0);
+  return d;
+}
+
+function getWeekDates(weekOffset){
+  const thisMonday = getMonday(new Date());
+  const targetMonday = new Date(thisMonday);
+  targetMonday.setDate(thisMonday.getDate() + weekOffset * 7);
+  const dates = [];
+  for(let i = 0; i < 5; i++){
+    const d = new Date(targetMonday);
+    d.setDate(targetMonday.getDate() + i);
+    dates.push(d);
+  }
+  return dates;
+}
+
+function formatDateLabel(d){
+  return `${d.getMonth() + 1}/${d.getDate()} ${DAY_NAMES[d.getDay()]}曜日`;
+}
+
+// 表示用の短い日付ラベル（例：6/29（月））
+function shortDateLabel(d){
+  return `${d.getMonth() + 1}/${d.getDate()}（${DAY_NAMES[d.getDay()]}）`;
+}
+
+function dateKey(d){
+  return `${d.getFullYear()}-${d.getMonth() + 1}-${d.getDate()}`;
+}
+
+function mdLabel(d){
+  return `${d.getMonth() + 1}/${d.getDate()}`;
+}
+
+function dayNameLabel(d){
+  return `${DAY_NAMES[d.getDay()]}曜日`;
+}
+
+function qtyOptionsHtml(){
+  return QTY_OPTIONS.map(q => `<option value="${q}">${q}</option>`).join("");
+}
+
+let weekCount = 2; // デフォルト2週間分
+
+function renderWeeks(){
+  const area = document.getElementById("weeksArea");
+
+  // 起点は「再来週月曜日」（今週の月曜＋14日）。選択した週数分、そこから続けて表示する。
+  const weeks = [];
+  for(let i = 0; i < weekCount; i++){
+    const dates = getWeekDates(2 + i);
+    const first = dates[0];
+    const last = dates[dates.length - 1];
+    weeks.push({
+      title: `第${i + 1}週`,
+      badge: `${first.getMonth() + 1}/${first.getDate()}〜${last.getMonth() + 1}/${last.getDate()}`,
+      dates,
+    });
+  }
+
+  area.innerHTML = weeks.map((week, wi) => `
+    <div class="week-block">
+      <div class="week-title">${week.title}<span class="badge">${week.badge}</span></div>
+      ${week.dates.map(d => `
+        <div class="day-row">
+          <div class="day-date">${shortDateLabel(d)}</div>
+          <select class="qty-select" data-week="${wi}" data-date="${dateKey(d)}" data-label="${formatDateLabel(d)}" data-md="${mdLabel(d)}" data-dayname="${dayNameLabel(d)}">
+            ${qtyOptionsHtml()}
+          </select>
+          <input type="number" class="other-input" placeholder="例：75、90 など" min="0" style="display:none;">
+        </div>
+      `).join("")}
+    </div>
+  `).join("");
+
+  area.querySelectorAll(".qty-select").forEach(sel => {
+    sel.addEventListener("change", () => {
+      const otherInput = sel.nextElementSibling;
+      if(sel.value === "その他（自由入力）"){
+        otherInput.style.display = "block";
+      } else {
+        otherInput.style.display = "none";
+        otherInput.value = "";
+      }
+    });
+  });
+}
+
+function renderWeekCountButtons(){
+  document.querySelectorAll(".week-count-btn").forEach(btn => {
+    btn.classList.toggle("active", parseInt(btn.dataset.weeks, 10) === weekCount);
+  });
+}
+
+document.querySelectorAll(".week-count-btn").forEach(btn => {
+  btn.addEventListener("click", () => {
+    weekCount = parseInt(btn.dataset.weeks, 10);
+    renderWeekCountButtons();
+    renderWeeks();
+  });
+});
+
+renderWeekCountButtons();
+renderWeeks();
+
+document.querySelectorAll(".item-checkbox").forEach(cb => {
+  cb.addEventListener("change", () => {
+    const qtyInput = cb.closest(".item-check").querySelector(".item-qty");
+    qtyInput.style.display = cb.checked ? "inline-block" : "none";
+  });
+});
+
+const itemOtherCheck = document.getElementById("itemOtherCheck");
+const itemOtherText = document.getElementById("itemOtherText");
+const itemOtherQty = document.getElementById("itemOtherQty");
+itemOtherCheck.addEventListener("change", () => {
+  const show = itemOtherCheck.checked;
+  itemOtherText.style.display = show ? "block" : "none";
+  itemOtherQty.style.display = show ? "inline-block" : "none";
+  if(!show){
+    itemOtherText.value = "";
+    itemOtherQty.value = 1;
+  }
+});
+
+const form = document.getElementById("shiftForm");
+const thanksBox = document.getElementById("thanksBox");
+const errorMsg = document.getElementById("errorMsg");
+
+form.addEventListener("submit", async (e) => {
+  e.preventDefault();
+
+  const name = document.getElementById("nameSelect").value;
+  if(!name){
+    errorMsg.style.display = "block";
+    return;
+  }
+  errorMsg.style.display = "none";
+
+  const entries = Array.from(document.querySelectorAll("#weeksArea .qty-select")).map(sel => {
+    let qty = sel.value;
+    if(qty === "その他（自由入力）"){
+      const otherInput = sel.nextElementSibling;
+      qty = otherInput.value ? `${otherInput.value}個` : "その他（未入力）";
+    }
+    return { date: sel.dataset.md, day: sel.dataset.dayname, count: qty };
+  });
+  const remarks = document.getElementById("remarks").value;
+
+  const neededItems = Array.from(document.querySelectorAll('input[name="item"]:checked')).map(cb => {
+    const qty = parseInt(cb.closest(".item-check").querySelector(".item-qty").value, 10) || 1;
+    return `${cb.value}×${qty}`;
+  });
+  if(itemOtherCheck.checked && itemOtherText.value.trim()){
+    const qty = parseInt(itemOtherQty.value, 10) || 1;
+    neededItems.push(`${itemOtherText.value.trim()}×${qty}`);
+  }
+
+  const submitBtn = document.getElementById("submitBtn");
+  submitBtn.disabled = true;
+  submitBtn.textContent = "送信中...";
+
+  try{
+    await fetch(SCRIPT_URL, {
+      method: "POST",
+      mode: "no-cors",
+      body: JSON.stringify({
+        type: "shiftSubmit",
+        name,
+        entries,
+        note: remarks,
+        neededItems: neededItems.join("、"),
+        submittedAt: new Date().toISOString(),
+      }),
+    });
+  }catch(err){
+    console.error(err);
+  }
+
+  form.style.display = "none";
+  thanksBox.style.display = "block";
+});
+
+document.getElementById("resetLink").addEventListener("click", () => {
+  form.reset();
+  itemOtherText.style.display = "none";
+  itemOtherQty.style.display = "none";
+  document.querySelectorAll(".item-qty").forEach(q => { q.style.display = "none"; q.value = 1; });
+  document.getElementById("submitBtn").disabled = false;
+  document.getElementById("submitBtn").textContent = "送信する";
+  thanksBox.style.display = "none";
+  form.style.display = "block";
+});
+</script>
+
+</body>
+</html>

@@ -1,0 +1,1082 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>管理画面｜Chabon Ops</title>
+<style>
+  :root{
+    --main: #4a7c59;
+    --main-dark: #335c3e;
+    --main-light: #e9f1ea;
+    --accent: #c9533f;
+    --bg: #faf8f3;
+    --card: #ffffff;
+    --ink: #2b2b28;
+    --line: #e2ddd0;
+    --admin-dark: #233b2c;
+  }
+  *{box-sizing:border-box;}
+  body{
+    margin:0;
+    font-family: "Hiragino Sans", "Yu Gothic", "Noto Sans JP", sans-serif;
+    background: var(--bg);
+    color: var(--ink);
+    line-height: 1.6;
+  }
+  header{
+    background: var(--admin-dark);
+    color: #fff;
+    padding: 20px 16px;
+    text-align: center;
+  }
+  header h1{ margin: 0; font-size: 1.3rem; letter-spacing: 0.05em; }
+  header p{ margin: 6px 0 0; font-size: 0.82rem; opacity: 0.85; }
+  .header-nav{ margin-top: 12px; }
+  .header-nav a{
+    display: inline-block;
+    background: rgba(255,255,255,0.12);
+    color: #fff;
+    text-decoration: none;
+    font-size: 0.8rem;
+    font-weight: bold;
+    padding: 7px 16px;
+    border-radius: 100px;
+    border: 1px solid rgba(255,255,255,0.3);
+    margin: 0 4px;
+  }
+  main{
+    max-width: 1080px;
+    margin: 0 auto;
+    padding: 18px 14px 60px;
+  }
+  section{
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: 14px;
+    padding: 18px;
+    margin-bottom: 18px;
+    box-shadow: 0 2px 6px rgba(0,0,0,0.03);
+  }
+  section h2{
+    margin: 0 0 14px;
+    font-size: 1.05rem;
+    color: var(--main-dark);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    border-bottom: 2px solid var(--main-light);
+    padding-bottom: 8px;
+  }
+  section h2 .badge{
+    font-size: 0.65rem;
+    background: var(--main-light);
+    color: var(--main-dark);
+    padding: 2px 8px;
+    border-radius: 100px;
+    font-weight: normal;
+  }
+  .loading{ color: #999; font-size: 0.9rem; }
+  .off-note{ color:#999; font-size: 0.85rem; }
+
+  /* 週ブロック */
+  .week-group{ margin-bottom: 26px; }
+  .week-group:last-child{ margin-bottom: 0; }
+  .week-heading{
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 12px;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+  .week-heading h3{
+    margin: 0;
+    font-size: 1rem;
+    color: var(--main-dark);
+  }
+  .confirm-week-btn{
+    border: none;
+    border-radius: 100px;
+    background: var(--main);
+    color: #fff;
+    font-weight: bold;
+    font-size: 0.85rem;
+    padding: 9px 18px;
+    cursor: pointer;
+  }
+  .confirm-week-btn:active{ background: var(--main-dark); }
+  .week-status-msg{
+    font-size: 0.78rem;
+    color: var(--main-dark);
+    margin-left: 6px;
+  }
+
+  .day-cards{
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+    gap: 12px;
+  }
+  .day-card{
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    padding: 12px;
+    background: #fdfcf9;
+  }
+  .day-card .day-head{
+    font-weight: bold;
+    color: var(--main-dark);
+    font-size: 0.95rem;
+    margin-bottom: 6px;
+  }
+  .day-card .day-weather{
+    font-size: 0.82rem;
+    color: #666;
+    margin-bottom: 8px;
+  }
+  .store-label-row{
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin: 10px 0 4px;
+  }
+  .store-label-row:first-of-type{ margin-top: 0; }
+  .store-label{
+    font-weight: bold;
+    font-size: 0.82rem;
+    color: var(--main-dark);
+  }
+  .store-toggle-btn{
+    border: none;
+    border-radius: 100px;
+    font-size: 0.72rem;
+    font-weight: bold;
+    padding: 4px 12px;
+    cursor: pointer;
+  }
+  .store-toggle-btn.on{ background: var(--main); color: #fff; }
+  .store-toggle-btn.off{ background: #ddd5c5; color: #777; }
+  table.filling-input-table{
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.76rem;
+    margin-bottom: 4px;
+  }
+  table.filling-input-table th, table.filling-input-table td{
+    border-bottom: 1px solid var(--line);
+    padding: 4px 3px;
+    text-align: left;
+  }
+  table.filling-input-table th{ color: #888; font-weight: normal; }
+  table.filling-input-table td:nth-child(2){ color: #888; }
+  table.filling-input-table tfoot td{ font-weight: bold; color: var(--main-dark); border-bottom: none; padding-top: 6px; }
+  table.filling-input-table.is-closed{ opacity: 0.45; }
+  .filling-qty-input{
+    width: 46px;
+    padding: 4px;
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    font-size: 0.8rem;
+    text-align: center;
+  }
+  .filling-qty-input:disabled{ background: #eee; color: #aaa; }
+  .day-divider{
+    border-top: 1px dashed var(--line);
+    margin: 8px 0;
+    padding-top: 8px;
+  }
+  .day-meta{ font-size: 0.78rem; color: #777; }
+  .day-meta strong{ color: var(--ink); }
+  .grand-total-line{
+    font-size: 0.85rem;
+    color: var(--main-dark);
+    font-weight: bold;
+    margin-top: 4px;
+  }
+  .readonly-tag{
+    font-size: 0.7rem;
+    color: #999;
+    margin-left: 4px;
+  }
+
+  /* 最終生産割り振り */
+  .week-heading-simple{
+    font-size: 1rem;
+    color: var(--main-dark);
+    margin: 0 0 12px;
+  }
+  .prod-card{
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    padding: 12px;
+    background: #fdfcf9;
+    margin-bottom: 14px;
+  }
+  .prod-card .fd-head{
+    font-weight: bold;
+    color: var(--main-dark);
+    margin-bottom: 8px;
+    font-size: 0.9rem;
+  }
+  .prod-row{
+    border-top: 1px dashed var(--line);
+    padding: 8px 0;
+  }
+  .prod-row:first-of-type{ border-top: none; }
+  .prod-row-head{ font-weight: bold; font-size: 0.85rem; color: var(--ink); margin-bottom: 4px; }
+  .prod-row-body{ margin-bottom: 4px; }
+  .prod-row-foot{ font-size: 0.8rem; color: #666; }
+  .prod-summary{
+    font-size: 0.82rem;
+    color: #555;
+    background: var(--main-light);
+    border-radius: 8px;
+    padding: 8px 10px;
+    margin-bottom: 10px;
+  }
+  .prod-summary div{ margin-bottom: 2px; }
+  .warning-line{
+    color: var(--accent);
+    font-weight: bold;
+    margin-top: 4px;
+  }
+
+  /* シフト一覧テーブル */
+  #shiftTableArea{ overflow-x: auto; }
+  #shiftTableArea table{ width: 100%; border-collapse: collapse; font-size: 0.82rem; min-width: 760px; }
+  #shiftTableArea th, #shiftTableArea td{
+    border-bottom: 1px solid var(--line);
+    padding: 8px 6px;
+    text-align: center;
+    vertical-align: top;
+  }
+  #shiftTableArea th{ background: var(--main-light); color: var(--main-dark); }
+  #shiftTableArea td:first-child, #shiftTableArea th:first-child{ text-align: left; }
+  .submitted-qty{ font-size: 0.74rem; color: #888; margin-bottom: 4px; }
+  .manual-input{
+    width: 64px;
+    padding: 5px;
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    font-size: 0.82rem;
+    text-align: center;
+  }
+
+  /* 具材割り振り（カード内に統合） */
+  .pill{
+    display:inline-block;
+    background: var(--main-light);
+    color: var(--main-dark);
+    border-radius: 100px;
+    padding: 2px 10px;
+    font-size: 0.78rem;
+    margin: 2px 3px 2px 0;
+  }
+  .member-line{ font-size: 0.84rem; margin-bottom: 6px; }
+  .member-line strong{ color: var(--ink); }
+
+  footer{
+    text-align:center;
+    font-size: 0.78rem;
+    color: #999;
+    padding: 20px 0 40px;
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>🔧 Chabon Ops 管理画面</h1>
+  <p>松木さん専用ダッシュボード</p>
+  <nav class="header-nav">
+    <a href="index.html">← スタッフ画面</a>
+    <a href="shift.html">シフト入力</a>
+  </nav>
+</header>
+
+<main>
+
+  <section>
+    <h2>販売予測数<span class="badge">来週・再来週 月〜木</span></h2>
+    <div id="calendarArea"><p class="loading">データを読み込み中...</p></div>
+  </section>
+
+  <section>
+    <h2>ニギニギ隊シフト希望一覧</h2>
+    <div id="shiftTableArea"><p class="loading">データを読み込み中...</p></div>
+  </section>
+
+  <section>
+    <h2>最終生産割り振り<span class="badge">本部分は自動算出</span></h2>
+    <div id="productionArea"><p class="loading">データを読み込み中...</p></div>
+  </section>
+
+</main>
+
+<footer>Chabon Ops — Amsterdam Onigiri Truck（管理画面）</footer>
+
+<script>
+const LAT = 52.3676, LON = 4.9041;
+const SPREADSHEET_ID = "1rQtRUSP5e7qOjnT4RPvMGfWrEFcFL89AsLe8cjGIW4U"; // チセさんの生産データ
+const SHIFT_SPREADSHEET_ID = "1PHf1o3smqIQdeFkhBHjBZUEub7VtRcynQLllmSR7w-s"; // シフト回答／確定プラン
+// TODO: シフト回答用スプレッドシートに紐づけたApps Script（Code.gs）のウェブアプリ公開URLに置き換えてください
+const SCRIPT_URL = "https://script.google.com/macros/s/AKfycbweaUIbjtiCj9mpbiklQjgmDT3OEZRtC4g8ZTjGlVT944-zpGD_Gp0x3W_xa_CV4uLN/exec";
+
+const DAY_NAMES = ["日","月","火","水","木","金","土"];
+const MEMBERS = ["YUMI", "MARI", "CHIKAKO", "YUKARI", "MIKI"];
+const FILLINGS = ["ツナマヨ","スパイシーツナマヨ","テリヤキチキン","サーモン","スパイシー味噌","枝豆","梅"];
+const FILLING_RATIOS = {
+  "スパイシーツナマヨ": 0.25,
+  "テリヤキチキン": 0.22,
+  "サーモン": 0.22,
+  "ツナマヨ": 0.15,
+  "スパイシー味噌": 0.10,
+  "枝豆": 0.04,
+  "梅": 0.02,
+};
+const ZUID_SEASON_BASE = {
+  winter: { 1: 90, 2: 110, 3: 100, 4: 110 },  // 12〜2月
+  spring: { 1: 100, 2: 125, 3: 115, 4: 125 }, // 3〜5月
+  summer: { 1: 95, 2: 115, 3: 105, 4: 110 },  // 6〜8月（初夏）
+  autumn: { 1: 95, 2: 120, 3: 110, 4: 120 },  // 9〜11月
+};
+const SEASON_LABELS = { winter: "冬", spring: "春", summer: "初夏", autumn: "秋" };
+
+function getSeason(month){
+  if(month === 12 || month <= 2) return "winter";
+  if(month <= 5) return "spring";
+  if(month <= 8) return "summer";
+  return "autumn";
+}
+
+function tempAdjustment(temp){
+  if(temp <= 15) return { adj: -15, label: "15℃以下" };
+  if(temp <= 17) return { adj: -5, label: "16〜17℃" };
+  if(temp <= 24) return { adj: 10, label: "18〜24℃" };
+  if(temp <= 28) return { adj: 0, label: "25〜28℃" };
+  return { adj: -10, label: "29℃以上" };
+}
+
+function isRainCode(code){
+  return [51,53,55,56,57,61,63,65,66,67,80,81,82,95,96,99].includes(code);
+}
+
+function weatherCategory(code){
+  if(code === 0 || code === 1) return "晴れ";
+  if(isRainCode(code)) return "雨";
+  return "曇り";
+}
+
+const state = {
+  days: [],          // 来週+再来週 月〜木の8日分
+  chiseByDate: {},   // dateKey -> { breakdown:{product:qty}, subtotal }
+  shiftByDate: {},   // dateKey -> { memberName: { qty:number, raw:string } }
+};
+
+/* ---------- 日付ユーティリティ ---------- */
+
+function getMonday(date){
+  const d = new Date(date);
+  const day = d.getDay();
+  const diff = day === 0 ? -6 : 1 - day;
+  d.setDate(d.getDate() + diff);
+  d.setHours(0, 0, 0, 0);
+  return d;
+}
+
+function getWeekDates(weekOffset){
+  const thisMonday = getMonday(new Date());
+  const targetMonday = new Date(thisMonday);
+  targetMonday.setDate(thisMonday.getDate() + weekOffset * 7);
+  const dates = [];
+  for(let i = 0; i < 5; i++){
+    const d = new Date(targetMonday);
+    d.setDate(targetMonday.getDate() + i);
+    dates.push(d);
+  }
+  return dates;
+}
+
+function formatDateLabel(d){
+  return `${d.getMonth() + 1}/${d.getDate()} ${DAY_NAMES[d.getDay()]}曜日`;
+}
+
+function dateKey(d){
+  return `${d.getFullYear()}-${d.getMonth() + 1}-${d.getDate()}`;
+}
+
+function isoDate(d){
+  const mm = String(d.getMonth() + 1).padStart(2, "0");
+  const dd = String(d.getDate()).padStart(2, "0");
+  return `${d.getFullYear()}-${mm}-${dd}`;
+}
+
+/* ---------- 天気 ---------- */
+
+function weatherInfo(code){
+  if(code === 0) return { icon:"☀️", text:"快晴" };
+  if(code === 1 || code === 2) return { icon:"🌤️", text:"晴れ" };
+  if(code === 3) return { icon:"☁️", text:"曇り" };
+  if(code === 45 || code === 48) return { icon:"🌫️", text:"霧" };
+  if([51,53,55,56,57].includes(code)) return { icon:"🌦️", text:"霧雨" };
+  if([61,63,65,66,67].includes(code)) return { icon:"🌧️", text:"雨" };
+  if([71,73,75,77].includes(code)) return { icon:"❄️", text:"雪" };
+  if([80,81,82].includes(code)) return { icon:"🌧️", text:"にわか雨" };
+  if([85,86].includes(code)) return { icon:"🌨️", text:"にわか雪" };
+  if([95,96,99].includes(code)) return { icon:"⛈️", text:"雷雨" };
+  return { icon:"❔", text:"不明" };
+}
+
+function buildHourlyByDate(hourly){
+  const map = {};
+  hourly.time.forEach((ts, i) => {
+    const [datePart, timePart] = ts.split("T");
+    const hour = parseInt(timePart.slice(0, 2), 10);
+    if(!map[datePart]) map[datePart] = {};
+    map[datePart][hour] = {
+      temp: hourly.temperature_2m[i],
+      precip: hourly.precipitation[i],
+      code: hourly.weathercode[i],
+    };
+  });
+  return map;
+}
+
+// 11〜15時（4スロット）の平均気温・降水量
+function computeSalesWeather(hourlyByDate, isoDateStr){
+  const day = hourlyByDate[isoDateStr];
+  if(!day) return null;
+  const coreHours = [11, 12, 13, 14];
+  const present = coreHours.filter(h => day[h]);
+  if(present.length === 0) return null;
+  const avgTemp = present.reduce((s, h) => s + day[h].temp, 0) / present.length;
+  const precipCore = present.reduce((s, h) => s + (day[h].precip || 0), 0);
+  const peakHours = [12, 13];
+  const precipPeak = peakHours.filter(h => day[h]).reduce((s, h) => s + (day[h].precip || 0), 0);
+  const repCode = present.length ? day[present[0]].code : null;
+  return { avgTemp, hasRainGeneral: precipCore >= 1, hasRainPeak: precipPeak >= 1, code: repCode };
+}
+
+/* ---------- 推奨数算出（予報範囲外にも対応） ---------- */
+
+function calcZuid(dow, month, salesWeather){
+  const season = getSeason(month);
+  const base = ZUID_SEASON_BASE[season][dow];
+  if(base === undefined) return null;
+
+  let total = base;
+  const reasons = [`${SEASON_LABELS[season]}・${DAY_NAMES[dow]}曜ベース ${total}個`];
+
+  if(!salesWeather){
+    reasons.push("予報範囲外のため気温・天気補正なし");
+    const ZUID_MIN_NF = 100;
+    if(total < ZUID_MIN_NF){ total = ZUID_MIN_NF; reasons.push(`最低保証 ${ZUID_MIN_NF}個 を適用`); }
+    return { total, reasons };
+  }
+
+  const { adj: tempAdj, label: tempLabel } = tempAdjustment(salesWeather.avgTemp);
+  total += tempAdj;
+  reasons.push(`気温${tempLabel}(11-15時平均) ${tempAdj >= 0 ? "+" : ""}${tempAdj}`);
+
+  if(salesWeather.hasRainGeneral){
+    total -= 20;
+    reasons.push("販売時間帯(11〜15時)に雨 -20");
+  } else if(weatherCategory(salesWeather.code) === "晴れ"){
+    total += 5;
+    reasons.push("晴れ +5");
+  } else if(weatherCategory(salesWeather.code) === "雨"){
+    reasons.push("販売時間帯外の雨のみ 天気補正なし");
+  } else {
+    reasons.push("曇り ±0");
+  }
+
+  const ZUID_MIN = 100;
+  if(total < ZUID_MIN){
+    total = ZUID_MIN;
+    reasons.push(`最低保証 ${ZUID_MIN}個 を適用`);
+  }
+
+  return { total, reasons };
+}
+
+function calcUvA(dow, salesWeather){
+  if(![1, 2, 4].includes(dow)) return null;
+  let total = 35;
+  const reasons = ["基本 35個"];
+
+  if(salesWeather && salesWeather.avgTemp >= 18 && salesWeather.avgTemp <= 24){
+    total += 5;
+    reasons.push("気温18〜24℃ +5");
+  }
+
+  if(salesWeather && salesWeather.hasRainGeneral){ total -= 10; reasons.push("販売時間帯(11〜14時)に雨 -10"); }
+
+  const UVA_MIN = 25;
+  if(total < UVA_MIN){
+    total = UVA_MIN;
+    reasons.push(`最低保証 ${UVA_MIN}個 を適用`);
+  }
+
+  return { total, reasons };
+}
+
+/* ---------- スプレッドシート読み込み（gviz） ---------- */
+
+async function fetchSheetJson(sheetName, spreadsheetId){
+  const id = spreadsheetId || SPREADSHEET_ID;
+  const url = `https://docs.google.com/spreadsheets/d/${id}/gviz/tq?tqx=out:json` +
+    (sheetName ? `&sheet=${encodeURIComponent(sheetName)}` : "");
+  const res = await fetch(url);
+  const text = await res.text();
+  const match = text.match(/setResponse\(([\s\S]*)\);\s*$/);
+  if(!match) throw new Error("シートの解析に失敗しました: " + sheetName);
+  return JSON.parse(match[1]);
+}
+
+// シート上の日付セルは「数値（シリアル値）」と「Date型」が混在しているため、
+// 型に関係なく常に存在する表示用フォーマット文字列（例："6/23"）を使って判定・マッチングする。
+function mdLabel(d){
+  return `${d.getMonth() + 1}/${d.getDate()}`;
+}
+
+// チセさんの生産表（商品×日付の横持ち表）を解析。キーは "6/23" 形式の文字列。
+function parseChiseSheet(json){
+  const rawRows = json.table.rows || [];
+  if(rawRows.length === 0) return {};
+
+  const dateRowCells = rawRows[0].c;
+  const dateCols = [];
+  dateRowCells.forEach((cell, idx) => {
+    const f = cell && cell.f;
+    if(f && /^\d{1,2}\/\d{1,2}$/.test(f)){
+      dateCols.push({ idx, label: f });
+    }
+  });
+
+  const rows = rawRows.map(r => r.c.map(c => (c ? c.v : null)));
+  let startRow = -1, endRow = -1;
+  rows.forEach((r, i) => {
+    if(r[0] === "商品") startRow = i + 1;
+    if(r[0] === "SUB TOTAL" && startRow !== -1 && endRow === -1) endRow = i;
+  });
+  if(startRow === -1 || endRow === -1) return {};
+
+  const byLabel = {};
+  dateCols.forEach(({ idx, label }) => {
+    const breakdown = {};
+    for(let i = startRow; i < endRow; i++){
+      const name = rows[i][0];
+      const qty = rows[i][idx];
+      if(name && typeof qty === "number") breakdown[name] = qty;
+    }
+    const subtotalCell = rows[endRow][idx];
+    const subtotal = typeof subtotalCell === "number"
+      ? subtotalCell
+      : Object.values(breakdown).reduce((s, v) => s + v, 0);
+    byLabel[label] = { breakdown, subtotal };
+  });
+
+  return byLabel;
+}
+
+function parseQtyNumber(qtyStr){
+  if(!qtyStr) return 0;
+  if(qtyStr === "希望しない") return 0;
+  const m = String(qtyStr).match(/(\d+)/);
+  return m ? parseInt(m[1], 10) : 0;
+}
+
+// シフト回答シート（送信日時, 名前, 日付, 曜日, 個数, 備考）を解析。キーは "6/23" 形式
+function parseShiftSheet(json){
+  const rawRows = json.table.rows || [];
+  const byDate = {};
+  rawRows.forEach(row => {
+    const c = row.c;
+    if(!c) return;
+    const name = c[1] && c[1].v;
+    const dateCell = c[2];
+    // 「日付」列はシート側で日付型に自動変換されているため、表示用文字列(f)を "6/23" 形式のキーとして使う
+    const key = dateCell && (dateCell.f || dateCell.v);
+    const qtyRaw = c[4] && c[4].v;
+    if(!name || !key) return;
+    if(!byDate[key]) byDate[key] = {};
+    byDate[key][name] = { qty: parseQtyNumber(qtyRaw), raw: qtyRaw || "" };
+  });
+  return byDate;
+}
+
+/* ---------- データ構築 ---------- */
+
+function buildDays(daily, hourlyByDate){
+  const week1 = getWeekDates(1);
+  const week2 = getWeekDates(2);
+  const all = [...week1.map(d => ({ d, weekIndex: 0 })), ...week2.map(d => ({ d, weekIndex: 1 }))];
+
+  return all.map(({ d, weekIndex }) => {
+    const dow = d.getDay();
+    const iso = isoDate(d);
+    const dIdx = daily.time.indexOf(iso);
+    const salesWeather = computeSalesWeather(hourlyByDate, iso);
+    const hasForecast = dIdx !== -1;
+
+    return {
+      dateObj: d,
+      dateKey: dateKey(d),
+      iso,
+      dow,
+      weekIndex,
+      label: formatDateLabel(d),
+      hasForecast,
+      weatherIcon: hasForecast ? weatherInfo(salesWeather ? salesWeather.code : daily.weathercode[dIdx]).icon : "❔",
+      tempLabel: salesWeather ? `${Math.round(salesWeather.avgTemp)}°(11-15時平均)` : "—",
+      zuid: calcZuid(dow, d.getMonth() + 1, salesWeather),
+      uva: calcUvA(dow, salesWeather),
+    };
+  }).map(day => {
+    day.zuidOpen = day.zuid !== null;
+    day.zuidFillingQty = day.zuid ? buildFillingDefaults(day.zuid.total) : buildFillingDefaults(0);
+    day.uvaOpen = day.uva !== null;
+    day.uvaFillingQty = day.uva ? buildFillingDefaults(day.uva.total) : buildFillingDefaults(0);
+    return day;
+  });
+}
+
+function buildFillingDefaults(total){
+  const obj = {};
+  FILLINGS.forEach(f => { obj[f] = Math.round(total * FILLING_RATIOS[f]); });
+  return obj;
+}
+
+// 枝豆・梅は常に本部製造（ニギニギ隊には割り振らない）
+const ALWAYS_HQ_FILLINGS = ["枝豆", "梅"];
+const ALLOC_FILLINGS = FILLINGS.filter(f => !ALWAYS_HQ_FILLINGS.includes(f));
+
+// 販売予測数カードで入力された具材ごとの必要数（Zuid＋UvA）
+function neededQtyFor(day, filling){
+  return (day.zuidFillingQty[filling] || 0) + (day.uvaFillingQty[filling] || 0);
+}
+
+// 必要数を超えないよう3の倍数に切り捨てる。端数は呼び出し側で本部に加算する
+function floorToMultipleOf3(qty){
+  return Math.floor(qty / 3) * 3;
+}
+
+function pillsHtml(breakdown){
+  return Object.entries(breakdown).map(([f, q]) => `<span class="pill">${f}×${q}</span>`).join("");
+}
+
+function sumQtyMap(map){
+  return map ? Object.values(map).reduce((s, v) => s + v, 0) : null;
+}
+
+function zuidFinal(day){ return sumQtyMap(day.zuidFillingQty); }
+function uvaFinal(day){ return sumQtyMap(day.uvaFillingQty); }
+
+function getManualQty(day, name){
+  const key = mdLabel(day.dateObj);
+  const fromShift = state.shiftByDate[key] && state.shiftByDate[key][name];
+  if(day.manualShift && name in day.manualShift) return day.manualShift[name];
+  return fromShift ? fromShift.qty : 0;
+}
+
+/* ---------- レンダリング：カレンダー ---------- */
+
+function renderCalendar(){
+  const area = document.getElementById("calendarArea");
+  const weeks = [
+    { title: "来週", days: state.days.filter(d => d.weekIndex === 0) },
+    { title: "再来週", days: state.days.filter(d => d.weekIndex === 1) },
+  ];
+
+  area.innerHTML = weeks.map((week, wi) => `
+    <div class="week-group">
+      <div class="week-heading">
+        <h3>${week.title}（月〜金）</h3>
+        <div>
+          <button class="confirm-week-btn" data-week="${wi}">この週を確定・公開する</button>
+          <span class="week-status-msg" id="weekStatus${wi}"></span>
+        </div>
+      </div>
+      <div class="day-cards">
+        ${week.days.map(day => {
+          const chise = state.chiseByDate[mdLabel(day.dateObj)];
+          const chiseQty = chise ? chise.subtotal : 0;
+          const forecastTotal = (zuidFinal(day) || 0) + (uvaFinal(day) || 0) + chiseQty;
+          const chiseHtml = chise
+            ? `${pillsHtml(chise.breakdown)}（合計${chiseQty}個）`
+            : "データなし";
+
+          return `
+            <div class="day-card">
+              <div class="day-head">${day.label}</div>
+              <div class="day-weather">${day.weatherIcon} ${day.tempLabel}</div>
+
+              ${fillingTableHtml(day, "zuid")}
+              ${fillingTableHtml(day, "uva")}
+
+              <div class="day-divider">
+                <div class="store-label">チセ（読み取り専用）</div>
+                <div class="member-line">${chiseHtml}<span class="readonly-tag">※読み取り専用</span></div>
+              </div>
+
+              <div class="grand-total-line" id="forecastTotal-${day.dateKey}">総販売予測数：${forecastTotal}個</div>
+            </div>
+          `;
+        }).join("")}
+      </div>
+    </div>
+  `).join("");
+
+  area.querySelectorAll(".filling-qty-input").forEach(input => {
+    input.addEventListener("input", () => {
+      const key = input.dataset.key;
+      const store = input.dataset.store;
+      const filling = input.dataset.filling;
+      const day = state.days.find(d => d.dateKey === key);
+      if(!day) return;
+
+      const qtyMap = store === "zuid" ? day.zuidFillingQty : day.uvaFillingQty;
+      qtyMap[filling] = Math.max(0, parseInt(input.value, 10) || 0);
+
+      const totalCell = document.getElementById(`total-${store}-${key}`);
+      if(totalCell) totalCell.textContent = `${sumQtyMap(qtyMap)}個`;
+
+      const chise = state.chiseByDate[mdLabel(day.dateObj)];
+      const forecastTotal = (zuidFinal(day) || 0) + (uvaFinal(day) || 0) + (chise ? chise.subtotal : 0);
+      const forecastLine = document.getElementById(`forecastTotal-${key}`);
+      if(forecastLine) forecastLine.textContent = `総販売予測数：${forecastTotal}個`;
+
+      refreshProductionDay(day);
+    });
+  });
+
+  area.querySelectorAll(".store-toggle-btn").forEach(btn => {
+    btn.addEventListener("click", () => {
+      const key = btn.dataset.key;
+      const store = btn.dataset.store;
+      const day = state.days.find(d => d.dateKey === key);
+      if(!day) return;
+
+      const isZuid = store === "zuid";
+      const wasOpen = isZuid ? day.zuidOpen : day.uvaOpen;
+      const nowOpen = !wasOpen;
+
+      if(isZuid){
+        day.zuidOpen = nowOpen;
+        day.zuidFillingQty = nowOpen
+          ? (day.zuid ? buildFillingDefaults(day.zuid.total) : buildFillingDefaults(0))
+          : buildFillingDefaults(0);
+      } else {
+        day.uvaOpen = nowOpen;
+        day.uvaFillingQty = nowOpen
+          ? (day.uva ? buildFillingDefaults(day.uva.total) : buildFillingDefaults(0))
+          : buildFillingDefaults(0);
+      }
+
+      renderCalendar();
+      refreshProductionDay(day);
+    });
+  });
+
+  area.querySelectorAll(".confirm-week-btn").forEach(btn => {
+    btn.addEventListener("click", () => confirmWeek(+btn.dataset.week));
+  });
+}
+
+function fillingTableHtml(day, store){
+  const isZuid = store === "zuid";
+  const title = isZuid ? "Zuid" : "UvA";
+  const result = isZuid ? day.zuid : day.uva;
+  // UvAは月・火・木のみ営業対象。それ以外（水・金）は元々非営業なのでトグル自体を出さない
+  const showToggle = isZuid || [1, 2, 4].includes(day.dow);
+
+  if(!showToggle){
+    return `<div class="store-label">${title}</div><p class="off-note">本日は対象外</p>`;
+  }
+
+  const isOpen = isZuid ? day.zuidOpen : day.uvaOpen;
+  const qtyMap = isZuid ? day.zuidFillingQty : day.uvaFillingQty;
+  const recBase = result ? result.total : 0;
+
+  const toggleBtn = `<button class="store-toggle-btn ${isOpen ? "on" : "off"}" data-key="${day.dateKey}" data-store="${store}">${isOpen ? "営業" : "休み"}</button>`;
+
+  const rows = FILLINGS.map(f => {
+    const rec = result ? Math.round(recBase * FILLING_RATIOS[f]) : 0;
+    return `
+      <tr>
+        <td>${f}</td>
+        <td>${rec}個</td>
+        <td><input type="number" min="0" class="filling-qty-input" data-key="${day.dateKey}" data-store="${store}" data-filling="${f}" value="${qtyMap[f]}" ${isOpen ? "" : "disabled"}></td>
+      </tr>
+    `;
+  }).join("");
+
+  return `
+    <div class="store-label-row">
+      <span class="store-label">${title}（推奨合計 ${recBase}個）</span>
+      ${toggleBtn}
+    </div>
+    <table class="filling-input-table ${isOpen ? "" : "is-closed"}">
+      <thead><tr><th>具材</th><th>推奨数</th><th>入力欄</th></tr></thead>
+      <tbody>${rows}</tbody>
+      <tfoot><tr><td colspan="2">合計</td><td class="filling-total" id="total-${store}-${day.dateKey}">${sumQtyMap(qtyMap)}個</td></tr></tfoot>
+    </table>
+  `;
+}
+
+/* ---------- レンダリング：最終生産割り振り（セクション3） ---------- */
+
+function renderProductionSection(){
+  const area = document.getElementById("productionArea");
+  const weeks = [
+    { title: "来週", days: state.days.filter(d => d.weekIndex === 0) },
+    { title: "再来週", days: state.days.filter(d => d.weekIndex === 1) },
+  ];
+
+  area.innerHTML = weeks.map(week => `
+    <div class="week-group">
+      <h3 class="week-heading-simple">${week.title}（月〜金）</h3>
+      ${week.days.map(day => `<div class="prod-card" id="prodday-${day.dateKey}">${productionDayHtml(day)}</div>`).join("")}
+    </div>
+  `).join("");
+}
+
+// 必要数（ALLOC_FILLINGS順）を「テープ」として、出勤メンバーの設定生産数(cap)で
+// 順番に切り出していく。1人のメンバーが今の具材で使い切れなければ次の具材に進み、
+// capが先に尽きたら次のメンバーは同じ具材の続きから始める（境界の具材は前後で共有されうる）。
+// これにより「1人1〜2種類に集中」「具材の割り振り数は必要数を超えない」
+// 「メンバーの合計はcapを超えない」を同時に満たす。
+// 必要数の多い具材から順に処理する。
+// ・今の残り容量で1人に収まる具材は、その時点で合計が最も少ない人にまとめて割り振る（分散させない）
+// ・1人に収まらない具材は、容量に余裕がある人のうち合計が最も少ない人から順に詰めていく
+// これにより「1人で担当できる具材は1人に集中」「全員の合計がなるべく均等」を両立する。
+function buildProductionPlan(day, working, memberCaps){
+  const totals = working.map(() => 0);
+  const remaining = working.map((_, i) => memberCaps[i]);
+  const memberBreakdowns = working.map(() => ({}));
+  const hqBreakdown = {};
+
+  function pickLeastLoaded(minRoom){
+    let best = -1;
+    for(let i = 0; i < working.length; i++){
+      if(remaining[i] >= minRoom && (best === -1 || totals[i] < totals[best])) best = i;
+    }
+    return best;
+  }
+
+  function give(mi, f, qty){
+    if(qty <= 0) return;
+    memberBreakdowns[mi][f] = (memberBreakdowns[mi][f] || 0) + qty;
+    totals[mi] += qty;
+    remaining[mi] -= qty;
+  }
+
+  const itemsByNeedDesc = ALLOC_FILLINGS
+    .map(f => ({ f, need: neededQtyFor(day, f) }))
+    .sort((a, b) => b.need - a.need);
+
+  itemsByNeedDesc.forEach(({ f, need }) => {
+    let left = need;
+    if(left <= 0) return;
+
+    // 今の残り容量で1人に収まるなら、その人だけに集中させる
+    const singleIdx = pickLeastLoaded(left);
+    if(singleIdx !== -1){
+      const floored = Math.floor(left / 3) * 3;
+      give(singleIdx, f, floored);
+      left -= floored;
+      if(left > 0) hqBreakdown[f] = (hqBreakdown[f] || 0) + left;
+      return;
+    }
+
+    // 1人に収まらない → 容量に余裕がある人から順に、合計が少ない人優先で詰める
+    while(left > 0){
+      const idx = pickLeastLoaded(3);
+      if(idx === -1) break;
+      const take = Math.min(left, remaining[idx]);
+      const floored = Math.floor(take / 3) * 3;
+      if(floored <= 0) break;
+      give(idx, f, floored);
+      left -= floored;
+    }
+    if(left > 0) hqBreakdown[f] = (hqBreakdown[f] || 0) + left;
+  });
+
+  ALWAYS_HQ_FILLINGS.forEach(f => {
+    const v = neededQtyFor(day, f);
+    if(v > 0) hqBreakdown[f] = (hqBreakdown[f] || 0) + v;
+  });
+
+  return { memberBreakdowns, memberQtys: totals, hqBreakdown };
+}
+
+function productionDayHtml(day){
+  const chise = state.chiseByDate[mdLabel(day.dateObj)];
+  const chiseQty = chise ? chise.subtotal : 0;
+  const total = (zuidFinal(day) || 0) + (uvaFinal(day) || 0) + chiseQty;
+
+  // 【最重要】各メンバーの割り振り合計は、シフト希望一覧で設定した生産数(cap)を絶対に超えない
+  const working = MEMBERS.filter(name => getManualQty(day, name) > 0);
+  const memberCaps = working.map(name => getManualQty(day, name));
+  const capTotal = memberCaps.reduce((s, v) => s + v, 0);
+
+  const allocationTarget = total - chiseQty; // 本部＋ニギニギ隊が作る数（チセ分は割り振り対象外）
+  const isOverCap = capTotal > allocationTarget;
+
+  const { memberBreakdowns, memberQtys, hqBreakdown } = buildProductionPlan(day, working, memberCaps);
+
+  // 具材ごとの必要数は必ず「ニギニギ隊の生産分＋本部の生産分」に分解されるため、
+  // この2つの合計は常に必要数の総和（=総生産数−チセ分）と一致する。
+  const ningiTotal = memberQtys.reduce((s, v) => s + v, 0);
+  const hqQty = Object.values(hqBreakdown).reduce((s, v) => s + v, 0);
+
+  const ningiBreakdownSummary = working.length
+    ? working.map((name, i) => `${name}:${memberCaps[i]}`).join(" ")
+    : "なし";
+
+  const summaryHtml = `
+    <div class="prod-summary">
+      <div>総生産数：${total}個</div>
+      <div>ニギニギ隊合計：${ningiTotal}個（${ningiBreakdownSummary}）</div>
+      <div>本部：${hqQty}個（自動計算）</div>
+      ${isOverCap ? `<div class="warning-line">⚠️ ニギニギ隊の設定生産数が総生産数を超えています</div>` : ""}
+    </div>
+  `;
+
+  const memberRows = working.length
+    ? working.map((name, i) => `
+        <div class="prod-row">
+          <div class="prod-row-head">${name}（${memberCaps[i]}個）</div>
+          <div class="prod-row-body">${pillsHtml(memberBreakdowns[i])}</div>
+          <div class="prod-row-foot">合計：${memberQtys[i]}個</div>
+        </div>
+      `).join("")
+    : `<p class="off-note">出勤予定のメンバーがいません。</p>`;
+
+  const reconciledTotal = ningiTotal + hqQty;
+  const checkMark = reconciledTotal === allocationTarget ? " ✓" : "";
+
+  return `
+    <div class="fd-head">${day.label}</div>
+    ${summaryHtml}
+    ${memberRows}
+    <div class="prod-row">
+      <div class="prod-row-head">本部（自動算出：${hqQty}個）</div>
+      <div class="prod-row-body">${pillsHtml(hqBreakdown)}</div>
+    </div>
+    <div class="grand-total-line">合計（ニギニギ隊＋本部）：${reconciledTotal}個${checkMark}</div>
+  `;
+}
+
+function refreshProductionDay(day){
+  const container = document.getElementById(`prodday-${day.dateKey}`);
+  if(container) container.innerHTML = productionDayHtml(day);
+}
+
+async function confirmWeek(weekIndex){
+  const days = state.days.filter(d => d.weekIndex === weekIndex);
+  const payload = {
+    type: "confirmPlan",
+    days: days.map(d => ({
+      date: mdLabel(d.dateObj),
+      day: `${DAY_NAMES[d.dow]}曜日`,
+      zuid: zuidFinal(d),
+      uva: uvaFinal(d),
+    })),
+  };
+
+  const statusEl = document.getElementById(`weekStatus${weekIndex}`);
+  statusEl.textContent = "送信中...";
+
+  try{
+    await fetch(SCRIPT_URL, {
+      method: "POST",
+      mode: "no-cors",
+      body: JSON.stringify(payload),
+    });
+    statusEl.textContent = "確定・公開しました ✓";
+  }catch(e){
+    console.error(e);
+    statusEl.textContent = "送信に失敗しました";
+  }
+}
+
+/* ---------- レンダリング：シフト一覧 ---------- */
+
+function renderShiftTable(){
+  const area = document.getElementById("shiftTableArea");
+
+  const headerCells = state.days.map(d => `<th>${DAY_NAMES[d.dow]}曜<br>${d.dateObj.getMonth() + 1}/${d.dateObj.getDate()}</th>`).join("");
+
+  const bodyRows = MEMBERS.map(name => {
+    const cells = state.days.map(day => {
+      const shiftKey = mdLabel(day.dateObj);
+      const submitted = state.shiftByDate[shiftKey] && state.shiftByDate[shiftKey][name];
+      const submittedLabel = submitted ? (submitted.raw || "—") : "未回答";
+      const manualVal = getManualQty(day, name);
+      return `
+        <td>
+          <div class="submitted-qty">希望：${submittedLabel}</div>
+          <input type="number" class="manual-input" min="0" value="${manualVal}" data-key="${day.dateKey}" data-name="${name}">
+        </td>
+      `;
+    }).join("");
+    return `<tr><td><strong>${name}</strong></td>${cells}</tr>`;
+  }).join("");
+
+  area.innerHTML = `
+    <table>
+      <thead><tr><th>メンバー</th>${headerCells}</tr></thead>
+      <tbody>${bodyRows}</tbody>
+    </table>
+  `;
+
+  area.querySelectorAll(".manual-input").forEach(input => {
+    input.addEventListener("change", () => {
+      const key = input.dataset.key;
+      const name = input.dataset.name;
+      const day = state.days.find(d => d.dateKey === key);
+      if(!day) return;
+      if(!day.manualShift) day.manualShift = {};
+      day.manualShift[name] = Math.max(0, parseInt(input.value, 10) || 0);
+      refreshProductionDay(day);
+    });
+  });
+}
+
+/* ---------- 初期化 ---------- */
+
+async function init(){
+  try{
+    const weatherUrl = `https://api.open-meteo.com/v1/forecast?latitude=${LAT}&longitude=${LON}` +
+      `&daily=temperature_2m_max,temperature_2m_min,weathercode` +
+      `&hourly=temperature_2m,precipitation,weathercode` +
+      `&forecast_days=16&timezone=Europe%2FAmsterdam`;
+
+    const [weatherRes, chiseJson, shiftJson] = await Promise.all([
+      fetch(weatherUrl).then(r => r.json()),
+      fetchSheetJson(null).catch(e => { console.error("チセさんシート取得失敗", e); return null; }),
+      fetchSheetJson("シフト回答", SHIFT_SPREADSHEET_ID).catch(e => { console.error("シフト回答シート取得失敗", e); return null; }),
+    ]);
+
+    const hourlyByDate = buildHourlyByDate(weatherRes.hourly);
+    state.days = buildDays(weatherRes.daily, hourlyByDate);
+    state.chiseByDate = chiseJson ? parseChiseSheet(chiseJson) : {};
+    state.shiftByDate = shiftJson ? parseShiftSheet(shiftJson) : {};
+
+    renderCalendar();
+    renderShiftTable();
+    renderProductionSection();
+  }catch(e){
+    console.error(e);
+    document.getElementById("calendarArea").innerHTML = "<p class='off-note'>データの取得に失敗しました。</p>";
+    document.getElementById("shiftTableArea").innerHTML = "<p class='off-note'>データの取得に失敗しました。</p>";
+    document.getElementById("productionArea").innerHTML = "<p class='off-note'>データの取得に失敗しました。</p>";
+  }
+}
+
+init();
+</script>
+
+</body>
+</html>

@@ -1,0 +1,1126 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Chabon Ops｜おにぎり移動販売管理</title>
+<style>
+  :root{
+    --main: #4a7c59;
+    --main-dark: #335c3e;
+    --main-light: #e9f1ea;
+    --accent: #c9533f;
+    --bg: #faf8f3;
+    --card: #ffffff;
+    --ink: #2b2b28;
+    --line: #e2ddd0;
+  }
+  *{box-sizing:border-box;}
+  body{
+    margin:0;
+    font-family: "Hiragino Sans", "Yu Gothic", "Noto Sans JP", sans-serif;
+    background: var(--bg);
+    color: var(--ink);
+    line-height: 1.6;
+  }
+  header{
+    background: var(--main);
+    color: #fff;
+    padding: 22px 16px;
+    text-align: center;
+    position: relative;
+    overflow: hidden;
+  }
+  header::after{
+    content:"";
+    position:absolute;
+    inset:0;
+    background: repeating-linear-gradient(135deg, rgba(255,255,255,0.05) 0 8px, transparent 8px 16px);
+  }
+  header h1{
+    margin:0;
+    font-size: 1.6rem;
+    letter-spacing: 0.08em;
+    position: relative;
+  }
+  header p{
+    margin: 6px 0 0;
+    font-size: 0.85rem;
+    opacity: 0.9;
+    position: relative;
+  }
+  .header-nav{
+    position: relative;
+    margin-top: 12px;
+  }
+  .header-nav a{
+    display: inline-block;
+    background: rgba(255,255,255,0.15);
+    color: #fff;
+    text-decoration: none;
+    font-size: 0.82rem;
+    font-weight: bold;
+    padding: 7px 16px;
+    border-radius: 100px;
+    border: 1px solid rgba(255,255,255,0.4);
+    margin: 0 4px;
+  }
+  main{
+    max-width: 880px;
+    margin: 0 auto;
+    padding: 18px 14px 60px;
+  }
+  section{
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: 14px;
+    padding: 18px;
+    margin-bottom: 18px;
+    box-shadow: 0 2px 6px rgba(0,0,0,0.03);
+  }
+  section h2{
+    margin: 0 0 14px;
+    font-size: 1.05rem;
+    color: var(--main-dark);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    border-bottom: 2px solid var(--main-light);
+    padding-bottom: 8px;
+  }
+  section h2 .badge{
+    font-size: 0.65rem;
+    background: var(--main-light);
+    color: var(--main-dark);
+    padding: 2px 8px;
+    border-radius: 100px;
+    font-weight: normal;
+  }
+  /* 天気 */
+  #weatherList{
+    display:flex;
+    gap: 10px;
+    overflow-x: auto;
+    padding-bottom: 4px;
+  }
+  .wcard{
+    flex: 0 0 auto;
+    min-width: 92px;
+    text-align:center;
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 10px 8px;
+    background: var(--main-light);
+  }
+  .wcard.today{
+    background: var(--main);
+    color: #fff;
+    border-color: var(--main);
+  }
+  .wcard .day{ font-size: 0.75rem; font-weight: bold; }
+  .wcard .wcard-date{ font-size: 0.7rem; font-weight: normal; opacity: 0.85; }
+  .wcard .icon{ font-size: 1.6rem; margin: 4px 0; }
+  .wcard .temp{ font-size: 0.78rem; }
+  .loading{ color: #999; font-size: 0.9rem; }
+
+  /* 販売時間帯の天気 */
+  .slot-cards{
+    display: flex;
+    gap: 10px;
+    overflow-x: auto;
+    padding-bottom: 4px;
+  }
+  .slot-card{
+    flex: 0 0 auto;
+    min-width: 104px;
+    text-align: center;
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 10px 8px;
+    background: #fdfcf9;
+  }
+  .slot-card.peak{
+    background: #fdf3d8;
+    border-color: #e0b94a;
+  }
+  .slot-card .slot-label{ font-size: 0.72rem; font-weight: bold; color: var(--main-dark); }
+  .slot-card.peak .slot-label{ color: #8a6d1d; }
+  .slot-card .slot-icon{ font-size: 1.5rem; margin: 4px 0; }
+  .slot-card .slot-temp{ font-size: 0.85rem; font-weight: bold; }
+  .slot-card .slot-precip{ font-size: 0.72rem; color: #888; }
+
+  /* 推奨販売数 */
+  .store-cards{
+    display: flex;
+    gap: 14px;
+    flex-wrap: wrap;
+  }
+  .store-card{
+    flex: 1 1 260px;
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    padding: 14px 16px;
+    background: #fdfcf9;
+  }
+  .store-card h3{
+    margin: 0 0 10px;
+    font-size: 0.95rem;
+    color: var(--main-dark);
+  }
+  .recommend-box{
+    display: flex;
+    align-items: center;
+    gap: 18px;
+    flex-wrap: wrap;
+  }
+  .recommend-num{
+    font-size: 2.4rem;
+    font-weight: bold;
+    color: var(--main-dark);
+    background: var(--main-light);
+    border-radius: 12px;
+    padding: 10px 22px;
+    text-align: center;
+  }
+  .recommend-num span{ font-size: 0.9rem; display:block; font-weight:normal; color:#666; }
+  .recommend-note{
+    flex: 1;
+    min-width: 160px;
+    font-size: 0.85rem;
+    color: #555;
+  }
+  .recommend-note ul{ margin: 0; padding-left: 18px; }
+  .off-day-note{
+    color: #999;
+    font-size: 0.88rem;
+  }
+
+  /* シフト */
+  .member-row{
+    display:flex;
+    align-items:center;
+    gap: 10px;
+    padding: 8px 0;
+    border-bottom: 1px dashed var(--line);
+  }
+  .member-row:last-child{ border-bottom:none; }
+  .member-row input[type=text]{
+    flex: 1;
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    padding: 6px 8px;
+    font-size: 0.92rem;
+    background: #fdfcf9;
+  }
+  .toggle-btn{
+    border: none;
+    border-radius: 100px;
+    padding: 6px 16px;
+    font-size: 0.82rem;
+    font-weight: bold;
+    cursor: pointer;
+    min-width: 76px;
+  }
+  .toggle-btn.on{ background: var(--main); color: #fff; }
+  .toggle-btn.off{ background: #ddd5c5; color: #777; }
+
+  /* 具材割り振り */
+  table{
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.9rem;
+  }
+  th, td{
+    text-align: left;
+    padding: 8px 10px;
+    border-bottom: 1px solid var(--line);
+  }
+  th{
+    background: var(--main-light);
+    color: var(--main-dark);
+    font-weight: bold;
+  }
+  .pill{
+    display:inline-block;
+    background: var(--main-light);
+    color: var(--main-dark);
+    border-radius: 100px;
+    padding: 2px 10px;
+    font-size: 0.8rem;
+    margin: 2px 3px 2px 0;
+  }
+  .off-note{ color:#999; font-size: 0.85rem; }
+
+  /* 週間ビュー */
+  .week-cards{
+    display: flex;
+    gap: 12px;
+    overflow-x: auto;
+    padding-bottom: 4px;
+  }
+  .week-card{
+    flex: 0 0 auto;
+    min-width: 168px;
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 12px;
+    background: #fdfcf9;
+  }
+  .week-card.today{
+    border-color: var(--main);
+    background: var(--main-light);
+  }
+  .week-date{
+    font-weight: bold;
+    font-size: 0.9rem;
+    color: var(--main-dark);
+    margin-bottom: 6px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .today-tag{
+    background: var(--main);
+    color: #fff;
+    font-size: 0.65rem;
+    font-weight: normal;
+    padding: 1px 7px;
+    border-radius: 100px;
+  }
+  .week-weather{ font-size: 0.85rem; margin-bottom: 6px; }
+  .week-store{ font-size: 0.85rem; color: #555; }
+  .week-tomorrow{
+    margin-top: 8px;
+    padding-top: 8px;
+    border-top: 1px dashed var(--line);
+    font-size: 0.78rem;
+    color: #777;
+  }
+
+  /* 具材ステータス */
+  .day-tabs{
+    display: flex;
+    gap: 8px;
+    margin-bottom: 12px;
+    flex-wrap: wrap;
+  }
+  .day-tab{
+    border: 1px solid var(--line);
+    background: #fdfcf9;
+    color: #666;
+    padding: 6px 16px;
+    border-radius: 100px;
+    font-size: 0.85rem;
+    font-weight: bold;
+    cursor: pointer;
+  }
+  .day-tab.active{
+    background: var(--main);
+    color: #fff;
+    border-color: var(--main);
+  }
+  .status-legend{
+    font-size: 0.78rem;
+    color: #666;
+    margin-bottom: 10px;
+  }
+  .legend-dot{
+    display: inline-block;
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    margin: 0 4px 0 10px;
+    vertical-align: middle;
+  }
+  .legend-dot.handed{ background: #3b6ea5; }
+  .legend-dot.cooked{ background: var(--main); }
+  .status-btn{
+    border: 1px solid var(--line);
+    background: #fff;
+    color: #888;
+    padding: 5px 14px;
+    border-radius: 100px;
+    font-size: 0.78rem;
+    font-weight: bold;
+    cursor: pointer;
+    margin-right: 6px;
+    margin-bottom: 4px;
+  }
+  .status-btn.handed.active{ background: #3b6ea5; color: #fff; border-color: #3b6ea5; }
+  .status-btn.cooked.active{ background: var(--main); color: #fff; border-color: var(--main); }
+  .status-btn.shift-toggle.on{ background: var(--main); color: #fff; border-color: var(--main); }
+  .status-btn.shift-toggle.off{ background: #ddd5c5; color: #777; border-color: #ddd5c5; }
+
+  #fillingStatusArea{ overflow-x: auto; }
+  #fillingStatusArea table{ min-width: 720px; }
+  #fillingStatusArea th, #fillingStatusArea td{ vertical-align: top; font-size: 0.84rem; }
+  .cell-fillings{ margin: 6px 0; font-size: 0.8rem; color: #555; }
+  .needed-items-cell{ font-size: 0.78rem; color: var(--main-dark); font-weight: bold; white-space: nowrap; }
+  .cell-status{ display: flex; flex-direction: column; align-items: flex-start; }
+
+  footer{
+    text-align:center;
+    font-size: 0.78rem;
+    color: #999;
+    padding: 20px 0 40px;
+  }
+
+  /* 確認ダイアログ */
+  .confirm-overlay{
+    display: none;
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,0.45);
+    align-items: center;
+    justify-content: center;
+    padding: 20px;
+    z-index: 1000;
+  }
+  .confirm-overlay.show{ display: flex; }
+  .confirm-box{
+    background: #fff;
+    border-radius: 16px;
+    padding: 24px 20px;
+    width: 100%;
+    max-width: 340px;
+    box-shadow: 0 8px 24px rgba(0,0,0,0.2);
+  }
+  .confirm-message{
+    margin: 0 0 20px;
+    font-size: 1rem;
+    color: var(--ink);
+    line-height: 1.6;
+    text-align: center;
+  }
+  .confirm-actions{
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+  .confirm-btn{
+    border: none;
+    border-radius: 10px;
+    padding: 14px;
+    font-size: 1rem;
+    font-weight: bold;
+    cursor: pointer;
+    width: 100%;
+  }
+  .confirm-btn.yes{ background: var(--main); color: #fff; }
+  .confirm-btn.no{ background: #e2ddd0; color: #555; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>🍙 Chabon Ops</h1>
+  <p>アムステルダム おにぎり移動販売 運営ダッシュボード</p>
+  <nav class="header-nav">
+    <a href="shift.html">📝 シフト入力</a>
+    <a href="admin.html">🔧 管理画面</a>
+  </nav>
+</header>
+
+<main>
+
+  <section>
+    <h2>本日の天気予報<span class="badge">Open-Meteo / Amsterdam</span></h2>
+    <div id="weatherList" class="loading">読み込み中...</div>
+  </section>
+
+  <section>
+    <h2>販売時間帯の天気（本日）<span class="badge">Open-Meteo 時間別予報</span></h2>
+    <div class="slot-cards" id="slotCards">
+      <div class="loading">天気データを取得中です…</div>
+    </div>
+  </section>
+
+  <section>
+    <h2>今日の推奨販売数</h2>
+    <div class="store-cards" id="storeCards">
+      <div class="loading">天気データを取得中です…</div>
+    </div>
+  </section>
+
+  <section>
+    <h2>週間ビュー（月〜木）<span class="badge">7日間予報ベース</span></h2>
+    <div class="week-cards" id="weeklyView">
+      <div class="loading">天気データを取得中です…</div>
+    </div>
+  </section>
+
+  <section>
+    <h2>シフト管理（ニギニギ隊）</h2>
+    <div id="memberList"></div>
+  </section>
+
+  <section>
+    <h2>具材割り振り表</h2>
+    <div id="fillingArea"></div>
+  </section>
+
+  <section>
+    <h2>具材ステータス管理（週間）</h2>
+    <div class="status-legend">✓ 具材渡し済み　❄️ 調理済み</div>
+    <div id="fillingStatusArea"></div>
+  </section>
+
+</main>
+
+<footer>Chabon Ops — Amsterdam Onigiri Truck</footer>
+
+<div class="confirm-overlay" id="confirmOverlay">
+  <div class="confirm-box">
+    <p class="confirm-message" id="confirmMessage"></p>
+    <div class="confirm-actions">
+      <button class="confirm-btn yes" id="confirmYesBtn">はい、変更する</button>
+      <button class="confirm-btn no" id="confirmNoBtn">キャンセル</button>
+    </div>
+  </div>
+</div>
+
+<script>
+const LAT = 52.3676, LON = 4.9041;
+const SPREADSHEET_ID = "1rQtRUSP5e7qOjnT4RPvMGfWrEFcFL89AsLe8cjGIW4U"; // チセさんの生産データ
+const SHIFT_SPREADSHEET_ID = "1PHf1o3smqIQdeFkhBHjBZUEub7VtRcynQLllmSR7w-s"; // シフト回答／確定プラン
+
+function mdLabel(dateStr){
+  const d = new Date(dateStr);
+  return `${d.getMonth() + 1}/${d.getDate()}`;
+}
+
+async function fetchConfirmedPlan(){
+  try{
+    const url = `https://docs.google.com/spreadsheets/d/${SHIFT_SPREADSHEET_ID}/gviz/tq?tqx=out:json&sheet=${encodeURIComponent("確定プラン")}`;
+    const res = await fetch(url);
+    const text = await res.text();
+    const match = text.match(/setResponse\(([\s\S]*)\);\s*$/);
+    if(!match) return {};
+    const json = JSON.parse(match[1]);
+    const map = {};
+    (json.table.rows || []).forEach(r => {
+      const c = r.c;
+      if(!c || !c[0]) return;
+      map[String(c[0].v)] = {
+        zuid: c[2] && c[2].v !== null ? Number(c[2].v) : null,
+        uva: c[3] && c[3].v !== null ? Number(c[3].v) : null,
+      };
+    });
+    return map;
+  }catch(e){
+    console.error("確定プランの取得に失敗しました", e);
+    return {};
+  }
+}
+
+// シフト回答シート（送信日時,名前,日付,曜日,個数,備考,必要物品）から、メンバーごとの最新の必要物品を取得
+async function fetchMemberNeededItems(){
+  try{
+    const url = `https://docs.google.com/spreadsheets/d/${SHIFT_SPREADSHEET_ID}/gviz/tq?tqx=out:json&sheet=${encodeURIComponent("シフト回答")}`;
+    const res = await fetch(url);
+    const text = await res.text();
+    const match = text.match(/setResponse\(([\s\S]*)\);\s*$/);
+    if(!match) return {};
+    const json = JSON.parse(match[1]);
+    const byMember = {};
+    (json.table.rows || []).forEach(r => {
+      const c = r.c;
+      if(!c) return;
+      const name = c[1] && c[1].v;
+      const items = c[6] && c[6].v;
+      if(!name) return;
+      byMember[name] = items || "";
+    });
+    return byMember;
+  }catch(e){
+    console.error("必要物品の取得に失敗しました", e);
+    return {};
+  }
+}
+
+function applyConfirmedOverrides(results, confirmedMap){
+  results.forEach(r => {
+    const override = confirmedMap[mdLabel(r.dateStr)];
+    if(!override) return;
+    if(r.zuid && override.zuid != null){
+      r.zuid = { total: override.zuid, reasons: ["管理画面で確定済み"] };
+    }
+    if([1, 2, 4].includes(r.dow) && override.uva != null){
+      r.uva = { total: override.uva, reasons: ["管理画面で確定済み"] };
+    }
+  });
+}
+const FILLINGS = ["ツナマヨ","スパイシーツナマヨ","テリヤキチキン","サーモン","スパイシー味噌","枝豆","梅"];
+const DAY_NAMES = ["日","月","火","水","木","金","土"];
+
+const OPERATING_DAYS = [1, 2, 3, 4]; // 月火水木
+
+const state = {
+  members: [
+    { name: "YUMI", on: true },
+    { name: "MARI", on: true },
+    { name: "CHIKAKO", on: true },
+    { name: "YUKARI", on: true },
+    { name: "MIKI", on: false },
+  ],
+  dailyResults: [],
+  hourlyByDate: {},
+  todayTotal: 0,
+  weeklyShift: {}, // { [dow]: { [memberName]: bool } }
+  cellStatus: {},  // { [dow]: { [memberName]: { handed: bool, cooked: bool } } }
+  memberNeededItems: {}, // { [memberName]: "お米×2、手袋×1" }
+};
+
+const FILLING_RATIOS = {
+  "スパイシーツナマヨ": 0.25,
+  "テリヤキチキン": 0.22,
+  "サーモン": 0.22,
+  "ツナマヨ": 0.15,
+  "スパイシー味噌": 0.10,
+  "枝豆": 0.04,
+  "梅": 0.02,
+};
+
+function showConfirm(message, onConfirm){
+  const overlay = document.getElementById("confirmOverlay");
+  const yesBtn = document.getElementById("confirmYesBtn");
+  const noBtn = document.getElementById("confirmNoBtn");
+  document.getElementById("confirmMessage").textContent = message;
+
+  function cleanup(){
+    overlay.classList.remove("show");
+    yesBtn.removeEventListener("click", yesHandler);
+    noBtn.removeEventListener("click", noHandler);
+    overlay.removeEventListener("click", overlayHandler);
+  }
+  function yesHandler(){ cleanup(); onConfirm(); }
+  function noHandler(){ cleanup(); }
+  function overlayHandler(e){ if(e.target === overlay) cleanup(); }
+
+  yesBtn.addEventListener("click", yesHandler);
+  noBtn.addEventListener("click", noHandler);
+  overlay.addEventListener("click", overlayHandler);
+  overlay.classList.add("show");
+}
+
+function weatherInfo(code){
+  if(code === 0) return { icon:"☀️", text:"快晴" };
+  if(code === 1 || code === 2) return { icon:"🌤️", text:"晴れ" };
+  if(code === 3) return { icon:"☁️", text:"曇り" };
+  if(code === 45 || code === 48) return { icon:"🌫️", text:"霧" };
+  if([51,53,55,56,57].includes(code)) return { icon:"🌦️", text:"霧雨" };
+  if([61,63,65,66,67].includes(code)) return { icon:"🌧️", text:"雨" };
+  if([71,73,75,77].includes(code)) return { icon:"❄️", text:"雪" };
+  if([80,81,82].includes(code)) return { icon:"🌧️", text:"にわか雨" };
+  if([85,86].includes(code)) return { icon:"🌨️", text:"にわか雪" };
+  if([95,96,99].includes(code)) return { icon:"⛈️", text:"雷雨" };
+  return { icon:"❔", text:"不明" };
+}
+
+function isRainCode(code){
+  return [51,53,55,56,57,61,63,65,66,67,80,81,82,95,96,99].includes(code);
+}
+
+function renderWeather(daily){
+  const list = document.getElementById("weatherList");
+  list.classList.remove("loading");
+  list.innerHTML = "";
+  daily.time.forEach((dateStr, i) => {
+    const d = new Date(dateStr);
+    const w = weatherInfo(daily.weathercode[i]);
+    const card = document.createElement("div");
+    card.className = "wcard" + (i === 0 ? " today" : "");
+    const dateLabel = `${d.getMonth() + 1}/${d.getDate()}`;
+    card.innerHTML = `
+      <div class="day">${i === 0 ? "本日" : DAY_NAMES[d.getDay()] + "曜"} <span class="wcard-date">${dateLabel}</span></div>
+      <div class="icon">${w.icon}</div>
+      <div class="temp">${Math.round(daily.temperature_2m_max[i])}° / ${Math.round(daily.temperature_2m_min[i])}°</div>
+    `;
+    list.appendChild(card);
+  });
+}
+
+function weatherCategory(code){
+  if(code === 0 || code === 1) return "晴れ";
+  if(isRainCode(code)) return "雨";
+  return "曇り";
+}
+
+// 販売時間帯（11〜17時）の表示ブロック定義
+const SALES_SLOTS = [
+  { label: "11-12時", sub: "開店",        hours: [11] },
+  { label: "12-13時", sub: "ピーク①",     hours: [12], peak: true },
+  { label: "13-14時", sub: "ピーク②",     hours: [13], peak: true },
+  { label: "14-15時", sub: "終盤",        hours: [14] },
+  { label: "15-16時", sub: "売り切りタイム①", hours: [15] },
+  { label: "16-17時", sub: "売り切りタイム②", hours: [16] },
+];
+
+function buildHourlyByDate(hourly){
+  const map = {};
+  hourly.time.forEach((ts, i) => {
+    const [datePart, timePart] = ts.split("T");
+    const hour = parseInt(timePart.slice(0, 2), 10);
+    if(!map[datePart]) map[datePart] = {};
+    map[datePart][hour] = {
+      temp: hourly.temperature_2m[i],
+      precip: hourly.precipitation[i],
+      code: hourly.weathercode[i],
+    };
+  });
+  return map;
+}
+
+// 11〜15時（開店〜終盤の4スロット）の平均気温・降水量から販売時間帯の天気を算出
+function computeSalesWeather(hourlyByDate, dateStr){
+  const day = hourlyByDate[dateStr];
+  if(!day) return null;
+
+  const coreHours = [11, 12, 13, 14];
+  const present = coreHours.filter(h => day[h]);
+  if(present.length === 0) return null;
+
+  const avgTemp = present.reduce((s, h) => s + day[h].temp, 0) / present.length;
+  const precipCore = present.reduce((s, h) => s + (day[h].precip || 0), 0);
+
+  const peakHours = [12, 13]; // 12〜14時（ゴールデンタイム）
+  const precipPeak = peakHours.filter(h => day[h]).reduce((s, h) => s + (day[h].precip || 0), 0);
+
+  return {
+    avgTemp,
+    hasRainGeneral: precipCore >= 1,
+    hasRainPeak: precipPeak >= 1,
+    code: day[present[0]].code,
+  };
+}
+
+// Zuid（ステーションザウド）：月火水木のみ営業。季節×曜日ベース。
+const ZUID_SEASON_BASE = {
+  winter: { 1: 90, 2: 110, 3: 100, 4: 110 },  // 12〜2月
+  spring: { 1: 100, 2: 125, 3: 115, 4: 125 }, // 3〜5月
+  summer: { 1: 95, 2: 115, 3: 105, 4: 110 },  // 6〜8月（初夏）
+  autumn: { 1: 95, 2: 120, 3: 110, 4: 120 },  // 9〜11月
+};
+const SEASON_LABELS = { winter: "冬", spring: "春", summer: "初夏", autumn: "秋" };
+
+function getSeason(month){
+  if(month === 12 || month <= 2) return "winter";
+  if(month <= 5) return "spring";
+  if(month <= 8) return "summer";
+  return "autumn";
+}
+
+function tempAdjustment(temp){
+  if(temp <= 15) return { adj: -15, label: "15℃以下" };
+  if(temp <= 17) return { adj: -5, label: "16〜17℃" };
+  if(temp <= 24) return { adj: 10, label: "18〜24℃" };
+  if(temp <= 28) return { adj: 0, label: "25〜28℃" };
+  return { adj: -10, label: "29℃以上" };
+}
+
+function calcZuid(dow, month, salesWeather){
+  const season = getSeason(month);
+  const base = ZUID_SEASON_BASE[season][dow];
+  if(base === undefined) return null;
+
+  let total = base;
+  const reasons = [`${SEASON_LABELS[season]}・${DAY_NAMES[dow]}曜ベース ${total}個`];
+
+  if(!salesWeather){
+    reasons.push("予報範囲外のため気温・天気補正なし");
+    const ZUID_MIN_NF = 100;
+    if(total < ZUID_MIN_NF){ total = ZUID_MIN_NF; reasons.push(`最低保証 ${ZUID_MIN_NF}個 を適用`); }
+    return { total, reasons };
+  }
+
+  const { adj: tempAdj, label: tempLabel } = tempAdjustment(salesWeather.avgTemp);
+  total += tempAdj;
+  reasons.push(`気温${tempLabel}(11-15時平均) ${tempAdj >= 0 ? "+" : ""}${tempAdj}`);
+
+  if(salesWeather.hasRainGeneral){
+    total -= 20;
+    reasons.push("販売時間帯(11〜15時)に雨 -20");
+  } else if(weatherCategory(salesWeather.code) === "晴れ"){
+    total += 5;
+    reasons.push("晴れ +5");
+  } else if(weatherCategory(salesWeather.code) === "雨"){
+    reasons.push("販売時間帯外の雨のみ 天気補正なし");
+  } else {
+    reasons.push("曇り ±0");
+  }
+
+  const ZUID_MIN = 100;
+  if(total < ZUID_MIN){
+    total = ZUID_MIN;
+    reasons.push(`最低保証 ${ZUID_MIN}個 を適用`);
+  }
+
+  return { total, reasons };
+}
+
+function calcUvA(dow, salesWeather){
+  if(![1, 2, 4].includes(dow)) return null;
+  let total = 35;
+  const reasons = ["基本 35個"];
+
+  if(salesWeather && salesWeather.avgTemp >= 18 && salesWeather.avgTemp <= 24){
+    total += 5;
+    reasons.push("気温18〜24℃ +5");
+  }
+
+  if(salesWeather && salesWeather.hasRainGeneral){ total -= 10; reasons.push("販売時間帯(11〜14時)に雨 -10"); }
+
+  const UVA_MIN = 25;
+  if(total < UVA_MIN){
+    total = UVA_MIN;
+    reasons.push(`最低保証 ${UVA_MIN}個 を適用`);
+  }
+
+  return { total, reasons };
+}
+
+function storeCardHtml(title, result){
+  if(!result){
+    return `
+      <div class="store-card">
+        <h3>${title}</h3>
+        <p class="off-day-note">本日は営業日ではありません。</p>
+      </div>
+    `;
+  }
+  return `
+    <div class="store-card">
+      <h3>${title}</h3>
+      <div class="recommend-box">
+        <div class="recommend-num">${result.total}<span>個</span></div>
+        <div class="recommend-note">
+          <ul>${result.reasons.map(r => `<li>${r}</li>`).join("")}</ul>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function buildDailyResults(daily, hourlyByDate){
+  return daily.time.map((dateStr, i) => {
+    const d = new Date(dateStr);
+    const dow = d.getDay();
+    const maxTemp = daily.temperature_2m_max[i];
+    const minTemp = daily.temperature_2m_min[i];
+    const code = daily.weathercode[i];
+    const salesWeather = computeSalesWeather(hourlyByDate, dateStr);
+    const month = d.getMonth() + 1;
+    return {
+      dateStr, dow, maxTemp, minTemp, code, salesWeather,
+      zuid: calcZuid(dow, month, salesWeather),
+      uva: calcUvA(dow, salesWeather),
+    };
+  });
+}
+
+function renderSalesTimeSlots(){
+  const area = document.getElementById("slotCards");
+  const today = state.dailyResults[0];
+  const day = state.hourlyByDate[today.dateStr];
+
+  if(!day){
+    area.innerHTML = `<p class="off-note">時間別データがありません。</p>`;
+    return;
+  }
+
+  area.innerHTML = SALES_SLOTS.map(slot => {
+    const present = slot.hours.filter(h => day[h]);
+    if(present.length === 0){
+      return `
+        <div class="slot-card ${slot.peak ? "peak" : ""}">
+          <div class="slot-label">${slot.label}<br>${slot.sub}</div>
+          <div class="slot-icon">❔</div>
+          <div class="slot-temp">—</div>
+          <div class="slot-precip">データなし</div>
+        </div>
+      `;
+    }
+    const temp = present.reduce((s, h) => s + day[h].temp, 0) / present.length;
+    const precip = present.reduce((s, h) => s + (day[h].precip || 0), 0);
+    const w = weatherInfo(day[present[0]].code);
+
+    return `
+      <div class="slot-card ${slot.peak ? "peak" : ""}">
+        <div class="slot-label">${slot.label}<br>${slot.sub}</div>
+        <div class="slot-icon">${w.icon}</div>
+        <div class="slot-temp">${Math.round(temp)}°</div>
+        <div class="slot-precip">${precip.toFixed(1)}mm</div>
+      </div>
+    `;
+  }).join("");
+}
+
+function renderRecommendation(){
+  const box = document.getElementById("storeCards");
+  const today = state.dailyResults[0];
+
+  state.todayTotal = (today.zuid ? today.zuid.total : 0) + (today.uva ? today.uva.total : 0);
+
+  let html = storeCardHtml("Zuid（1号店）", today.zuid);
+  if([1, 2, 4].includes(today.dow)) html += storeCardHtml("UvA", today.uva);
+  box.innerHTML = html;
+}
+
+function renderWeeklyView(){
+  const container = document.getElementById("weeklyView");
+  const results = state.dailyResults;
+  const todayDateStr = results[0].dateStr;
+  const weekDays = results.filter(r => OPERATING_DAYS.includes(r.dow));
+
+  if(weekDays.length === 0){
+    container.innerHTML = `<p class="off-note">今週の営業日データがありません。</p>`;
+    return;
+  }
+
+  container.innerHTML = weekDays.map(r => {
+    const idx = results.indexOf(r);
+    const tomorrow = results[idx + 1];
+    const isToday = r.dateStr === todayDateStr;
+    const d = new Date(r.dateStr);
+    const label = `${d.getMonth() + 1}/${d.getDate()}（${DAY_NAMES[r.dow]}）`;
+    const w = weatherInfo(r.code);
+
+    let tomorrowNote;
+    if(!tomorrow){ tomorrowNote = "翌日のデータなし"; }
+    else if(tomorrow.zuid){ tomorrowNote = `明日（${DAY_NAMES[tomorrow.dow]}）の予測：${tomorrow.zuid.total}個`; }
+    else { tomorrowNote = "翌日は営業なし"; }
+
+    return `
+      <div class="week-card ${isToday ? "today" : ""}">
+        <div class="week-date">${label}${isToday ? '<span class="today-tag">本日</span>' : ""}</div>
+        <div class="week-weather">${w.icon} ${Math.round(r.maxTemp)}° / ${Math.round(r.minTemp)}°</div>
+        <div class="week-store">Zuid: <strong>${r.zuid ? r.zuid.total + "個" : "—"}</strong></div>
+        <div class="week-store">UvA: <strong>${r.uva ? r.uva.total + "個" : "—"}</strong></div>
+        <div class="week-tomorrow">${tomorrowNote}</div>
+      </div>
+    `;
+  }).join("");
+}
+
+function renderMembers(){
+  const wrap = document.getElementById("memberList");
+  wrap.innerHTML = "";
+  state.members.forEach((m, idx) => {
+    const row = document.createElement("div");
+    row.className = "member-row";
+    row.innerHTML = `
+      <input type="text" value="${m.name}" data-idx="${idx}" class="name-input">
+      <button class="toggle-btn ${m.on ? "on" : "off"}" data-idx="${idx}">${m.on ? "出勤" : "休み"}</button>
+    `;
+    wrap.appendChild(row);
+  });
+
+  wrap.querySelectorAll(".toggle-btn").forEach(btn => {
+    btn.addEventListener("click", () => {
+      const idx = +btn.dataset.idx;
+      state.members[idx].on = !state.members[idx].on;
+      renderMembers();
+      renderFillings();
+    });
+  });
+
+  wrap.querySelectorAll(".name-input").forEach(input => {
+    input.addEventListener("input", () => {
+      const idx = +input.dataset.idx;
+      state.members[idx].name = input.value;
+      renderFillings();
+    });
+  });
+}
+
+function renderFillings(){
+  const area = document.getElementById("fillingArea");
+  const working = state.members.filter(m => m.on);
+
+  if(working.length === 0){
+    area.innerHTML = `<p class="off-note">本日は出勤メンバーがいません。</p>`;
+    return;
+  }
+
+  const assign = working.map(() => []);
+  FILLINGS.forEach((f, i) => {
+    assign[i % working.length].push(f);
+  });
+
+  const total = state.todayTotal || 0;
+  const perPerson = Math.floor(total / working.length);
+  const remainder = total - perPerson * working.length;
+
+  let rows = working.map((m, i) => {
+    const qty = perPerson + (i < remainder ? 1 : 0);
+    return `
+    <tr>
+      <td>${m.name}</td>
+      <td>${assign[i].map(f => `<span class="pill">${f}</span>`).join("")}</td>
+      <td>${qty}個</td>
+    </tr>
+  `;
+  }).join("");
+
+  const offMembers = state.members.filter(m => !m.on).map(m => m.name);
+  const offNote = offMembers.length
+    ? `<p class="off-note">本日休み: ${offMembers.join("、")}</p>`
+    : "";
+
+  area.innerHTML = `
+    <p class="off-note">本日推奨合計 ${total}個 ÷ 出勤${working.length}人 ＝ 約${perPerson}個/人</p>
+    <table>
+      <thead><tr><th>担当</th><th>具材</th><th>個数</th></tr></thead>
+      <tbody>${rows}</tbody>
+    </table>
+    ${offNote}
+  `;
+}
+
+function ensureWeeklyShift(dow){
+  if(!state.weeklyShift[dow]) state.weeklyShift[dow] = {};
+  state.members.forEach(m => {
+    if(!(m.name in state.weeklyShift[dow])) state.weeklyShift[dow][m.name] = m.on;
+  });
+}
+
+function ensureCellStatus(dow, name){
+  if(!state.cellStatus[dow]) state.cellStatus[dow] = {};
+  if(!state.cellStatus[dow][name]) state.cellStatus[dow][name] = { handed: false, cooked: false };
+}
+
+function renderWeeklyStatusTable(){
+  const area = document.getElementById("fillingStatusArea");
+  const days = state.dailyResults.filter(r => OPERATING_DAYS.includes(r.dow));
+
+  if(days.length === 0){
+    area.innerHTML = `<p class="off-note">今週の営業日データがありません。</p>`;
+    return;
+  }
+
+  days.forEach(d => ensureWeeklyShift(d.dow));
+
+  // 曜日ごとに出勤メンバーへ具材をラウンドロビン割り振り、個数は推奨数×比率で算出
+  const dayAssign = {};
+  days.forEach(d => {
+    const total = (d.zuid ? d.zuid.total : 0) + (d.uva ? d.uva.total : 0);
+    const working = state.members.filter(m => state.weeklyShift[d.dow][m.name]);
+    const buckets = working.map(() => []);
+    if(working.length > 0){
+      FILLINGS.forEach((f, i) => {
+        const qty = Math.round(total * FILLING_RATIOS[f]);
+        buckets[i % working.length].push({ filling: f, qty });
+      });
+    }
+    const map = {};
+    working.forEach((m, i) => { map[m.name] = buckets[i]; ensureCellStatus(d.dow, m.name); });
+    dayAssign[d.dow] = map;
+  });
+
+  const headerCells = days.map(d => {
+    const dt = new Date(d.dateStr);
+    return `<th>${DAY_NAMES[d.dow]}曜<br><span style="font-weight:normal;font-size:0.72rem;">${dt.getMonth() + 1}/${dt.getDate()}</span></th>`;
+  }).join("");
+
+  const bodyRows = state.members.map(m => {
+    const cells = days.map(d => {
+      const working = state.weeklyShift[d.dow][m.name];
+      const shiftBtn = `<button class="status-btn shift-toggle ${working ? "on" : "off"}" data-dow="${d.dow}" data-member="${m.name}">${working ? "出勤" : "休み"}</button>`;
+
+      if(!working){
+        return `<td>${shiftBtn}</td>`;
+      }
+
+      const items = (dayAssign[d.dow][m.name] || []);
+      const fillingText = items.map(it => `${it.filling}×${it.qty}`).join(" ") || "—";
+      const st = state.cellStatus[d.dow][m.name];
+
+      return `
+        <td>
+          ${shiftBtn}
+          <div class="cell-fillings">${fillingText}</div>
+          <div class="cell-status">
+            <button class="status-btn handed ${st.handed ? "active" : ""}" data-dow="${d.dow}" data-member="${m.name}" data-kind="handed">具材渡し済み✓</button>
+            <button class="status-btn cooked ${st.cooked ? "active" : ""}" data-dow="${d.dow}" data-member="${m.name}" data-kind="cooked">調理済み❄️</button>
+          </div>
+        </td>
+      `;
+    }).join("");
+
+    const neededItemsText = state.memberNeededItems[m.name];
+    const itemsCell = neededItemsText ? `<td class="needed-items-cell">【${neededItemsText}】</td>` : `<td></td>`;
+
+    return `<tr><td><strong>${m.name}</strong></td>${itemsCell}${cells}</tr>`;
+  }).join("");
+
+  area.innerHTML = `
+    <table>
+      <thead><tr><th>メンバー</th><th>必要物品</th>${headerCells}</tr></thead>
+      <tbody>${bodyRows}</tbody>
+    </table>
+  `;
+
+  area.querySelectorAll(".shift-toggle").forEach(btn => {
+    btn.addEventListener("click", () => {
+      const dow = +btn.dataset.dow;
+      const name = btn.dataset.member;
+      state.weeklyShift[dow][name] = !state.weeklyShift[dow][name];
+      renderWeeklyStatusTable();
+    });
+  });
+
+  area.querySelectorAll(".cell-status .status-btn").forEach(btn => {
+    btn.addEventListener("click", () => {
+      const dow = +btn.dataset.dow;
+      const name = btn.dataset.member;
+      const kind = btn.dataset.kind;
+      const label = kind === "handed" ? "渡し済み" : "調理済み";
+      const items = (dayAssign[dow][name] || []);
+      const fillingNames = items.map(it => it.filling).join("・") || "具材";
+      const nextState = !state.cellStatus[dow][name][kind];
+      const actionLabel = nextState ? label : `未${label}`;
+
+      showConfirm(`${name}の${fillingNames}を「${actionLabel}」に変更しますか？`, () => {
+        state.cellStatus[dow][name][kind] = nextState;
+        renderWeeklyStatusTable();
+      });
+    });
+  });
+}
+
+async function loadWeather(){
+  const url = `https://api.open-meteo.com/v1/forecast?latitude=${LAT}&longitude=${LON}` +
+    `&daily=temperature_2m_max,temperature_2m_min,weathercode` +
+    `&hourly=temperature_2m,precipitation,weathercode` +
+    `&forecast_days=16&timezone=Europe%2FAmsterdam`;
+  try{
+    const res = await fetch(url);
+    const data = await res.json();
+    state.hourlyByDate = buildHourlyByDate(data.hourly);
+    state.dailyResults = buildDailyResults(data.daily, state.hourlyByDate);
+    const confirmedMap = await fetchConfirmedPlan();
+    applyConfirmedOverrides(state.dailyResults, confirmedMap);
+    state.memberNeededItems = await fetchMemberNeededItems();
+    renderWeather(data.daily);
+    renderSalesTimeSlots();
+    renderRecommendation();
+    renderWeeklyView();
+    renderFillings();
+    renderWeeklyStatusTable();
+  }catch(e){
+    document.getElementById("weatherList").innerHTML = "天気情報の取得に失敗しました。";
+    document.getElementById("slotCards").innerHTML = "<p class='off-note'>時間別データの取得に失敗しました。</p>";
+    document.getElementById("storeCards").innerHTML = "<div class='recommend-note'>天気データが取得できないため推奨数を算出できません。</div>";
+    document.getElementById("weeklyView").innerHTML = "<p class='off-note'>週間データの取得に失敗しました。</p>";
+    document.getElementById("fillingStatusArea").innerHTML = "<p class='off-note'>週間データの取得に失敗しました。</p>";
+    console.error(e);
+  }
+}
+
+renderMembers();
+renderFillings();
+loadWeather();
+</script>
+
+</body>
+</html>
