@@ -276,11 +276,14 @@
   }
   #shiftTableArea th{ background: var(--main-light); color: var(--main-dark); }
   #shiftTableArea td:first-child, #shiftTableArea th:first-child{ text-align: left; }
-  .submitted-qty{ font-size: 0.74rem; color: #888; margin-bottom: 4px; }
   .manual-readonly{
     font-weight: bold;
     font-size: 0.88rem;
     color: var(--main-dark);
+  }
+  .manual-readonly.unanswered{
+    font-weight: normal;
+    color: #aaa;
   }
 
   /* 具材割り振り（カード内に統合） */
@@ -1093,14 +1096,10 @@ function renderShiftTable(){
     const cells = state.days.map(day => {
       const shiftKey = mdLabel(day.dateObj);
       const submitted = state.shiftByDate[shiftKey] && state.shiftByDate[shiftKey][name];
-      const submittedLabel = submitted ? (submitted.raw || "—") : "未回答";
-      const manualVal = getManualQty(day, name);
-      return `
-        <td>
-          <div class="submitted-qty">希望：${submittedLabel}</div>
-          <div class="manual-readonly">${manualVal}個</div>
-        </td>
-      `;
+      const display = submitted
+        ? `<div class="manual-readonly">${getManualQty(day, name)}個</div>`
+        : `<div class="manual-readonly unanswered">未回答</div>`;
+      return `<td>${display}</td>`;
     }).join("");
     return `<tr><td><strong>${name}</strong></td>${cells}</tr>`;
   }).join("");
