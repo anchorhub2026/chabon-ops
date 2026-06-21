@@ -1021,18 +1021,45 @@ function computeDaySnapshot(day){
 
   const working = MEMBERS.filter(name => getManualQty(day, name) > 0);
   const memberCaps = working.map(name => getEffectiveTotal(day, name));
+
+  // 合計個数入力欄に必ずデフォルト値が表示されるよう、override未設定のメンバーにも値を確定させておく
+  if(!day.memberTotalOverride) day.memberTotalOverride = {};
+  working.forEach((name, i) => {
+    if(!(name in day.memberTotalOverride)) day.memberTotalOverride[name] = memberCaps[i];
+  });
+
   const capTotal = memberCaps.reduce((s, v) => s + v, 0);
 
   const allocationTarget = total - chiseQty; // 本部＋ニギニギ隊が作る数（チセ分は割り振り対象外）
   const isOverCap = capTotal > allocationTarget;
 
-  const { memberBreakdowns, hqBreakdown } = buildProductionPlan(day, working, memberCaps);
+  const { memberBreakdowns } = buildProductionPlan(day, working, memberCaps);
   ensureEditableLines(day, working, memberBreakdowns);
 
-  const hqQty = Object.values(hqBreakdown).reduce((s, v) => s + v, 0);
-
+  // ニギニギ隊合計は「現在実際に割り振られている個数」（手動編集も含む）の合計
   const editedMemberTotals = working.map(name => (day.editableLines[name] || []).reduce((s, l) => s + (l.qty || 0), 0));
   const ningiTotal = editedMemberTotals.reduce((s, v) => s + v, 0);
+
+  // 本部製造数 = 総生産数（チセ除く） − ニギニギ隊合計。ニギニギ隊合計が変わるたびにここで再計算される
+  const hqQty = Math.max(0, allocationTarget - ningiTotal);
+
+  // 本部の具材内訳：枝豆・梅は常に本部、それ以外は「必要数 − ニギニギ隊の実際の生産量」の残り
+  const producedByFilling = {};
+  working.forEach(name => {
+    (day.editableLines[name] || []).forEach(line => {
+      if(line.qty > 0) producedByFilling[line.filling] = (producedByFilling[line.filling] || 0) + line.qty;
+    });
+  });
+  const hqBreakdown = {};
+  FILLINGS.forEach(f => {
+    const needed = neededQtyFor(day, f);
+    if(ALWAYS_HQ_FILLINGS.includes(f)){
+      if(needed > 0) hqBreakdown[f] = needed;
+    } else {
+      const remainder = needed - (producedByFilling[f] || 0);
+      if(remainder > 0) hqBreakdown[f] = remainder;
+    }
+  });
 
   return {
     chiseQty, total, working, memberCaps, capTotal, allocationTarget, isOverCap,
