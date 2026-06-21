@@ -146,11 +146,35 @@
     gap: 12px;
   }
   .day-card{
+    position: relative;
     border: 1px solid var(--line);
     border-radius: 12px;
     padding: 12px;
     background: #fdfcf9;
   }
+  .week-pin-label{
+    position: absolute;
+    top: -9px;
+    left: 10px;
+    background: var(--main);
+    color: #fff;
+    font-size: 0.66rem;
+    font-weight: bold;
+    padding: 2px 10px;
+    border-radius: 100px;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.15);
+  }
+  .week-next-next .week-pin-label{ background: #4f7a8c; }
+  .week-divider{
+    border-top: 3px solid var(--main-dark);
+    margin: 28px 0 24px;
+  }
+  .week-next-next .day-card{
+    background: #eef3f5;
+    border-color: #c9d8dd;
+  }
+  .week-next-next .day-card .day-head{ color: #3c6577; }
+  .week-next-next .week-heading h3{ color: #3c6577; }
   .day-card .day-head{
     font-weight: bold;
     color: var(--main-dark);
@@ -190,7 +214,7 @@
   table.forecast-table td.cell-row-total{ font-weight: bold; color: var(--main-dark); }
   table.forecast-table tfoot td{ font-weight: bold; color: var(--main-dark); border-bottom: none; border-top: 2px solid var(--main-light); padding-top: 6px; }
   .cell-input{
-    width: 42px;
+    width: 34px;
     border: none;
     background: transparent;
     font-size: 0.78rem;
@@ -201,6 +225,26 @@
   }
   .cell-input:focus{ border: 1px solid var(--main); background: #fff; outline: none; }
   .cell-input:disabled{ color: #ccc; }
+  .qty-stepper{
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 2px;
+  }
+  .qty-step-btn{
+    width: 18px;
+    height: 18px;
+    line-height: 1;
+    border: 1px solid var(--line);
+    background: #fff;
+    color: var(--main-dark);
+    font-size: 0.72rem;
+    font-weight: bold;
+    border-radius: 4px;
+    cursor: pointer;
+    padding: 0;
+  }
+  .qty-step-btn:disabled{ color: #ccc; cursor: default; }
   .day-divider{
     border-top: 1px dashed var(--line);
     margin: 8px 0;
@@ -807,7 +851,8 @@ function renderCalendar(){
   ];
 
   area.innerHTML = weeks.map((week, wi) => `
-    <div class="week-group">
+    ${wi > 0 ? `<div class="week-divider"></div>` : ""}
+    <div class="week-group ${wi === 1 ? "week-next-next" : ""}">
       <div class="week-heading">
         <h3>${week.title}（月〜金）</h3>
         <div>
@@ -817,8 +862,9 @@ function renderCalendar(){
         </div>
       </div>
       <div class="day-cards">
-        ${week.days.map(day => `
+        ${week.days.map((day, di) => `
           <div class="day-card">
+            ${di === 0 ? `<span class="week-pin-label">${week.title}</span>` : ""}
             <div class="day-head">${day.label}</div>
             <div class="day-weather">${day.weatherIcon} ${day.tempLabel}</div>
             <div id="forecastTable-${day.dateKey}">${forecastTableHtml(day)}</div>
@@ -833,6 +879,18 @@ function renderCalendar(){
   area.querySelectorAll(".confirm-week-btn").forEach(btn => {
     btn.addEventListener("click", () => confirmWeek(+btn.dataset.week));
   });
+}
+
+// 「−」［数字入力欄］「＋」の具材個数入力（販売予測数カード用）
+function qtyStepperHtml(day, store, filling, qty, isOpen){
+  const disabledAttr = isOpen ? "" : "disabled";
+  return `
+    <div class="qty-stepper">
+      <button type="button" class="qty-step-btn" data-action="dec" data-key="${day.dateKey}" data-store="${store}" data-filling="${filling}" ${disabledAttr}>−</button>
+      <input type="number" min="0" class="cell-input" data-key="${day.dateKey}" data-store="${store}" data-filling="${filling}" value="${qty}" ${disabledAttr}>
+      <button type="button" class="qty-step-btn" data-action="inc" data-key="${day.dateKey}" data-store="${store}" data-filling="${filling}" ${disabledAttr}>＋</button>
+    </div>
+  `;
 }
 
 // Zuid・UvA・チセを1つの表にまとめた読み取り専用ビュー（Zuid・UvAの個数セルのみ直接編集可）
@@ -856,8 +914,8 @@ function forecastTableHtml(day){
     return `
       <tr>
         <td class="f-name">${f}</td>
-        <td><input type="text" inputmode="numeric" pattern="[0-9]*" class="cell-input" data-key="${day.dateKey}" data-store="zuid" data-filling="${f}" value="${zuidQty}" ${day.zuidOpen ? "" : "disabled"}></td>
-        <td>${showUva ? `<input type="text" inputmode="numeric" pattern="[0-9]*" class="cell-input" data-key="${day.dateKey}" data-store="uva" data-filling="${f}" value="${uvaQty}" ${day.uvaOpen ? "" : "disabled"}>` : "—"}</td>
+        <td>${qtyStepperHtml(day, "zuid", f, zuidQty, day.zuidOpen)}</td>
+        <td>${showUva ? qtyStepperHtml(day, "uva", f, uvaQty, day.uvaOpen) : "—"}</td>
         <td class="cell-readonly">${chiseQtyForFilling}</td>
         <td class="cell-readonly cell-row-total" id="rowTotal-${day.dateKey}-${f}">${rowTotal}</td>
       </tr>
@@ -903,6 +961,18 @@ function renderForecastTable(day){
 function bindForecastTableEvents(day){
   const container = document.getElementById(`forecastTable-${day.dateKey}`);
   if(!container) return;
+
+  container.querySelectorAll(".qty-step-btn").forEach(btn => {
+    btn.addEventListener("click", () => {
+      if(btn.disabled) return;
+      const wrapper = btn.closest(".qty-stepper");
+      const input = wrapper && wrapper.querySelector(".cell-input");
+      if(!input || input.disabled) return;
+      const delta = btn.dataset.action === "inc" ? 1 : -1;
+      input.value = Math.max(0, (parseInt(input.value, 10) || 0) + delta);
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+  });
 
   container.querySelectorAll(".cell-input").forEach(input => {
     input.addEventListener("input", () => {
