@@ -236,29 +236,37 @@ function dayCardHtml(plan){
 async function init(){
   const area = document.getElementById("planArea");
   try{
+    console.log("[production.html] 確定プランシートを取得します", SHIFT_SPREADSHEET_ID);
     const json = await fetchSheetJson("確定プラン", SHIFT_SPREADSHEET_ID);
-    const rows = (json.table.rows || []).map(r => r.c.map(c => (c ? c.v : null)));
+    console.log("[production.html] gviz レスポンス（生データ）:", json);
+
+    const rawRows = json.table.rows || [];
+    console.log("[production.html] 行数:", rawRows.length);
 
     const today = new Date();
     today.setHours(0, 0, 0, 0);
 
-    const plans = rows
-      .filter(r => r[0])
+    const plans = rawRows
+      .filter(r => r.c && r.c[0])
       .map(r => {
-        const dateLabel = String(r[0]);
-        const dayName = r[1] || "";
-        const zuid = Number(r[2]) || 0;
-        const uva = Number(r[3]) || 0;
-        const chise = Number(r[4]) || 0;
-        const members = parseNingiBreakdown(r[5]);
-        const hqQty = Number(r[6]) || 0;
-        const hqItems = parseFillingString(r[7]);
-        const confirmedAt = r[8] ? String(r[8]) : "";
+        const c = r.c;
+        // 日付・確定日時はシート上で日付型になっているため、表示用文字列(f)を優先して使う
+        const dateLabel = c[0] ? String(c[0].f || c[0].v || "") : "";
+        const dayName = (c[1] && c[1].v) || "";
+        const zuid = Number(c[2] && c[2].v) || 0;
+        const uva = Number(c[3] && c[3].v) || 0;
+        const chise = Number(c[4] && c[4].v) || 0;
+        const members = parseNingiBreakdown(c[5] && c[5].v);
+        const hqQty = Number(c[6] && c[6].v) || 0;
+        const hqItems = parseFillingString(c[7] && c[7].v);
+        const confirmedAt = c[8] ? String(c[8].f || c[8].v || "") : "";
         const total = zuid + uva + chise;
         return { dateLabel, dayName, zuid, uva, chise, members, hqQty, hqItems, confirmedAt, total, sortDate: inferDate(dateLabel, today) };
       })
       .filter(p => p.sortDate && p.sortDate >= today)
       .sort((a, b) => a.sortDate - b.sortDate);
+
+    console.log("[production.html] 解析後のプラン件数（今日以降）:", plans.length, plans);
 
     if(plans.length === 0){
       area.innerHTML = `<p class="off-note">確定済みの生産プランがまだありません。<br>管理画面で「この週を確定・公開する」を押すと表示されます。</p>`;
@@ -267,7 +275,7 @@ async function init(){
 
     area.innerHTML = plans.map(dayCardHtml).join("");
   }catch(e){
-    console.error(e);
+    console.error("[production.html] データ取得・解析に失敗しました", e);
     area.innerHTML = `<p class="off-note">データの取得に失敗しました。</p>`;
   }
 }

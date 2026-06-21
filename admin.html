@@ -1464,15 +1464,18 @@ async function confirmWeek(weekIndex){
   const statusEl = document.getElementById(`weekStatus${weekIndex}`);
   statusEl.textContent = "送信中...";
 
+  console.log("確定データ送信:", JSON.stringify(payload));
+
   try{
-    await fetch(SCRIPT_URL, {
+    const result = await fetch(SCRIPT_URL, {
       method: "POST",
       mode: "no-cors",
       body: JSON.stringify(payload),
     });
+    console.log("送信成功:", result);
     statusEl.textContent = "確定・公開しました ✓";
   }catch(e){
-    console.error(e);
+    console.error("送信失敗:", e);
     statusEl.textContent = "送信に失敗しました";
   }
 }
