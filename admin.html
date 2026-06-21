@@ -225,7 +225,31 @@
   .prod-row:first-of-type{ border-top: none; }
   .prod-row-head{ font-weight: bold; font-size: 0.85rem; color: var(--ink); margin-bottom: 4px; }
   .prod-row-body{ margin-bottom: 4px; }
-  .prod-row-foot{ font-size: 0.8rem; color: #666; }
+  .prod-row-foot{ font-size: 0.8rem; color: #666; margin-top: 4px; }
+  .line-row{
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-bottom: 4px;
+  }
+  .line-filling-select{
+    flex: 1;
+    font-size: 0.8rem;
+    padding: 4px 6px;
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    background: #fff;
+    color: var(--ink);
+  }
+  .line-qty-input{
+    width: 56px;
+    padding: 4px;
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    font-size: 0.8rem;
+    text-align: center;
+  }
+  .line-unit{ font-size: 0.78rem; color: #888; }
   .prod-summary{
     font-size: 0.82rem;
     color: #555;
@@ -253,13 +277,10 @@
   #shiftTableArea th{ background: var(--main-light); color: var(--main-dark); }
   #shiftTableArea td:first-child, #shiftTableArea th:first-child{ text-align: left; }
   .submitted-qty{ font-size: 0.74rem; color: #888; margin-bottom: 4px; }
-  .manual-input{
-    width: 64px;
-    padding: 5px;
-    border: 1px solid var(--line);
-    border-radius: 6px;
-    font-size: 0.82rem;
-    text-align: center;
+  .manual-readonly{
+    font-weight: bold;
+    font-size: 0.88rem;
+    color: var(--main-dark);
   }
 
   /* 具材割り振り（カード内に統合） */
@@ -665,6 +686,17 @@ function pillsHtml(breakdown){
   return Object.entries(breakdown).map(([f, q]) => `<span class="pill">${f}×${q}</span>`).join("");
 }
 
+// メンバーの具材割り振り（具材名・個数）を松木さんが手動編集できるようにするための編集状態を確保する
+function ensureEditableLines(day, working, memberBreakdowns){
+  if(!day.editableLines) day.editableLines = {};
+  working.forEach((name, i) => {
+    if(!day.editableLines[name]){
+      const entries = Object.entries(memberBreakdowns[i] || {}).map(([filling, qty]) => ({ filling, qty }));
+      day.editableLines[name] = entries.length ? entries : [{ filling: ALLOC_FILLINGS[0], qty: 0 }];
+    }
+  });
+}
+
 function sumQtyMap(map){
   return map ? Object.values(map).reduce((s, v) => s + v, 0) : null;
 }
@@ -675,7 +707,6 @@ function uvaFinal(day){ return sumQtyMap(day.uvaFillingQty); }
 function getManualQty(day, name){
   const key = mdLabel(day.dateObj);
   const fromShift = state.shiftByDate[key] && state.shiftByDate[key][name];
-  if(day.manualShift && name in day.manualShift) return day.manualShift[name];
   return fromShift ? fromShift.qty : 0;
 }
 
@@ -839,6 +870,8 @@ function renderProductionSection(){
       ${week.days.map(day => `<div class="prod-card" id="prodday-${day.dateKey}">${productionDayHtml(day)}</div>`).join("")}
     </div>
   `).join("");
+
+  state.days.forEach(day => bindProductionDayEvents(day));
 }
 
 // 必要数（ALLOC_FILLINGS順）を「テープ」として、出勤メンバーの設定生産数(cap)で
@@ -923,12 +956,14 @@ function productionDayHtml(day){
   const allocationTarget = total - chiseQty; // 本部＋ニギニギ隊が作る数（チセ分は割り振り対象外）
   const isOverCap = capTotal > allocationTarget;
 
-  const { memberBreakdowns, memberQtys, hqBreakdown } = buildProductionPlan(day, working, memberCaps);
+  const { memberBreakdowns, hqBreakdown } = buildProductionPlan(day, working, memberCaps);
+  ensureEditableLines(day, working, memberBreakdowns);
 
-  // 具材ごとの必要数は必ず「ニギニギ隊の生産分＋本部の生産分」に分解されるため、
-  // この2つの合計は常に必要数の総和（=総生産数−チセ分）と一致する。
-  const ningiTotal = memberQtys.reduce((s, v) => s + v, 0);
   const hqQty = Object.values(hqBreakdown).reduce((s, v) => s + v, 0);
+
+  // 編集後の実際の個数で集計（手動編集の結果を反映）
+  const editedMemberTotals = working.map(name => (day.editableLines[name] || []).reduce((s, l) => s + (l.qty || 0), 0));
+  const ningiTotal = editedMemberTotals.reduce((s, v) => s + v, 0);
 
   const ningiBreakdownSummary = working.length
     ? working.map((name, i) => `${name}:${memberCaps[i]}`).join(" ")
@@ -943,18 +978,35 @@ function productionDayHtml(day){
     </div>
   `;
 
+  const fillingOptions = FILLINGS.map(f => `<option value="${f}">${f}</option>`).join("");
+
   const memberRows = working.length
-    ? working.map((name, i) => `
-        <div class="prod-row">
-          <div class="prod-row-head">${name}（${memberCaps[i]}個）</div>
-          <div class="prod-row-body">${pillsHtml(memberBreakdowns[i])}</div>
-          <div class="prod-row-foot">合計：${memberQtys[i]}個</div>
-        </div>
-      `).join("")
+    ? working.map((name, i) => {
+        const lines = day.editableLines[name] || [];
+        const linesHtml = lines.map((line, li) => `
+          <div class="line-row">
+            <select class="line-filling-select" data-key="${day.dateKey}" data-name="${name}" data-line="${li}">
+              ${FILLINGS.map(f => `<option value="${f}" ${f === line.filling ? "selected" : ""}>${f}</option>`).join("")}
+            </select>
+            <input type="number" class="line-qty-input" min="0" value="${line.qty}" data-key="${day.dateKey}" data-name="${name}" data-line="${li}">
+            <span class="line-unit">個</span>
+          </div>
+        `).join("");
+        return `
+          <div class="prod-row">
+            <div class="prod-row-head">${name}（設定生産数 ${memberCaps[i]}個）</div>
+            ${linesHtml}
+            <div class="prod-row-foot">合計：${editedMemberTotals[i]}個</div>
+          </div>
+        `;
+      }).join("")
     : `<p class="off-note">出勤予定のメンバーがいません。</p>`;
 
   const reconciledTotal = ningiTotal + hqQty;
-  const checkMark = reconciledTotal === allocationTarget ? " ✓" : "";
+  const isMismatch = reconciledTotal !== allocationTarget;
+  const checkHtml = isMismatch
+    ? `<div class="warning-line">⚠️ 合計が総生産数と一致しません（${reconciledTotal}個 / 必要 ${allocationTarget}個）</div>`
+    : `<div class="grand-total-line">合計（ニギニギ隊＋本部）：${reconciledTotal}個 ✓</div>`;
 
   return `
     <div class="fd-head">${day.label}</div>
@@ -964,13 +1016,42 @@ function productionDayHtml(day){
       <div class="prod-row-head">本部（自動算出：${hqQty}個）</div>
       <div class="prod-row-body">${pillsHtml(hqBreakdown)}</div>
     </div>
-    <div class="grand-total-line">合計（ニギニギ隊＋本部）：${reconciledTotal}個${checkMark}</div>
+    ${checkHtml}
   `;
 }
 
 function refreshProductionDay(day){
   const container = document.getElementById(`prodday-${day.dateKey}`);
-  if(container) container.innerHTML = productionDayHtml(day);
+  if(!container) return;
+  container.innerHTML = productionDayHtml(day);
+  bindProductionDayEvents(day);
+}
+
+function bindProductionDayEvents(day){
+  const container = document.getElementById(`prodday-${day.dateKey}`);
+  if(!container) return;
+
+  container.querySelectorAll(".line-filling-select").forEach(sel => {
+    sel.addEventListener("change", () => {
+      const name = sel.dataset.name;
+      const li = parseInt(sel.dataset.line, 10);
+      if(day.editableLines[name] && day.editableLines[name][li]){
+        day.editableLines[name][li].filling = sel.value;
+      }
+      refreshProductionDay(day);
+    });
+  });
+
+  container.querySelectorAll(".line-qty-input").forEach(input => {
+    input.addEventListener("change", () => {
+      const name = input.dataset.name;
+      const li = parseInt(input.dataset.line, 10);
+      if(day.editableLines[name] && day.editableLines[name][li]){
+        day.editableLines[name][li].qty = Math.max(0, parseInt(input.value, 10) || 0);
+      }
+      refreshProductionDay(day);
+    });
+  });
 }
 
 async function confirmWeek(weekIndex){
@@ -1017,7 +1098,7 @@ function renderShiftTable(){
       return `
         <td>
           <div class="submitted-qty">希望：${submittedLabel}</div>
-          <input type="number" class="manual-input" min="0" value="${manualVal}" data-key="${day.dateKey}" data-name="${name}">
+          <div class="manual-readonly">${manualVal}個</div>
         </td>
       `;
     }).join("");
@@ -1030,18 +1111,6 @@ function renderShiftTable(){
       <tbody>${bodyRows}</tbody>
     </table>
   `;
-
-  area.querySelectorAll(".manual-input").forEach(input => {
-    input.addEventListener("change", () => {
-      const key = input.dataset.key;
-      const name = input.dataset.name;
-      const day = state.days.find(d => d.dateKey === key);
-      if(!day) return;
-      if(!day.manualShift) day.manualShift = {};
-      day.manualShift[name] = Math.max(0, parseInt(input.value, 10) || 0);
-      refreshProductionDay(day);
-    });
-  });
 }
 
 /* ---------- 初期化 ---------- */
