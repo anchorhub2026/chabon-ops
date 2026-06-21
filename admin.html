@@ -1124,13 +1124,24 @@ function bindProductionDayEvents(day){
   });
 
   container.querySelectorAll(".total-override-input").forEach(input => {
-    input.addEventListener("change", () => {
+    input.addEventListener("input", () => {
       const name = input.dataset.name;
       const newTotal = Math.max(0, parseInt(input.value, 10) || 0);
+      const cursorPos = input.selectionStart;
+
       if(!day.memberTotalOverride) day.memberTotalOverride = {};
       day.memberTotalOverride[name] = newTotal;
       resetDayPlan(day); // 合計個数が変わったら割り振りを自動再計算
       refreshProductionDay(day);
+
+      // 再描画でinputが入れ替わるため、フォーカスとカーソル位置を復元する
+      const newInput = document.querySelector(
+        `.total-override-input[data-key="${day.dateKey}"][data-name="${name}"]`
+      );
+      if(newInput){
+        newInput.focus();
+        try{ newInput.setSelectionRange(cursorPos, cursorPos); }catch(e){}
+      }
     });
   });
 }
