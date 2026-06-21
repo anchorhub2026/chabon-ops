@@ -203,7 +203,7 @@
     display: flex;
     gap: 6px;
     flex-wrap: wrap;
-    margin-bottom: 14px;
+    margin-bottom: 10px;
   }
   .bulk-btn{
     border: 1px solid var(--line);
@@ -391,13 +391,6 @@
 
   <section>
     <h2>最終生産割り振り<span class="badge">本部分は自動算出</span></h2>
-    <div class="bulk-actions" id="bulkActions">
-      <button type="button" class="bulk-btn" data-val="24">全員24個</button>
-      <button type="button" class="bulk-btn" data-val="27">全員27個</button>
-      <button type="button" class="bulk-btn" data-val="30">全員30個</button>
-      <button type="button" class="bulk-btn" data-val="33">全員33個</button>
-      <button type="button" class="bulk-btn" data-val="36">全員36個</button>
-    </div>
     <div id="productionArea"><p class="loading">データを読み込み中...</p></div>
   </section>
 
@@ -1107,8 +1100,17 @@ function productionDayHtml(day){
     ? `<div class="warning-line">⚠️ 合計が合いません（${reconciledTotal}個 / 必要 ${allocationTarget}個）</div>`
     : `<div class="ok-line">✓ OK（${reconciledTotal}個）</div>`;
 
+  const bulkActionsHtml = `
+    <div class="bulk-actions">
+      <button type="button" class="bulk-btn ${day.bulkValue === 24 ? "active" : ""}" data-key="${day.dateKey}" data-val="24">全員24個</button>
+      <button type="button" class="bulk-btn ${day.bulkValue === 27 ? "active" : ""}" data-key="${day.dateKey}" data-val="27">全員27個</button>
+      <button type="button" class="bulk-btn ${day.bulkValue === 30 ? "active" : ""}" data-key="${day.dateKey}" data-val="30">全員30個</button>
+    </div>
+  `;
+
   return `
     <div class="fd-head">${day.label}</div>
+    ${bulkActionsHtml}
     ${summaryHtml}
     ${memberRows}
     <div class="prod-row">
@@ -1191,6 +1193,20 @@ function bindProductionDayEvents(day){
       }
     });
   });
+
+  container.querySelectorAll(".bulk-btn").forEach(btn => {
+    btn.addEventListener("click", () => {
+      const val = parseInt(btn.dataset.val, 10);
+      const working = MEMBERS.filter(name => getManualQty(day, name) > 0);
+      if(working.length === 0) return;
+
+      day.bulkValue = val;
+      if(!day.memberTotalOverride) day.memberTotalOverride = {};
+      working.forEach(name => { day.memberTotalOverride[name] = val; });
+      resetDayPlan(day);
+      refreshProductionDay(day);
+    });
+  });
 }
 
 // メンバー別の具材割り振りを文字列化（例："ツナマヨ×15 スパイシーツナマヨ×9"）
@@ -1268,34 +1284,6 @@ function renderShiftTable(){
   `;
 }
 
-/* ---------- 一括変更ボタン ---------- */
-
-function bindBulkActions(){
-  document.querySelectorAll(".bulk-btn").forEach(btn => {
-    btn.addEventListener("click", () => {
-      const val = parseInt(btn.dataset.val, 10);
-      state.bulkValue = val;
-
-      state.days.forEach(day => {
-        const working = MEMBERS.filter(name => getManualQty(day, name) > 0);
-        if(working.length === 0) return;
-        if(!day.memberTotalOverride) day.memberTotalOverride = {};
-        working.forEach(name => { day.memberTotalOverride[name] = val; });
-        resetDayPlan(day);
-      });
-
-      renderProductionSection();
-      updateBulkActionHighlight();
-    });
-  });
-}
-
-function updateBulkActionHighlight(){
-  document.querySelectorAll(".bulk-btn").forEach(btn => {
-    btn.classList.toggle("active", parseInt(btn.dataset.val, 10) === state.bulkValue);
-  });
-}
-
 /* ---------- 初期化 ---------- */
 
 async function init(){
@@ -1319,7 +1307,6 @@ async function init(){
     renderCalendar();
     renderShiftTable();
     renderProductionSection();
-    bindBulkActions();
   }catch(e){
     console.error(e);
     document.getElementById("calendarArea").innerHTML = "<p class='off-note'>データの取得に失敗しました。</p>";
