@@ -112,6 +112,28 @@
     text-decoration: underline;
     margin-left: 10px;
   }
+  .refresh-shift-btn{
+    margin-left: auto;
+    border: 1px solid var(--main);
+    background: var(--main-light);
+    color: var(--main-dark);
+    font-weight: bold;
+    font-size: 0.78rem;
+    padding: 6px 14px;
+    border-radius: 100px;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+  .refresh-shift-btn:active{ background: var(--main); color: #fff; }
+  .refresh-shift-btn:disabled{
+    opacity: 0.7;
+    cursor: default;
+  }
+  .refresh-shift-btn.success{
+    background: var(--main);
+    color: #fff;
+    border-color: var(--main);
+  }
   .week-status-msg{
     font-size: 0.78rem;
     color: var(--main-dark);
@@ -385,7 +407,10 @@
   </section>
 
   <section>
-    <h2>ニギニギ隊シフト希望一覧</h2>
+    <h2>
+      ニギニギ隊シフト希望一覧
+      <button type="button" class="refresh-shift-btn" id="refreshShiftBtn">🔄 希望シフトを更新</button>
+    </h2>
     <div id="shiftTableArea"><p class="loading">データを読み込み中...</p></div>
   </section>
 
@@ -831,8 +856,8 @@ function forecastTableHtml(day){
     return `
       <tr>
         <td class="f-name">${f}</td>
-        <td><input type="number" min="0" class="cell-input" data-key="${day.dateKey}" data-store="zuid" data-filling="${f}" value="${zuidQty}" ${day.zuidOpen ? "" : "disabled"}></td>
-        <td>${showUva ? `<input type="number" min="0" class="cell-input" data-key="${day.dateKey}" data-store="uva" data-filling="${f}" value="${uvaQty}" ${day.uvaOpen ? "" : "disabled"}>` : "—"}</td>
+        <td><input type="text" inputmode="numeric" pattern="[0-9]*" class="cell-input" data-key="${day.dateKey}" data-store="zuid" data-filling="${f}" value="${zuidQty}" ${day.zuidOpen ? "" : "disabled"}></td>
+        <td>${showUva ? `<input type="text" inputmode="numeric" pattern="[0-9]*" class="cell-input" data-key="${day.dateKey}" data-store="uva" data-filling="${f}" value="${uvaQty}" ${day.uvaOpen ? "" : "disabled"}>` : "—"}</td>
         <td class="cell-readonly">${chiseQtyForFilling}</td>
         <td class="cell-readonly cell-row-total" id="rowTotal-${day.dateKey}-${f}">${rowTotal}</td>
       </tr>
@@ -885,19 +910,28 @@ function bindForecastTableEvents(day){
       const filling = input.dataset.filling;
       const qtyMap = store === "zuid" ? day.zuidFillingQty : day.uvaFillingQty;
       qtyMap[filling] = Math.max(0, parseInt(input.value, 10) || 0);
-      const cursorPos = input.selectionStart;
 
-      // ステップ1：Zuid+UvA合計（必要数）が変わったので、表とニギニギ隊/本部の割り振りを再計算
-      renderForecastTable(day);
-      refreshProductionDay(day);
+      // 入力欄自体は再生成せず、行・列・全体の合計セルだけを更新する（フォーカスを失わない）
+      const chise = state.chiseByDate[mdLabel(day.dateObj)];
+      const chiseQtyForFilling = (chise && chise.breakdown[filling]) || 0;
+      const showUva = [1, 2, 4].includes(day.dow);
+      const zuidQty = day.zuidFillingQty[filling] || 0;
+      const uvaQty = showUva ? (day.uvaFillingQty[filling] || 0) : 0;
 
-      const newInput = document.querySelector(
-        `.cell-input[data-key="${day.dateKey}"][data-store="${store}"][data-filling="${filling}"]`
-      );
-      if(newInput){
-        newInput.focus();
-        try{ newInput.setSelectionRange(cursorPos, cursorPos); }catch(e){}
+      const rowTotalEl = document.getElementById(`rowTotal-${day.dateKey}-${filling}`);
+      if(rowTotalEl) rowTotalEl.textContent = zuidQty + uvaQty + chiseQtyForFilling;
+
+      const storeTotalEl = document.getElementById(`storeTotal-${store}-${day.dateKey}`);
+      if(storeTotalEl) storeTotalEl.textContent = sumQtyMap(qtyMap);
+
+      const chiseQty = chise ? chise.subtotal : 0;
+      const grandTotalEl = document.getElementById(`forecastGrandTotal-${day.dateKey}`);
+      if(grandTotalEl){
+        grandTotalEl.textContent = sumQtyMap(day.zuidFillingQty) + (showUva ? sumQtyMap(day.uvaFillingQty) : 0) + chiseQty;
       }
+
+      // 必要数（Zuid+UvA合計）が変わったので、本部内訳・合計チェックだけ再計算（メンバーの入力欄には触れない）
+      refreshDerived(day);
     });
   });
 
@@ -919,8 +953,9 @@ function bindForecastTableEvents(day){
           : buildFillingDefaults(0);
       }
 
+      // 営業/休みの切り替えは具材の必要数が丸ごと変わる構造的な変更なので表は再生成する
       renderForecastTable(day);
-      refreshProductionDay(day);
+      refreshDerived(day);
     });
   });
 }
@@ -1078,65 +1113,75 @@ function computeDaySnapshot(day){
   };
 }
 
-function productionDayHtml(day){
-  const {
-    chiseQty, total, working, memberCaps, allocationTarget, isOverCap,
-    hqBreakdown, hqQty, editedMemberTotals, ningiTotal,
-  } = computeDaySnapshot(day);
+// 具材内訳・チェック表示など「ユーザーが直接編集しない」部分のHTML
+function deriveBlocksHtml(snap){
+  const { total, working, memberCaps, isOverCap, hqBreakdown, hqQty, ningiTotal, allocationTarget } = snap;
 
   const ningiBreakdownSummary = working.length
     ? working.map((name, i) => `${name}:${memberCaps[i]}`).join(" ")
     : "なし";
 
   const summaryHtml = `
-    <div class="prod-summary">
-      <div>総生産数：${total}個</div>
-      <div>ニギニギ隊合計：${ningiTotal}個（${ningiBreakdownSummary}）</div>
-      <div>本部：${hqQty}個（自動計算）</div>
-      ${isOverCap ? `<div class="warning-line">⚠️ ニギニギ隊の設定生産数が総生産数を超えています</div>` : ""}
-    </div>
+    <div>総生産数：${total}個</div>
+    <div>ニギニギ隊合計：${ningiTotal}個（${ningiBreakdownSummary}）</div>
+    <div>本部：${hqQty}個（自動計算）</div>
+    ${isOverCap ? `<div class="warning-line">⚠️ ニギニギ隊の設定生産数が総生産数を超えています</div>` : ""}
   `;
 
-  const memberRows = working.length
-    ? working.map((name, i) => {
-        const lines = day.editableLines[name] || [];
-        const wish = getManualQty(day, name);
-        const linesHtml = lines.map((line, li) => `
-          <div class="line-row">
-            <select class="line-filling-select" data-key="${day.dateKey}" data-name="${name}" data-line="${li}">
-              ${FILLINGS.map(f => `<option value="${f}" ${f === line.filling ? "selected" : ""}>${f}</option>`).join("")}
-            </select>
-            <input type="number" class="line-qty-input" min="0" value="${line.qty}" data-key="${day.dateKey}" data-name="${name}" data-line="${li}">
-            <span class="line-unit">個</span>
-            <button type="button" class="line-delete-btn" data-key="${day.dateKey}" data-name="${name}" data-line="${li}">削除</button>
-          </div>
-        `).join("");
-        const memberMismatch = editedMemberTotals[i] !== memberCaps[i]
-          ? `<div class="member-mismatch">⚠️ 合計が合いません（${editedMemberTotals[i]}個 / 設定${memberCaps[i]}個）</div>`
-          : "";
-        return `
-          <div class="prod-row">
-            <div class="prod-row-head">${name}</div>
-            <div class="wish-readonly">希望：${wish}個（読み取り専用）</div>
-            <div class="line-row">
-              <span class="line-unit">合計個数：</span>
-              <input type="number" class="total-override-input" min="0" value="${memberCaps[i]}" data-key="${day.dateKey}" data-name="${name}">
-              <span class="line-unit">個</span>
-            </div>
-            ${linesHtml}
-            <button type="button" class="add-line-btn" data-key="${day.dateKey}" data-name="${name}">＋具材を追加</button>
-            <div class="prod-row-foot">合計：${editedMemberTotals[i]}個</div>
-            ${memberMismatch}
-          </div>
-        `;
-      }).join("")
-    : `<p class="off-note">出勤予定のメンバーがいません。</p>`;
+  const hqHtml = `
+    <div class="prod-row-head">本部（自動算出：${hqQty}個）</div>
+    <div class="prod-row-body">${pillsHtml(hqBreakdown)}</div>
+  `;
 
   const reconciledTotal = ningiTotal + hqQty;
   const isMismatch = reconciledTotal !== allocationTarget;
   const checkHtml = isMismatch
     ? `<div class="warning-line">⚠️ 合計が合いません（${reconciledTotal}個 / 必要 ${allocationTarget}個）</div>`
     : `<div class="ok-line">✓ OK（${reconciledTotal}個）</div>`;
+
+  return { summaryHtml, hqHtml, checkHtml };
+}
+
+// 1人分の行（具材名・個数・合計個数の入力欄を含む）。ユーザーが直接編集する部分。
+function memberRowHtml(day, snap, idx){
+  const name = snap.working[idx];
+  const lines = day.editableLines[name] || [];
+  const wish = getManualQty(day, name);
+  const cap = snap.memberCaps[idx];
+  const editedTotal = snap.editedMemberTotals[idx];
+  const mismatch = editedTotal !== cap;
+
+  const linesHtml = lines.map((line, li) => `
+    <div class="line-row">
+      <select class="line-filling-select" data-key="${day.dateKey}" data-name="${name}" data-line="${li}">
+        ${FILLINGS.map(f => `<option value="${f}" ${f === line.filling ? "selected" : ""}>${f}</option>`).join("")}
+      </select>
+      <input type="text" inputmode="numeric" pattern="[0-9]*" class="line-qty-input" value="${line.qty}" data-key="${day.dateKey}" data-name="${name}" data-line="${li}">
+      <span class="line-unit">個</span>
+      <button type="button" class="line-delete-btn" data-key="${day.dateKey}" data-name="${name}" data-line="${li}">削除</button>
+    </div>
+  `).join("");
+
+  return `
+    <div class="prod-row" id="memberRow-${day.dateKey}-${name}">
+      <div class="prod-row-head">${name}</div>
+      <div class="wish-readonly">希望：${wish}個（読み取り専用）</div>
+      <div class="line-row">
+        <span class="line-unit">合計個数：</span>
+        <input type="text" inputmode="numeric" pattern="[0-9]*" class="total-override-input" value="${cap}" data-key="${day.dateKey}" data-name="${name}">
+        <span class="line-unit">個</span>
+      </div>
+      ${linesHtml}
+      <button type="button" class="add-line-btn" data-key="${day.dateKey}" data-name="${name}">＋具材を追加</button>
+      <div class="prod-row-foot" id="memberFooter-${day.dateKey}-${name}">合計：${editedTotal}個</div>
+      <div class="member-mismatch" id="memberMismatch-${day.dateKey}-${name}" ${mismatch ? "" : 'style="display:none;"'}>⚠️ 合計が合いません（${editedTotal}個 / 設定${cap}個）</div>
+    </div>
+  `;
+}
+
+function productionDayHtml(day){
+  const snap = computeDaySnapshot(day);
+  const { summaryHtml, hqHtml, checkHtml } = deriveBlocksHtml(snap);
 
   const bulkActionsHtml = `
     <div class="bulk-actions">
@@ -1146,17 +1191,89 @@ function productionDayHtml(day){
     </div>
   `;
 
+  const memberRowsHtml = snap.working.length
+    ? snap.working.map((name, i) => memberRowHtml(day, snap, i)).join("")
+    : `<p class="off-note">出勤予定のメンバーがいません。</p>`;
+
   return `
     <div class="fd-head">${day.label}</div>
     ${bulkActionsHtml}
-    ${summaryHtml}
-    ${memberRows}
-    <div class="prod-row">
-      <div class="prod-row-head">本部（自動算出：${hqQty}個）</div>
-      <div class="prod-row-body">${pillsHtml(hqBreakdown)}</div>
-    </div>
-    ${checkHtml}
+    <div class="prod-summary" id="summaryBlock-${day.dateKey}">${summaryHtml}</div>
+    <div id="memberRowsArea-${day.dateKey}">${memberRowsHtml}</div>
+    <div class="prod-row" id="hqBlock-${day.dateKey}">${hqHtml}</div>
+    <div id="checkBlock-${day.dateKey}">${checkHtml}</div>
   `;
+}
+
+// 本部の内訳・合計チェックなど「ユーザーが編集しない」部分だけを更新する。
+// メンバーの合計個数・具材名・個数の入力欄には一切触れない。
+function refreshDerived(day){
+  const snap = computeDaySnapshot(day);
+  const { summaryHtml, hqHtml, checkHtml } = deriveBlocksHtml(snap);
+
+  const summaryEl = document.getElementById(`summaryBlock-${day.dateKey}`);
+  if(summaryEl) summaryEl.innerHTML = summaryHtml;
+
+  const hqEl = document.getElementById(`hqBlock-${day.dateKey}`);
+  if(hqEl) hqEl.innerHTML = hqHtml;
+
+  const checkEl = document.getElementById(`checkBlock-${day.dateKey}`);
+  if(checkEl) checkEl.innerHTML = checkHtml;
+
+  snap.working.forEach((name, i) => {
+    const footerEl = document.getElementById(`memberFooter-${day.dateKey}-${name}`);
+    if(footerEl) footerEl.textContent = `合計：${snap.editedMemberTotals[i]}個`;
+
+    const mismatchEl = document.getElementById(`memberMismatch-${day.dateKey}-${name}`);
+    if(mismatchEl){
+      const mismatch = snap.editedMemberTotals[i] !== snap.memberCaps[i];
+      mismatchEl.style.display = mismatch ? "" : "none";
+      if(mismatch){
+        mismatchEl.textContent = `⚠️ 合計が合いません（${snap.editedMemberTotals[i]}個 / 設定${snap.memberCaps[i]}個）`;
+      }
+    }
+  });
+}
+
+// 1人分の行だけを丸ごと再生成する（具材の追加・削除・合計個数変更など、行の構成自体が変わる場合に使う）
+function refreshMemberRow(day, name){
+  const snap = computeDaySnapshot(day);
+  const idx = snap.working.indexOf(name);
+  const rowEl = document.getElementById(`memberRow-${day.dateKey}-${name}`);
+  if(idx === -1 || !rowEl){
+    refreshProductionDay(day);
+    return;
+  }
+  rowEl.outerHTML = memberRowHtml(day, snap, idx);
+  bindMemberRowEvents(day, name);
+  refreshDerived(day);
+}
+
+// 合計個数（cap）が変わったとき、既存の具材構成（種類）は保ったまま個数だけを比例配分し直す
+function rescaleMemberLines(day, name, newTotal){
+  const lines = day.editableLines[name] || [];
+
+  if(lines.length === 0){
+    day.editableLines[name] = newTotal > 0 ? [{ filling: ALLOC_FILLINGS[0], qty: newTotal }] : [];
+    return;
+  }
+
+  const oldTotal = lines.reduce((s, l) => s + (l.qty || 0), 0);
+  if(oldTotal === 0){
+    day.editableLines[name] = lines.map((l, i) => ({ filling: l.filling, qty: i === 0 ? newTotal : 0 }));
+    return;
+  }
+
+  let allocated = 0;
+  const rescaled = lines.map((l, i) => {
+    if(i === lines.length - 1){
+      return { filling: l.filling, qty: Math.max(0, newTotal - allocated) };
+    }
+    const qty = Math.floor(((l.qty / oldTotal) * newTotal) / 3) * 3;
+    allocated += qty;
+    return { filling: l.filling, qty };
+  });
+  day.editableLines[name] = rescaled;
 }
 
 function refreshProductionDay(day){
@@ -1166,82 +1283,66 @@ function refreshProductionDay(day){
   bindProductionDayEvents(day);
 }
 
-function bindProductionDayEvents(day){
-  const container = document.getElementById(`prodday-${day.dateKey}`);
-  if(!container) return;
+// 1人分の行の中の入力（具材名・個数）だけをバインドする
+function bindMemberRowEvents(day, name){
+  const row = document.getElementById(`memberRow-${day.dateKey}-${name}`);
+  if(!row) return;
 
-  container.querySelectorAll(".line-filling-select").forEach(sel => {
+  row.querySelectorAll(".line-filling-select").forEach(sel => {
     sel.addEventListener("change", () => {
-      const name = sel.dataset.name;
       const li = parseInt(sel.dataset.line, 10);
       if(day.editableLines[name] && day.editableLines[name][li]){
         day.editableLines[name][li].filling = sel.value;
       }
-      refreshProductionDay(day);
+      // 具材名の変更は個数を変えないので、本部内訳・チェックだけ更新（他の入力欄には触れない）
+      refreshDerived(day);
     });
   });
 
-  container.querySelectorAll(".line-qty-input").forEach(input => {
+  row.querySelectorAll(".line-qty-input").forEach(input => {
     input.addEventListener("input", () => {
-      const name = input.dataset.name;
       const li = parseInt(input.dataset.line, 10);
-      const cursorPos = input.selectionStart;
-
       if(day.editableLines[name] && day.editableLines[name][li]){
         day.editableLines[name][li].qty = Math.max(0, parseInt(input.value, 10) || 0);
       }
-      // ステップ2〜5：メンバーの具材個数が変わったので、ニギニギ隊合計・本部内訳・合計チェックを再計算
-      refreshProductionDay(day);
-
-      const newInput = document.querySelector(
-        `.line-qty-input[data-key="${day.dateKey}"][data-name="${name}"][data-line="${li}"]`
-      );
-      if(newInput){
-        newInput.focus();
-        try{ newInput.setSelectionRange(cursorPos, cursorPos); }catch(e){}
-      }
+      // 入力中でも本部内訳・チェックはリアルタイム更新するが、入力欄自体は再生成しない
+      refreshDerived(day);
     });
   });
 
-  container.querySelectorAll(".line-delete-btn").forEach(btn => {
+  row.querySelectorAll(".line-delete-btn").forEach(btn => {
     btn.addEventListener("click", () => {
-      const name = btn.dataset.name;
       const li = parseInt(btn.dataset.line, 10);
       if(day.editableLines[name]) day.editableLines[name].splice(li, 1);
-      refreshProductionDay(day);
+      refreshMemberRow(day, name);
     });
   });
 
-  container.querySelectorAll(".add-line-btn").forEach(btn => {
+  row.querySelectorAll(".add-line-btn").forEach(btn => {
     btn.addEventListener("click", () => {
-      const name = btn.dataset.name;
       if(!day.editableLines[name]) day.editableLines[name] = [];
       day.editableLines[name].push({ filling: ALLOC_FILLINGS[0], qty: 0 });
-      refreshProductionDay(day);
+      refreshMemberRow(day, name);
     });
   });
 
-  container.querySelectorAll(".total-override-input").forEach(input => {
-    input.addEventListener("input", () => {
-      const name = input.dataset.name;
+  row.querySelectorAll(".total-override-input").forEach(input => {
+    // 入力中は何もしない。フォーカスが外れた時（blur）にだけ再計算する
+    input.addEventListener("blur", () => {
       const newTotal = Math.max(0, parseInt(input.value, 10) || 0);
-      const cursorPos = input.selectionStart;
-
       if(!day.memberTotalOverride) day.memberTotalOverride = {};
       day.memberTotalOverride[name] = newTotal;
-      resetDayPlan(day); // 合計個数が変わったら割り振りを自動再計算
-      refreshProductionDay(day);
-
-      // 再描画でinputが入れ替わるため、フォーカスとカーソル位置を復元する
-      const newInput = document.querySelector(
-        `.total-override-input[data-key="${day.dateKey}"][data-name="${name}"]`
-      );
-      if(newInput){
-        newInput.focus();
-        try{ newInput.setSelectionRange(cursorPos, cursorPos); }catch(e){}
-      }
+      rescaleMemberLines(day, name, newTotal); // この人の具材構成は保ったまま個数だけ配分し直す
+      refreshMemberRow(day, name);
     });
   });
+}
+
+function bindProductionDayEvents(day){
+  const container = document.getElementById(`prodday-${day.dateKey}`);
+  if(!container) return;
+
+  MEMBERS.forEach(name => bindMemberRowEvents(day, name));
 
   container.querySelectorAll(".bulk-btn").forEach(btn => {
     btn.addEventListener("click", () => {
@@ -1333,6 +1434,38 @@ function renderShiftTable(){
   `;
 }
 
+/* ---------- シフト希望の再読み込み ---------- */
+
+async function refreshShiftData(){
+  const btn = document.getElementById("refreshShiftBtn");
+  if(!btn) return;
+
+  const originalLabel = "🔄 希望シフトを更新";
+  btn.disabled = true;
+  btn.classList.remove("success");
+  btn.textContent = "読み込み中...";
+
+  try{
+    const shiftJson = await fetchSheetJson("シフト回答", SHIFT_SPREADSHEET_ID);
+    state.shiftByDate = shiftJson ? parseShiftSheet(shiftJson) : {};
+
+    renderShiftTable();
+    renderProductionSection();
+
+    btn.classList.add("success");
+    btn.textContent = "✓ 更新しました";
+  }catch(e){
+    console.error("シフト希望の再読み込みに失敗しました", e);
+    btn.textContent = "✕ 更新に失敗しました";
+  }finally{
+    setTimeout(() => {
+      btn.disabled = false;
+      btn.classList.remove("success");
+      btn.textContent = originalLabel;
+    }, 2000);
+  }
+}
+
 /* ---------- 初期化 ---------- */
 
 async function init(){
@@ -1356,6 +1489,9 @@ async function init(){
     renderCalendar();
     renderShiftTable();
     renderProductionSection();
+
+    const refreshBtn = document.getElementById("refreshShiftBtn");
+    if(refreshBtn) refreshBtn.addEventListener("click", refreshShiftData);
   }catch(e){
     console.error(e);
     document.getElementById("calendarArea").innerHTML = "<p class='off-note'>データの取得に失敗しました。</p>";
