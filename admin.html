@@ -106,6 +106,12 @@
     cursor: pointer;
   }
   .confirm-week-btn:active{ background: var(--main-dark); }
+  .production-link{
+    font-size: 0.78rem;
+    color: var(--main-dark);
+    text-decoration: underline;
+    margin-left: 10px;
+  }
   .week-status-msg{
     font-size: 0.78rem;
     color: var(--main-dark);
@@ -193,6 +199,27 @@
   }
 
   /* 最終生産割り振り */
+  .bulk-actions{
+    display: flex;
+    gap: 6px;
+    flex-wrap: wrap;
+    margin-bottom: 14px;
+  }
+  .bulk-btn{
+    border: 1px solid var(--line);
+    background: #f0eee8;
+    color: #777;
+    font-size: 0.76rem;
+    padding: 5px 12px;
+    border-radius: 100px;
+    cursor: pointer;
+  }
+  .bulk-btn.active{
+    background: var(--main);
+    color: #fff;
+    border-color: var(--main);
+    font-weight: bold;
+  }
   .week-heading-simple{
     font-size: 1rem;
     color: var(--main-dark);
@@ -364,6 +391,13 @@
 
   <section>
     <h2>最終生産割り振り<span class="badge">本部分は自動算出</span></h2>
+    <div class="bulk-actions" id="bulkActions">
+      <button type="button" class="bulk-btn" data-val="24">全員24個</button>
+      <button type="button" class="bulk-btn" data-val="27">全員27個</button>
+      <button type="button" class="bulk-btn" data-val="30">全員30個</button>
+      <button type="button" class="bulk-btn" data-val="33">全員33個</button>
+      <button type="button" class="bulk-btn" data-val="36">全員36個</button>
+    </div>
     <div id="productionArea"><p class="loading">データを読み込み中...</p></div>
   </section>
 
@@ -760,6 +794,7 @@ function renderCalendar(){
         <h3>${week.title}（月〜金）</h3>
         <div>
           <button class="confirm-week-btn" data-week="${wi}">この週を確定・公開する</button>
+          <a class="production-link" href="production.html" target="_blank">生産指示書を見る</a>
           <span class="week-status-msg" id="weekStatus${wi}"></span>
         </div>
       </div>
@@ -985,7 +1020,8 @@ function resetDayPlan(day){
   day.editableLines = {};
 }
 
-function productionDayHtml(day){
+// その日の最終生産割り振りの確定版データを1ヶ所で計算する（描画・確定保存の両方で共用）
+function computeDaySnapshot(day){
   const chise = state.chiseByDate[mdLabel(day.dateObj)];
   const chiseQty = chise ? chise.subtotal : 0;
   const total = (zuidFinal(day) || 0) + (uvaFinal(day) || 0) + chiseQty;
@@ -1002,9 +1038,20 @@ function productionDayHtml(day){
 
   const hqQty = Object.values(hqBreakdown).reduce((s, v) => s + v, 0);
 
-  // 編集後の実際の個数で集計（手動編集の結果を反映）
   const editedMemberTotals = working.map(name => (day.editableLines[name] || []).reduce((s, l) => s + (l.qty || 0), 0));
   const ningiTotal = editedMemberTotals.reduce((s, v) => s + v, 0);
+
+  return {
+    chiseQty, total, working, memberCaps, capTotal, allocationTarget, isOverCap,
+    hqBreakdown, hqQty, editedMemberTotals, ningiTotal,
+  };
+}
+
+function productionDayHtml(day){
+  const {
+    chiseQty, total, working, memberCaps, allocationTarget, isOverCap,
+    hqBreakdown, hqQty, editedMemberTotals, ningiTotal,
+  } = computeDaySnapshot(day);
 
   const ningiBreakdownSummary = working.length
     ? working.map((name, i) => `${name}:${memberCaps[i]}`).join(" ")
@@ -1146,16 +1193,36 @@ function bindProductionDayEvents(day){
   });
 }
 
+// メンバー別の具材割り振りを文字列化（例："ツナマヨ×15 スパイシーツナマヨ×9"）
+function fillingLinesToString(lines){
+  return (lines || []).filter(l => l.qty > 0).map(l => `${l.filling}×${l.qty}`).join(" ");
+}
+
+function hqBreakdownToString(hqBreakdown){
+  return Object.entries(hqBreakdown).filter(([, q]) => q > 0).map(([f, q]) => `${f}×${q}`).join(" ");
+}
+
 async function confirmWeek(weekIndex){
   const days = state.days.filter(d => d.weekIndex === weekIndex);
   const payload = {
     type: "confirmPlan",
-    days: days.map(d => ({
-      date: mdLabel(d.dateObj),
-      day: `${DAY_NAMES[d.dow]}曜日`,
-      zuid: zuidFinal(d),
-      uva: uvaFinal(d),
-    })),
+    days: days.map(d => {
+      const snap = computeDaySnapshot(d);
+      const ningiBreakdown = snap.working
+        .map(name => `${name}:${fillingLinesToString(d.editableLines[name])}`)
+        .join("；");
+
+      return {
+        date: mdLabel(d.dateObj),
+        day: `${DAY_NAMES[d.dow]}曜日`,
+        zuid: zuidFinal(d),
+        uva: uvaFinal(d),
+        chise: snap.chiseQty,
+        ningiBreakdown,
+        hqQty: snap.hqQty,
+        hqBreakdown: hqBreakdownToString(snap.hqBreakdown),
+      };
+    }),
   };
 
   const statusEl = document.getElementById(`weekStatus${weekIndex}`);
@@ -1201,6 +1268,34 @@ function renderShiftTable(){
   `;
 }
 
+/* ---------- 一括変更ボタン ---------- */
+
+function bindBulkActions(){
+  document.querySelectorAll(".bulk-btn").forEach(btn => {
+    btn.addEventListener("click", () => {
+      const val = parseInt(btn.dataset.val, 10);
+      state.bulkValue = val;
+
+      state.days.forEach(day => {
+        const working = MEMBERS.filter(name => getManualQty(day, name) > 0);
+        if(working.length === 0) return;
+        if(!day.memberTotalOverride) day.memberTotalOverride = {};
+        working.forEach(name => { day.memberTotalOverride[name] = val; });
+        resetDayPlan(day);
+      });
+
+      renderProductionSection();
+      updateBulkActionHighlight();
+    });
+  });
+}
+
+function updateBulkActionHighlight(){
+  document.querySelectorAll(".bulk-btn").forEach(btn => {
+    btn.classList.toggle("active", parseInt(btn.dataset.val, 10) === state.bulkValue);
+  });
+}
+
 /* ---------- 初期化 ---------- */
 
 async function init(){
@@ -1224,6 +1319,7 @@ async function init(){
     renderCalendar();
     renderShiftTable();
     renderProductionSection();
+    bindBulkActions();
   }catch(e){
     console.error(e);
     document.getElementById("calendarArea").innerHTML = "<p class='off-note'>データの取得に失敗しました。</p>";
