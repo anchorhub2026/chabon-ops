@@ -114,9 +114,15 @@
 
   .day-cards{
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+    grid-template-columns: repeat(auto-fit, minmax(360px, 1fr));
     gap: 12px;
   }
+  .store-grid{
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 10px;
+  }
+  .store-col{ min-width: 0; }
   .day-card{
     border: 1px solid var(--line);
     border-radius: 12px;
@@ -250,6 +256,47 @@
     text-align: center;
   }
   .line-unit{ font-size: 0.78rem; color: #888; }
+  .line-delete-btn{
+    border: none;
+    background: none;
+    color: var(--accent);
+    font-size: 0.78rem;
+    cursor: pointer;
+    padding: 2px 4px;
+  }
+  .add-line-btn{
+    border: 1px dashed var(--line);
+    background: #fff;
+    color: var(--main-dark);
+    font-size: 0.76rem;
+    padding: 5px 10px;
+    border-radius: 100px;
+    cursor: pointer;
+    margin-top: 2px;
+  }
+  .wish-readonly{ font-size: 0.78rem; color: #888; margin-bottom: 4px; }
+  .total-override-input{
+    width: 56px;
+    padding: 4px;
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    font-size: 0.84rem;
+    text-align: center;
+    font-weight: bold;
+    color: var(--main-dark);
+  }
+  .member-mismatch{
+    color: var(--accent);
+    font-size: 0.76rem;
+    font-weight: bold;
+    margin-top: 2px;
+  }
+  .ok-line{
+    font-size: 0.85rem;
+    color: var(--main-dark);
+    font-weight: bold;
+    margin-top: 4px;
+  }
   .prod-summary{
     font-size: 0.82rem;
     color: #555;
@@ -745,12 +792,13 @@ function renderCalendar(){
               <div class="day-head">${day.label}</div>
               <div class="day-weather">${day.weatherIcon} ${day.tempLabel}</div>
 
-              ${fillingTableHtml(day, "zuid")}
-              ${fillingTableHtml(day, "uva")}
-
-              <div class="day-divider">
-                <div class="store-label">チセ（読み取り専用）</div>
-                <div class="member-line">${chiseHtml}<span class="readonly-tag">※読み取り専用</span></div>
+              <div class="store-grid">
+                <div class="store-col">${fillingTableHtml(day, "zuid")}</div>
+                <div class="store-col">${fillingTableHtml(day, "uva")}</div>
+                <div class="store-col">
+                  <div class="store-label">チセ（読み取り専用）</div>
+                  <div class="member-line">${chiseHtml}<span class="readonly-tag">※読み取り専用</span></div>
+                </div>
               </div>
 
               <div class="grand-total-line" id="forecastTotal-${day.dateKey}">総販売予測数：${forecastTotal}個</div>
@@ -946,14 +994,24 @@ function buildProductionPlan(day, working, memberCaps){
   return { memberBreakdowns, memberQtys: totals, hqBreakdown };
 }
 
+// 合計個数（松木さんが調整可能。デフォルトは希望数）
+function getEffectiveTotal(day, name){
+  if(day.memberTotalOverride && name in day.memberTotalOverride) return day.memberTotalOverride[name];
+  return getManualQty(day, name);
+}
+
+// 合計個数が変わったら、その日の割り振りを丸ごと自動再計算する
+function resetDayPlan(day){
+  day.editableLines = {};
+}
+
 function productionDayHtml(day){
   const chise = state.chiseByDate[mdLabel(day.dateObj)];
   const chiseQty = chise ? chise.subtotal : 0;
   const total = (zuidFinal(day) || 0) + (uvaFinal(day) || 0) + chiseQty;
 
-  // 【最重要】各メンバーの割り振り合計は、シフト希望一覧で設定した生産数(cap)を絶対に超えない
   const working = MEMBERS.filter(name => getManualQty(day, name) > 0);
-  const memberCaps = working.map(name => getManualQty(day, name));
+  const memberCaps = working.map(name => getEffectiveTotal(day, name));
   const capTotal = memberCaps.reduce((s, v) => s + v, 0);
 
   const allocationTarget = total - chiseQty; // 本部＋ニギニギ隊が作る数（チセ分は割り振り対象外）
@@ -981,11 +1039,10 @@ function productionDayHtml(day){
     </div>
   `;
 
-  const fillingOptions = FILLINGS.map(f => `<option value="${f}">${f}</option>`).join("");
-
   const memberRows = working.length
     ? working.map((name, i) => {
         const lines = day.editableLines[name] || [];
+        const wish = getManualQty(day, name);
         const linesHtml = lines.map((line, li) => `
           <div class="line-row">
             <select class="line-filling-select" data-key="${day.dateKey}" data-name="${name}" data-line="${li}">
@@ -993,13 +1050,25 @@ function productionDayHtml(day){
             </select>
             <input type="number" class="line-qty-input" min="0" value="${line.qty}" data-key="${day.dateKey}" data-name="${name}" data-line="${li}">
             <span class="line-unit">個</span>
+            <button type="button" class="line-delete-btn" data-key="${day.dateKey}" data-name="${name}" data-line="${li}">削除</button>
           </div>
         `).join("");
+        const memberMismatch = editedMemberTotals[i] !== memberCaps[i]
+          ? `<div class="member-mismatch">⚠️ 合計が合いません（${editedMemberTotals[i]}個 / 設定${memberCaps[i]}個）</div>`
+          : "";
         return `
           <div class="prod-row">
-            <div class="prod-row-head">${name}（設定生産数 ${memberCaps[i]}個）</div>
+            <div class="prod-row-head">${name}</div>
+            <div class="wish-readonly">希望：${wish}個（読み取り専用）</div>
+            <div class="line-row">
+              <span class="line-unit">合計個数：</span>
+              <input type="number" class="total-override-input" min="0" value="${memberCaps[i]}" data-key="${day.dateKey}" data-name="${name}">
+              <span class="line-unit">個</span>
+            </div>
             ${linesHtml}
+            <button type="button" class="add-line-btn" data-key="${day.dateKey}" data-name="${name}">＋具材を追加</button>
             <div class="prod-row-foot">合計：${editedMemberTotals[i]}個</div>
+            ${memberMismatch}
           </div>
         `;
       }).join("")
@@ -1008,8 +1077,8 @@ function productionDayHtml(day){
   const reconciledTotal = ningiTotal + hqQty;
   const isMismatch = reconciledTotal !== allocationTarget;
   const checkHtml = isMismatch
-    ? `<div class="warning-line">⚠️ 合計が総生産数と一致しません（${reconciledTotal}個 / 必要 ${allocationTarget}個）</div>`
-    : `<div class="grand-total-line">合計（ニギニギ隊＋本部）：${reconciledTotal}個 ✓</div>`;
+    ? `<div class="warning-line">⚠️ 合計が合いません（${reconciledTotal}個 / 必要 ${allocationTarget}個）</div>`
+    : `<div class="ok-line">✓ OK（${reconciledTotal}個）</div>`;
 
   return `
     <div class="fd-head">${day.label}</div>
@@ -1052,6 +1121,35 @@ function bindProductionDayEvents(day){
       if(day.editableLines[name] && day.editableLines[name][li]){
         day.editableLines[name][li].qty = Math.max(0, parseInt(input.value, 10) || 0);
       }
+      refreshProductionDay(day);
+    });
+  });
+
+  container.querySelectorAll(".line-delete-btn").forEach(btn => {
+    btn.addEventListener("click", () => {
+      const name = btn.dataset.name;
+      const li = parseInt(btn.dataset.line, 10);
+      if(day.editableLines[name]) day.editableLines[name].splice(li, 1);
+      refreshProductionDay(day);
+    });
+  });
+
+  container.querySelectorAll(".add-line-btn").forEach(btn => {
+    btn.addEventListener("click", () => {
+      const name = btn.dataset.name;
+      if(!day.editableLines[name]) day.editableLines[name] = [];
+      day.editableLines[name].push({ filling: ALLOC_FILLINGS[0], qty: 0 });
+      refreshProductionDay(day);
+    });
+  });
+
+  container.querySelectorAll(".total-override-input").forEach(input => {
+    input.addEventListener("change", () => {
+      const name = input.dataset.name;
+      const newTotal = Math.max(0, parseInt(input.value, 10) || 0);
+      if(!day.memberTotalOverride) day.memberTotalOverride = {};
+      day.memberTotalOverride[name] = newTotal;
+      resetDayPlan(day); // 合計個数が変わったら割り振りを自動再計算
       refreshProductionDay(day);
     });
   });
