@@ -880,13 +880,24 @@ function bindForecastTableEvents(day){
   if(!container) return;
 
   container.querySelectorAll(".cell-input").forEach(input => {
-    input.addEventListener("change", () => {
+    input.addEventListener("input", () => {
       const store = input.dataset.store;
       const filling = input.dataset.filling;
       const qtyMap = store === "zuid" ? day.zuidFillingQty : day.uvaFillingQty;
       qtyMap[filling] = Math.max(0, parseInt(input.value, 10) || 0);
+      const cursorPos = input.selectionStart;
+
+      // ステップ1：Zuid+UvA合計（必要数）が変わったので、表とニギニギ隊/本部の割り振りを再計算
       renderForecastTable(day);
       refreshProductionDay(day);
+
+      const newInput = document.querySelector(
+        `.cell-input[data-key="${day.dateKey}"][data-store="${store}"][data-filling="${filling}"]`
+      );
+      if(newInput){
+        newInput.focus();
+        try{ newInput.setSelectionRange(cursorPos, cursorPos); }catch(e){}
+      }
     });
   });
 
@@ -1171,13 +1182,24 @@ function bindProductionDayEvents(day){
   });
 
   container.querySelectorAll(".line-qty-input").forEach(input => {
-    input.addEventListener("change", () => {
+    input.addEventListener("input", () => {
       const name = input.dataset.name;
       const li = parseInt(input.dataset.line, 10);
+      const cursorPos = input.selectionStart;
+
       if(day.editableLines[name] && day.editableLines[name][li]){
         day.editableLines[name][li].qty = Math.max(0, parseInt(input.value, 10) || 0);
       }
+      // ステップ2〜5：メンバーの具材個数が変わったので、ニギニギ隊合計・本部内訳・合計チェックを再計算
       refreshProductionDay(day);
+
+      const newInput = document.querySelector(
+        `.line-qty-input[data-key="${day.dateKey}"][data-name="${name}"][data-line="${li}"]`
+      );
+      if(newInput){
+        newInput.focus();
+        try{ newInput.setSelectionRange(cursorPos, cursorPos); }catch(e){}
+      }
     });
   });
 
