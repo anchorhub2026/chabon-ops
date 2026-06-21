@@ -117,18 +117,6 @@
     grid-template-columns: repeat(auto-fit, minmax(360px, 1fr));
     gap: 12px;
   }
-  .store-grid{
-    display: grid;
-    grid-template-columns: repeat(3, 1fr);
-    gap: 10px;
-    align-items: stretch;
-  }
-  .store-col{
-    min-width: 0;
-    display: flex;
-    flex-direction: column;
-    height: 100%;
-  }
   .day-card{
     border: 1px solid var(--line);
     border-radius: 12px;
@@ -146,52 +134,45 @@
     color: #666;
     margin-bottom: 8px;
   }
-  .store-label-row{
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    margin: 10px 0 4px;
-  }
-  .store-label-row:first-of-type{ margin-top: 0; }
-  .store-label{
-    font-weight: bold;
-    font-size: 0.82rem;
-    color: var(--main-dark);
-  }
   .store-toggle-btn{
     border: none;
     border-radius: 100px;
-    font-size: 0.72rem;
+    font-size: 0.66rem;
     font-weight: bold;
-    padding: 4px 12px;
+    padding: 2px 8px;
+    margin-left: 4px;
     cursor: pointer;
+    vertical-align: middle;
   }
   .store-toggle-btn.on{ background: var(--main); color: #fff; }
   .store-toggle-btn.off{ background: #ddd5c5; color: #777; }
-  table.filling-input-table{
+  table.forecast-table{
     width: 100%;
     border-collapse: collapse;
-    font-size: 0.76rem;
-    margin-bottom: 4px;
+    font-size: 0.78rem;
   }
-  table.filling-input-table th, table.filling-input-table td{
+  table.forecast-table th, table.forecast-table td{
     border-bottom: 1px solid var(--line);
-    padding: 4px 3px;
-    text-align: left;
-  }
-  table.filling-input-table th{ color: #888; font-weight: normal; }
-  table.filling-input-table td:nth-child(2){ color: #888; }
-  table.filling-input-table tfoot td{ font-weight: bold; color: var(--main-dark); border-bottom: none; padding-top: 6px; }
-  table.filling-input-table.is-closed{ opacity: 0.45; }
-  .filling-qty-input{
-    width: 46px;
-    padding: 4px;
-    border: 1px solid var(--line);
-    border-radius: 6px;
-    font-size: 0.8rem;
+    padding: 5px 4px;
     text-align: center;
   }
-  .filling-qty-input:disabled{ background: #eee; color: #aaa; }
+  table.forecast-table th{ color: var(--main-dark); font-weight: bold; background: var(--main-light); white-space: nowrap; }
+  table.forecast-table td.f-name{ text-align: left; color: var(--ink); }
+  table.forecast-table td.cell-readonly{ color: #666; }
+  table.forecast-table td.cell-row-total{ font-weight: bold; color: var(--main-dark); }
+  table.forecast-table tfoot td{ font-weight: bold; color: var(--main-dark); border-bottom: none; border-top: 2px solid var(--main-light); padding-top: 6px; }
+  .cell-input{
+    width: 42px;
+    border: none;
+    background: transparent;
+    font-size: 0.78rem;
+    text-align: center;
+    color: var(--ink);
+    padding: 2px;
+    border-radius: 4px;
+  }
+  .cell-input:focus{ border: 1px solid var(--main); background: #fff; outline: none; }
+  .cell-input:disabled{ color: #ccc; }
   .day-divider{
     border-top: 1px dashed var(--line);
     margin: 8px 0;
@@ -349,8 +330,6 @@
     font-size: 0.78rem;
     margin: 2px 3px 2px 0;
   }
-  .member-line{ font-size: 0.84rem; margin-bottom: 6px; }
-  .member-line strong{ color: var(--ink); }
 
   footer{
     text-align:center;
@@ -785,69 +764,109 @@ function renderCalendar(){
         </div>
       </div>
       <div class="day-cards">
-        ${week.days.map(day => {
-          const chise = state.chiseByDate[mdLabel(day.dateObj)];
-          const chiseQty = chise ? chise.subtotal : 0;
-          const forecastTotal = (zuidFinal(day) || 0) + (uvaFinal(day) || 0) + chiseQty;
-          const chiseHtml = chise
-            ? `${pillsHtml(chise.breakdown)}（合計${chiseQty}個）`
-            : "データなし";
-
-          return `
-            <div class="day-card">
-              <div class="day-head">${day.label}</div>
-              <div class="day-weather">${day.weatherIcon} ${day.tempLabel}</div>
-
-              <div class="store-grid">
-                <div class="store-col">${fillingTableHtml(day, "zuid")}</div>
-                <div class="store-col">${fillingTableHtml(day, "uva")}</div>
-                <div class="store-col">
-                  <div class="store-label">チセ（読み取り専用）</div>
-                  <div class="member-line">${chiseHtml}<span class="readonly-tag">※読み取り専用</span></div>
-                </div>
-              </div>
-
-              <div class="grand-total-line" id="forecastTotal-${day.dateKey}">総販売予測数：${forecastTotal}個</div>
-            </div>
-          `;
-        }).join("")}
+        ${week.days.map(day => `
+          <div class="day-card">
+            <div class="day-head">${day.label}</div>
+            <div class="day-weather">${day.weatherIcon} ${day.tempLabel}</div>
+            <div id="forecastTable-${day.dateKey}">${forecastTableHtml(day)}</div>
+          </div>
+        `).join("")}
       </div>
     </div>
   `).join("");
 
-  area.querySelectorAll(".filling-qty-input").forEach(input => {
-    input.addEventListener("input", () => {
-      const key = input.dataset.key;
+  state.days.forEach(day => bindForecastTableEvents(day));
+
+  area.querySelectorAll(".confirm-week-btn").forEach(btn => {
+    btn.addEventListener("click", () => confirmWeek(+btn.dataset.week));
+  });
+}
+
+// Zuid・UvA・チセを1つの表にまとめた読み取り専用ビュー（Zuid・UvAの個数セルのみ直接編集可）
+function forecastTableHtml(day){
+  const showUva = [1, 2, 4].includes(day.dow);
+  const chise = state.chiseByDate[mdLabel(day.dateObj)];
+  const chiseBreakdown = chise ? chise.breakdown : {};
+  const chiseQty = chise ? chise.subtotal : 0;
+
+  const zuidToggle = `<button class="store-toggle-btn ${day.zuidOpen ? "on" : "off"}" data-key="${day.dateKey}" data-store="zuid">${day.zuidOpen ? "営業" : "休み"}</button>`;
+  const uvaToggle = showUva
+    ? `<button class="store-toggle-btn ${day.uvaOpen ? "on" : "off"}" data-key="${day.dateKey}" data-store="uva">${day.uvaOpen ? "営業" : "休み"}</button>`
+    : "";
+
+  const rows = FILLINGS.map(f => {
+    const zuidQty = day.zuidFillingQty[f] || 0;
+    const uvaQty = showUva ? (day.uvaFillingQty[f] || 0) : 0;
+    const chiseQtyForFilling = chiseBreakdown[f] || 0;
+    const rowTotal = zuidQty + uvaQty + chiseQtyForFilling;
+
+    return `
+      <tr>
+        <td class="f-name">${f}</td>
+        <td><input type="number" min="0" class="cell-input" data-key="${day.dateKey}" data-store="zuid" data-filling="${f}" value="${zuidQty}" ${day.zuidOpen ? "" : "disabled"}></td>
+        <td>${showUva ? `<input type="number" min="0" class="cell-input" data-key="${day.dateKey}" data-store="uva" data-filling="${f}" value="${uvaQty}" ${day.uvaOpen ? "" : "disabled"}>` : "—"}</td>
+        <td class="cell-readonly">${chiseQtyForFilling}</td>
+        <td class="cell-readonly cell-row-total" id="rowTotal-${day.dateKey}-${f}">${rowTotal}</td>
+      </tr>
+    `;
+  }).join("");
+
+  const zuidTotal = sumQtyMap(day.zuidFillingQty);
+  const uvaTotal = showUva ? sumQtyMap(day.uvaFillingQty) : 0;
+  const grandTotal = zuidTotal + uvaTotal + chiseQty;
+
+  return `
+    <table class="forecast-table">
+      <thead>
+        <tr>
+          <th>具材</th>
+          <th>Zuid${zuidToggle}</th>
+          <th>UvA${uvaToggle}</th>
+          <th>チセ</th>
+          <th>合計</th>
+        </tr>
+      </thead>
+      <tbody>${rows}</tbody>
+      <tfoot>
+        <tr>
+          <td>合計</td>
+          <td id="storeTotal-zuid-${day.dateKey}">${zuidTotal}</td>
+          <td id="storeTotal-uva-${day.dateKey}">${uvaTotal}</td>
+          <td>${chiseQty}</td>
+          <td id="forecastGrandTotal-${day.dateKey}">${grandTotal}</td>
+        </tr>
+      </tfoot>
+    </table>
+  `;
+}
+
+function renderForecastTable(day){
+  const container = document.getElementById(`forecastTable-${day.dateKey}`);
+  if(!container) return;
+  container.innerHTML = forecastTableHtml(day);
+  bindForecastTableEvents(day);
+}
+
+function bindForecastTableEvents(day){
+  const container = document.getElementById(`forecastTable-${day.dateKey}`);
+  if(!container) return;
+
+  container.querySelectorAll(".cell-input").forEach(input => {
+    input.addEventListener("change", () => {
       const store = input.dataset.store;
       const filling = input.dataset.filling;
-      const day = state.days.find(d => d.dateKey === key);
-      if(!day) return;
-
       const qtyMap = store === "zuid" ? day.zuidFillingQty : day.uvaFillingQty;
       qtyMap[filling] = Math.max(0, parseInt(input.value, 10) || 0);
-
-      const totalCell = document.getElementById(`total-${store}-${key}`);
-      if(totalCell) totalCell.textContent = `${sumQtyMap(qtyMap)}個`;
-
-      const chise = state.chiseByDate[mdLabel(day.dateObj)];
-      const forecastTotal = (zuidFinal(day) || 0) + (uvaFinal(day) || 0) + (chise ? chise.subtotal : 0);
-      const forecastLine = document.getElementById(`forecastTotal-${key}`);
-      if(forecastLine) forecastLine.textContent = `総販売予測数：${forecastTotal}個`;
-
+      renderForecastTable(day);
       refreshProductionDay(day);
     });
   });
 
-  area.querySelectorAll(".store-toggle-btn").forEach(btn => {
+  container.querySelectorAll(".store-toggle-btn").forEach(btn => {
     btn.addEventListener("click", () => {
-      const key = btn.dataset.key;
       const store = btn.dataset.store;
-      const day = state.days.find(d => d.dateKey === key);
-      if(!day) return;
-
       const isZuid = store === "zuid";
-      const wasOpen = isZuid ? day.zuidOpen : day.uvaOpen;
-      const nowOpen = !wasOpen;
+      const nowOpen = !(isZuid ? day.zuidOpen : day.uvaOpen);
 
       if(isZuid){
         day.zuidOpen = nowOpen;
@@ -861,55 +880,10 @@ function renderCalendar(){
           : buildFillingDefaults(0);
       }
 
-      renderCalendar();
+      renderForecastTable(day);
       refreshProductionDay(day);
     });
   });
-
-  area.querySelectorAll(".confirm-week-btn").forEach(btn => {
-    btn.addEventListener("click", () => confirmWeek(+btn.dataset.week));
-  });
-}
-
-function fillingTableHtml(day, store){
-  const isZuid = store === "zuid";
-  const title = isZuid ? "Zuid" : "UvA";
-  const result = isZuid ? day.zuid : day.uva;
-  // UvAは月・火・木のみ営業対象。それ以外（水・金）は元々非営業なのでトグル自体を出さない
-  const showToggle = isZuid || [1, 2, 4].includes(day.dow);
-
-  if(!showToggle){
-    return `<div class="store-label">${title}</div><p class="off-note">本日は対象外</p>`;
-  }
-
-  const isOpen = isZuid ? day.zuidOpen : day.uvaOpen;
-  const qtyMap = isZuid ? day.zuidFillingQty : day.uvaFillingQty;
-  const recBase = result ? result.total : 0;
-
-  const toggleBtn = `<button class="store-toggle-btn ${isOpen ? "on" : "off"}" data-key="${day.dateKey}" data-store="${store}">${isOpen ? "営業" : "休み"}</button>`;
-
-  const rows = FILLINGS.map(f => {
-    const rec = result ? Math.round(recBase * FILLING_RATIOS[f]) : 0;
-    return `
-      <tr>
-        <td>${f}</td>
-        <td>${rec}個</td>
-        <td><input type="number" min="0" class="filling-qty-input" data-key="${day.dateKey}" data-store="${store}" data-filling="${f}" value="${qtyMap[f]}" ${isOpen ? "" : "disabled"}></td>
-      </tr>
-    `;
-  }).join("");
-
-  return `
-    <div class="store-label-row">
-      <span class="store-label">${title}（推奨合計 ${recBase}個）</span>
-      ${toggleBtn}
-    </div>
-    <table class="filling-input-table ${isOpen ? "" : "is-closed"}">
-      <thead><tr><th>具材</th><th>推奨数</th><th>入力欄</th></tr></thead>
-      <tbody>${rows}</tbody>
-      <tfoot><tr><td colspan="2">合計</td><td class="filling-total" id="total-${store}-${day.dateKey}">${sumQtyMap(qtyMap)}個</td></tr></tfoot>
-    </table>
-  `;
 }
 
 /* ---------- レンダリング：最終生産割り振り（セクション3） ---------- */
