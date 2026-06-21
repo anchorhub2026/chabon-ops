@@ -1,0 +1,279 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>生産指示書｜Chabon Ops</title>
+<style>
+  :root{
+    --main: #4a7c59;
+    --main-dark: #335c3e;
+    --main-light: #e9f1ea;
+    --accent: #c9533f;
+    --bg: #faf8f3;
+    --card: #ffffff;
+    --ink: #2b2b28;
+    --line: #e2ddd0;
+  }
+  *{box-sizing:border-box;}
+  body{
+    margin:0;
+    font-family: "Hiragino Sans", "Yu Gothic", "Noto Sans JP", sans-serif;
+    background: var(--bg);
+    color: var(--ink);
+    line-height: 1.6;
+  }
+  header{
+    background: var(--main);
+    color: #fff;
+    padding: 20px 16px;
+    text-align: center;
+  }
+  header h1{ margin: 0; font-size: 1.3rem; letter-spacing: 0.05em; }
+  header p{ margin: 6px 0 0; font-size: 0.82rem; opacity: 0.9; }
+  .header-nav{ margin-top: 12px; }
+  .header-nav a{
+    display: inline-block;
+    background: rgba(255,255,255,0.15);
+    color: #fff;
+    text-decoration: none;
+    font-size: 0.8rem;
+    font-weight: bold;
+    padding: 7px 16px;
+    border-radius: 100px;
+    border: 1px solid rgba(255,255,255,0.4);
+    margin: 0 4px;
+  }
+  main{
+    max-width: 720px;
+    margin: 0 auto;
+    padding: 18px 14px 60px;
+  }
+  .loading, .off-note{ color: #999; font-size: 0.9rem; text-align: center; padding: 20px; }
+  .day-card{
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: 14px;
+    padding: 16px;
+    margin-bottom: 16px;
+    box-shadow: 0 2px 6px rgba(0,0,0,0.03);
+  }
+  .day-head{
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    border-bottom: 2px solid var(--main-light);
+    padding-bottom: 8px;
+    margin-bottom: 10px;
+  }
+  .day-head .date-label{
+    font-size: 1.15rem;
+    font-weight: bold;
+    color: var(--main-dark);
+  }
+  .day-head .total-label{
+    font-size: 0.85rem;
+    color: #666;
+  }
+  .day-head .total-label strong{
+    font-size: 1.1rem;
+    color: var(--accent);
+  }
+  .sub-row{
+    font-size: 0.8rem;
+    color: #777;
+    margin-bottom: 12px;
+  }
+  .member-block{
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 12px;
+    margin-bottom: 10px;
+    background: #fdfcf9;
+  }
+  .member-block.hq{
+    background: var(--main-light);
+    border-color: var(--main);
+  }
+  .member-name{
+    font-size: 1.05rem;
+    font-weight: bold;
+    color: var(--main-dark);
+    margin-bottom: 6px;
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+  }
+  .member-name .qty{
+    font-size: 0.95rem;
+    color: var(--accent);
+    font-weight: bold;
+  }
+  .pill{
+    display: inline-block;
+    background: #fff;
+    border: 1px solid var(--line);
+    color: var(--ink);
+    border-radius: 100px;
+    padding: 4px 12px;
+    font-size: 0.85rem;
+    margin: 2px 4px 2px 0;
+  }
+  .member-block.hq .pill{ background: #fff; }
+  .confirmed-at{
+    font-size: 0.72rem;
+    color: #aaa;
+    text-align: right;
+    margin-top: 6px;
+  }
+  footer{
+    text-align:center;
+    font-size: 0.78rem;
+    color: #999;
+    padding: 20px 0 40px;
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>🍙 Chabon Ops</h1>
+  <p>📋 生産指示書（ニギニギ隊向け）</p>
+  <nav class="header-nav">
+    <a href="index.html">← トップへ</a>
+    <a href="shift.html">シフト入力</a>
+  </nav>
+</header>
+
+<main>
+  <div id="planArea"><p class="loading">読み込み中...</p></div>
+</main>
+
+<footer>Chabon Ops — Amsterdam Onigiri Truck</footer>
+
+<script>
+const SHIFT_SPREADSHEET_ID = "1PHf1o3smqIQdeFkhBHjBZUEub7VtRcynQLllmSR7w-s";
+const DAY_NAMES = ["日","月","火","水","木","金","土"];
+
+async function fetchSheetJson(sheetName, spreadsheetId){
+  const url = `https://docs.google.com/spreadsheets/d/${spreadsheetId}/gviz/tq?tqx=out:json` +
+    (sheetName ? `&sheet=${encodeURIComponent(sheetName)}` : "");
+  const res = await fetch(url);
+  const text = await res.text();
+  const match = text.match(/setResponse\(([\s\S]*)\);\s*$/);
+  if(!match) throw new Error("シートの解析に失敗しました: " + sheetName);
+  return JSON.parse(match[1]);
+}
+
+// "ツナマヨ×15 スパイシーツナマヨ×9" → [{filling:"ツナマヨ",qty:15}, ...]
+function parseFillingString(str){
+  if(!str) return [];
+  return str.trim().split(/\s+/).filter(Boolean).map(part => {
+    const [filling, qtyStr] = part.split("×");
+    return { filling, qty: parseInt(qtyStr, 10) || 0 };
+  });
+}
+
+// "YUMI:ツナマヨ×15 スパイシー×9；MARI:..." → [{name, items, total}]
+function parseNingiBreakdown(str){
+  if(!str) return [];
+  return str.split("；").filter(Boolean).map(part => {
+    const idx = part.indexOf(":");
+    const name = idx === -1 ? part : part.slice(0, idx);
+    const itemsStr = idx === -1 ? "" : part.slice(idx + 1);
+    const items = parseFillingString(itemsStr);
+    const total = items.reduce((s, it) => s + it.qty, 0);
+    return { name, items, total };
+  });
+}
+
+// "6/23" のような月日ラベルから、今日に近い実際の日付を推測する（年をまたぐケースに対応）
+function inferDate(mdStr, today){
+  const [m, d] = mdStr.split("/").map(n => parseInt(n, 10));
+  if(!m || !d) return null;
+  let year = today.getFullYear();
+  let candidate = new Date(year, m - 1, d);
+  const diffDays = (candidate - today) / 86400000;
+  if(diffDays < -180) candidate = new Date(year + 1, m - 1, d);
+  else if(diffDays > 180) candidate = new Date(year - 1, m - 1, d);
+  return candidate;
+}
+
+function pillsHtml(items){
+  if(!items || items.length === 0) return `<span class="pill">なし</span>`;
+  return items.map(it => `<span class="pill">${it.filling}×${it.qty}</span>`).join("");
+}
+
+function dayCardHtml(plan){
+  const memberBlocks = plan.members.map(m => `
+    <div class="member-block">
+      <div class="member-name"><span>${m.name}</span><span class="qty">${m.total}個</span></div>
+      <div>${pillsHtml(m.items)}</div>
+    </div>
+  `).join("");
+
+  const hqBlock = `
+    <div class="member-block hq">
+      <div class="member-name"><span>本部</span><span class="qty">${plan.hqQty}個</span></div>
+      <div>${pillsHtml(plan.hqItems)}</div>
+    </div>
+  `;
+
+  return `
+    <div class="day-card">
+      <div class="day-head">
+        <span class="date-label">${plan.dateLabel}（${plan.dayName}）</span>
+        <span class="total-label">総生産数：<strong>${plan.total}個</strong></span>
+      </div>
+      <div class="sub-row">Zuid：${plan.zuid}個　/　UvA：${plan.uva}個　/　チセ：${plan.chise}個</div>
+      ${plan.members.length ? memberBlocks : `<p class="off-note">ニギニギ隊の割り振りデータがありません。</p>`}
+      ${hqBlock}
+      ${plan.confirmedAt ? `<div class="confirmed-at">確定日時：${plan.confirmedAt}</div>` : ""}
+    </div>
+  `;
+}
+
+async function init(){
+  const area = document.getElementById("planArea");
+  try{
+    const json = await fetchSheetJson("確定プラン", SHIFT_SPREADSHEET_ID);
+    const rows = (json.table.rows || []).map(r => r.c.map(c => (c ? c.v : null)));
+
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+
+    const plans = rows
+      .filter(r => r[0])
+      .map(r => {
+        const dateLabel = String(r[0]);
+        const dayName = r[1] || "";
+        const zuid = Number(r[2]) || 0;
+        const uva = Number(r[3]) || 0;
+        const chise = Number(r[4]) || 0;
+        const members = parseNingiBreakdown(r[5]);
+        const hqQty = Number(r[6]) || 0;
+        const hqItems = parseFillingString(r[7]);
+        const confirmedAt = r[8] ? String(r[8]) : "";
+        const total = zuid + uva + chise;
+        return { dateLabel, dayName, zuid, uva, chise, members, hqQty, hqItems, confirmedAt, total, sortDate: inferDate(dateLabel, today) };
+      })
+      .filter(p => p.sortDate && p.sortDate >= today)
+      .sort((a, b) => a.sortDate - b.sortDate);
+
+    if(plans.length === 0){
+      area.innerHTML = `<p class="off-note">確定済みの生産プランがまだありません。<br>管理画面で「この週を確定・公開する」を押すと表示されます。</p>`;
+      return;
+    }
+
+    area.innerHTML = plans.map(dayCardHtml).join("");
+  }catch(e){
+    console.error(e);
+    area.innerHTML = `<p class="off-note">データの取得に失敗しました。</p>`;
+  }
+}
+
+init();
+</script>
+
+</body>
+</html>
