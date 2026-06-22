@@ -1202,7 +1202,8 @@ function computeDaySnapshot(day){
   // 本部製造数 = 総生産数（チセ除く） − ニギニギ隊合計。ニギニギ隊合計が変わるたびにここで再計算される
   const hqQty = Math.max(0, allocationTarget - ningiTotal);
 
-  // 本部の具材内訳：枝豆・梅は常に本部、それ以外は「必要数 − ニギニギ隊の実際の生産量」の残り
+  // 本部の具材内訳：具材ごとに「販売予測数の必要数 − ニギニギ隊全員の実際の生産量」の残り。
+  // 具材プルダウンは7種類全てから選べる（枝豆・梅も含む）ため、特例なしで全具材に同じ式を適用する。
   const producedByFilling = {};
   working.forEach(name => {
     (day.editableLines[name] || []).forEach(line => {
@@ -1210,15 +1211,21 @@ function computeDaySnapshot(day){
     });
   });
   const hqBreakdown = {};
+  const hqDebugRows = [];
   FILLINGS.forEach(f => {
     const needed = neededQtyFor(day, f);
-    if(ALWAYS_HQ_FILLINGS.includes(f)){
-      if(needed > 0) hqBreakdown[f] = needed;
-    } else {
-      const remainder = needed - (producedByFilling[f] || 0);
-      if(remainder > 0) hqBreakdown[f] = remainder;
-    }
+    const produced = producedByFilling[f] || 0;
+    const remainder = needed - produced;
+    if(remainder > 0) hqBreakdown[f] = remainder;
+    hqDebugRows.push({ 具材: f, 必要数: needed, ニギニギ隊生産量: produced, 本部分: Math.max(0, remainder) });
   });
+
+  const hqBreakdownSum = Object.values(hqBreakdown).reduce((s, v) => s + v, 0);
+  console.log(`[本部内訳検証] ${day.label || day.dateKey}`, hqDebugRows);
+  console.log(
+    `[本部内訳検証] 本部合計(内訳の合計)=${hqBreakdownSum} / 本部合計(自動算出)=${hqQty}`,
+    hqBreakdownSum === hqQty ? "✓ 一致" : "⚠️ 不一致"
+  );
 
   return {
     chiseQty, total, working, memberCaps, capTotal, allocationTarget, isOverCap,
