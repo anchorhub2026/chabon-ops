@@ -190,6 +190,14 @@
     color: #555;
   }
   .recommend-note ul{ margin: 0; padding-left: 18px; }
+  .confirm-compare{
+    margin-top: 10px;
+    padding-top: 8px;
+    border-top: 1px dashed var(--line);
+    font-size: 0.85rem;
+    color: var(--main-dark);
+    font-weight: bold;
+  }
   .off-day-note{
     color: #999;
     font-size: 0.88rem;
@@ -260,14 +268,6 @@
   }
   .week-weather{ font-size: 0.85rem; margin-bottom: 6px; }
   .week-store{ font-size: 0.85rem; color: #555; }
-  .week-tomorrow{
-    margin-top: 8px;
-    padding-top: 8px;
-    border-top: 1px dashed var(--line);
-    font-size: 0.78rem;
-    color: #777;
-  }
-
   /* 具材ステータス */
   .day-tabs{
     display: flex;
@@ -319,8 +319,6 @@
   }
   .status-btn.handed.active{ background: var(--main); color: #fff; border-color: var(--main); }
   .status-btn.cooked.active{ background: #3b6ea5; color: #fff; border-color: #3b6ea5; }
-  .status-btn.shift-toggle.on{ background: var(--main); color: #fff; border-color: var(--main); }
-  .status-btn.shift-toggle.off{ background: #ddd5c5; color: #777; border-color: #ddd5c5; }
 
   #fillingStatusArea{ overflow-x: auto; }
   #fillingStatusArea table{ min-width: 720px; }
@@ -599,7 +597,6 @@ const state = {
   dailyResults: [],
   hourlyByDate: {},
   todayTotal: 0,
-  weeklyShift: {}, // { [dateKey "M/D"]: { [memberName]: bool } }
   cellStatus: {},  // { [dateKey "M/D"]: { [memberName]: { handed: bool, cooked: bool } } }
   memberNeededItems: {}, // { [memberName]: "お米×2、手袋×1" }
   shiftByDate: {}, // { [dateKey "M/D"]: { [memberName]: { qty, raw } } }
@@ -814,7 +811,22 @@ function calcUvA(dow, salesWeather){
   return { total, reasons };
 }
 
-function storeCardHtml(title, result){
+// 推奨数と確定プランの比較表示（「Zuid：推奨110個 → 確定102個」のような行）
+function confirmCompareHtml(storeKey, recommendedTotal, plan){
+  if(!plan){
+    return `<div class="confirm-compare">まだ確定されていません</div>`;
+  }
+  const confirmedVal = plan[storeKey];
+  if(confirmedVal === null || confirmedVal === undefined){
+    return `<div class="confirm-compare">まだ確定されていません</div>`;
+  }
+  if(confirmedVal === 0){
+    return `<div class="confirm-compare">推奨${recommendedTotal}個 → 本日休み</div>`;
+  }
+  return `<div class="confirm-compare">推奨${recommendedTotal}個 → 確定${confirmedVal}個</div>`;
+}
+
+function storeCardHtml(title, result, storeKey, plan){
   if(!result){
     return `
       <div class="store-card">
@@ -832,6 +844,7 @@ function storeCardHtml(title, result){
           <ul>${result.reasons.map(r => `<li>${r}</li>`).join("")}</ul>
         </div>
       </div>
+      ${confirmCompareHtml(storeKey, result.total, plan)}
     </div>
   `;
 }
@@ -892,12 +905,15 @@ function renderSalesTimeSlots(){
 
 function renderRecommendation(){
   const box = document.getElementById("storeCards");
-  const today = state.dailyResults[0];
+  const today = state.todayOriginalRecommendation || state.dailyResults[0];
+  const todayDow = state.dailyResults[0].dow;
+  const todayKey = mdLabel(state.dailyResults[0].dateStr);
+  const plan = state.confirmedPlanByDate[todayKey];
 
   state.todayTotal = (today.zuid ? today.zuid.total : 0) + (today.uva ? today.uva.total : 0);
 
-  let html = storeCardHtml("Zuid（1号店）", today.zuid);
-  if([1, 2, 4].includes(today.dow)) html += storeCardHtml("UvA", today.uva);
+  let html = storeCardHtml("Zuid（1号店）", today.zuid, "zuid", plan);
+  if([1, 2, 4].includes(todayDow)) html += storeCardHtml("UvA", today.uva, "uva", plan);
   box.innerHTML = html;
 }
 
@@ -913,17 +929,10 @@ function renderWeeklyView(){
   }
 
   container.innerHTML = weekDays.map(r => {
-    const idx = results.indexOf(r);
-    const tomorrow = results[idx + 1];
     const isToday = r.dateStr === todayDateStr;
     const d = new Date(r.dateStr);
     const label = `${d.getMonth() + 1}/${d.getDate()}（${DAY_NAMES[r.dow]}）`;
     const w = weatherInfo(r.code);
-
-    let tomorrowNote;
-    if(!tomorrow){ tomorrowNote = "翌日のデータなし"; }
-    else if(tomorrow.zuid){ tomorrowNote = `明日（${DAY_NAMES[tomorrow.dow]}）の予測：${tomorrow.zuid.total}個`; }
-    else { tomorrowNote = "翌日は営業なし"; }
 
     return `
       <div class="week-card ${isToday ? "today" : ""}">
@@ -931,7 +940,6 @@ function renderWeeklyView(){
         <div class="week-weather">${w.icon} ${Math.round(r.maxTemp)}° / ${Math.round(r.minTemp)}°</div>
         <div class="week-store">Zuid: <strong>${r.zuid ? r.zuid.total + "個" : "—"}</strong></div>
         <div class="week-store">UvA: <strong>${r.uva ? r.uva.total + "個" : "—"}</strong></div>
-        <div class="week-tomorrow">${tomorrowNote}</div>
       </div>
     `;
   }).join("");
@@ -982,17 +990,6 @@ function renderFillings(){
   `;
 }
 
-function ensureWeeklyShift(dateKeyStr){
-  if(!state.weeklyShift[dateKeyStr]) state.weeklyShift[dateKeyStr] = {};
-  const submittedForDate = state.shiftByDate[dateKeyStr] || {};
-  state.members.forEach(m => {
-    if(!(m.name in state.weeklyShift[dateKeyStr])){
-      const submitted = submittedForDate[m.name];
-      state.weeklyShift[dateKeyStr][m.name] = submitted ? submitted.qty > 0 : m.on;
-    }
-  });
-}
-
 function ensureCellStatus(dateKeyStr, name){
   if(!state.cellStatus[dateKeyStr]) state.cellStatus[dateKeyStr] = {};
   if(!state.cellStatus[dateKeyStr][name]) state.cellStatus[dateKeyStr][name] = { handed: false, cooked: false };
@@ -1023,25 +1020,19 @@ function renderWeeklyStatusTable(){
     return;
   }
 
-  // 同じ曜日が複数週にわたって表示されることがあるため、曜日(dow)ではなく日付(M/D)をキーにする
-  days.forEach(d => ensureWeeklyShift(mdLabel(d.dateStr)));
-
-  // 日付ごとに出勤メンバーへ具材をラウンドロビン割り振り、個数は推奨数×比率で算出
+  // 日付ごとに、確定プランのニギニギ隊内訳から「誰が何を何個作るか」を取得する
   const dayAssign = {};
   days.forEach(d => {
     const key = mdLabel(d.dateStr);
-    const total = (d.zuid ? d.zuid.total : 0) + (d.uva ? d.uva.total : 0);
-    const working = state.members.filter(m => state.weeklyShift[key][m.name]);
-    const buckets = working.map(() => []);
-    if(working.length > 0){
-      FILLINGS.forEach((f, i) => {
-        const qty = Math.round(total * FILLING_RATIOS[f]);
-        buckets[i % working.length].push({ filling: f, qty });
+    const plan = state.confirmedPlanByDate[key];
+    const map = {};
+    if(plan){
+      parseNingiBreakdown(plan.ningiBreakdown).forEach(m => {
+        map[m.name] = m.items;
+        ensureCellStatus(key, m.name);
       });
     }
-    const map = {};
-    working.forEach((m, i) => { map[m.name] = buckets[i]; ensureCellStatus(key, m.name); });
-    dayAssign[key] = map;
+    dayAssign[key] = { plan, map };
   });
 
   const headerCells = days.map(d => {
@@ -1052,20 +1043,22 @@ function renderWeeklyStatusTable(){
   const bodyRows = state.members.map(m => {
     const cells = days.map(d => {
       const key = mdLabel(d.dateStr);
-      const working = state.weeklyShift[key][m.name];
-      const shiftBtn = `<button class="status-btn shift-toggle ${working ? "on" : "off"}" data-key="${key}" data-member="${m.name}">${working ? "出勤" : "休み"}</button>`;
+      const { plan, map } = dayAssign[key];
 
-      if(!working){
-        return `<td>${shiftBtn}</td>`;
+      if(!plan){
+        return `<td><span class="off-note">まだ確定されていません</span></td>`;
       }
 
-      const items = (dayAssign[key][m.name] || []);
+      const items = map[m.name];
+      if(!items){
+        return `<td>—</td>`;
+      }
+
       const fillingText = items.map(it => `${it.filling}×${it.qty}`).join(" ") || "—";
       const st = state.cellStatus[key][m.name];
 
       return `
         <td>
-          ${shiftBtn}
           <div class="cell-fillings">${fillingText}</div>
           <div class="cell-status">
             <button class="status-btn handed ${st.handed ? "active" : ""}" data-key="${key}" data-member="${m.name}" data-kind="handed">具材渡し済み✓</button>
@@ -1087,15 +1080,6 @@ function renderWeeklyStatusTable(){
       <tbody>${bodyRows}</tbody>
     </table>
   `;
-
-  area.querySelectorAll(".shift-toggle").forEach(btn => {
-    btn.addEventListener("click", () => {
-      const key = btn.dataset.key;
-      const name = btn.dataset.member;
-      state.weeklyShift[key][name] = !state.weeklyShift[key][name];
-      renderWeeklyStatusTable();
-    });
-  });
 
   area.querySelectorAll(".cell-status .status-btn").forEach(btn => {
     btn.addEventListener("click", () => {
@@ -1126,6 +1110,11 @@ async function loadWeather(){
     state.dailyResults = buildDailyResults(data.daily, state.hourlyByDate);
     const confirmedMap = await fetchConfirmedPlan();
     state.confirmedPlanByDate = confirmedMap;
+    // 上書き前の「元の推奨」を本日分だけ保存しておく（確定数との比較表示に使う）
+    state.todayOriginalRecommendation = {
+      zuid: state.dailyResults[0].zuid,
+      uva: state.dailyResults[0].uva,
+    };
     applyConfirmedOverrides(state.dailyResults, confirmedMap);
     state.memberNeededItems = await fetchMemberNeededItems();
 
