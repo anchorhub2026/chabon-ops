@@ -323,6 +323,7 @@
   .line-row{
     display: flex;
     align-items: center;
+    flex-wrap: wrap;
     gap: 6px;
     margin-bottom: 4px;
   }
@@ -343,6 +344,21 @@
     font-size: 0.8rem;
     text-align: center;
   }
+  .line-qty-step-btn{
+    width: 34px;
+    height: 34px;
+    line-height: 1;
+    border: 1px solid var(--line);
+    background: #fff;
+    color: var(--main-dark);
+    font-size: 1.1rem;
+    font-weight: bold;
+    border-radius: 8px;
+    cursor: pointer;
+    padding: 0;
+    flex-shrink: 0;
+  }
+  .line-qty-step-btn:active{ background: var(--main-light); }
   .line-unit{ font-size: 0.78rem; color: #888; }
   .line-delete-btn{
     border: none;
@@ -1278,7 +1294,9 @@ function memberRowHtml(day, snap, idx){
       <select class="line-filling-select" data-key="${day.dateKey}" data-name="${name}" data-line="${li}">
         ${FILLINGS.map(f => `<option value="${f}" ${f === line.filling ? "selected" : ""}>${f}</option>`).join("")}
       </select>
+      <button type="button" class="line-qty-step-btn" data-action="dec" data-key="${day.dateKey}" data-name="${name}" data-line="${li}">−</button>
       <input type="text" inputmode="numeric" pattern="[0-9]*" class="line-qty-input" value="${line.qty}" data-key="${day.dateKey}" data-name="${name}" data-line="${li}">
+      <button type="button" class="line-qty-step-btn" data-action="inc" data-key="${day.dateKey}" data-name="${name}" data-line="${li}">＋</button>
       <span class="line-unit">個</span>
       <button type="button" class="line-delete-btn" data-key="${day.dateKey}" data-name="${name}" data-line="${li}">削除</button>
     </div>
@@ -1357,6 +1375,18 @@ function refreshDerived(day){
   });
 }
 
+// 合計個数(total-override-input)の入力中に、行の入れ替えなしで具材個数入力欄の表示だけを同期する。
+// 行数が変わっていれば false を返し、呼び出し側でその人の行を丸ごと再生成させる。
+function updateLineInputsDom(day, name){
+  const lines = day.editableLines[name] || [];
+  const row = document.getElementById(`memberRow-${day.dateKey}-${name}`);
+  if(!row) return false;
+  const lineInputs = row.querySelectorAll(".line-qty-input");
+  if(lineInputs.length !== lines.length) return false;
+  lineInputs.forEach((input, i) => { input.value = lines[i].qty; });
+  return true;
+}
+
 // 1人分の行だけを丸ごと再生成する（具材の追加・削除・合計個数変更など、行の構成自体が変わる場合に使う）
 function refreshMemberRow(day, name){
   const snap = computeDaySnapshot(day);
@@ -1432,6 +1462,17 @@ function bindMemberRowEvents(day, name){
     });
   });
 
+  row.querySelectorAll(".line-qty-step-btn").forEach(btn => {
+    btn.addEventListener("click", () => {
+      const li = btn.dataset.line;
+      const input = row.querySelector(`.line-qty-input[data-line="${li}"]`);
+      if(!input) return;
+      const delta = btn.dataset.action === "inc" ? 1 : -1;
+      input.value = Math.max(0, (parseInt(input.value, 10) || 0) + delta);
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+  });
+
   row.querySelectorAll(".line-delete-btn").forEach(btn => {
     btn.addEventListener("click", () => {
       const li = parseInt(btn.dataset.line, 10);
@@ -1449,13 +1490,20 @@ function bindMemberRowEvents(day, name){
   });
 
   row.querySelectorAll(".total-override-input").forEach(input => {
-    // 入力中は何もしない。フォーカスが外れた時（blur）にだけ再計算する
-    input.addEventListener("blur", () => {
+    // 入力ごとにリアルタイムで再計算するが、この入力欄自体は再生成しない（フォーカスを失わない）
+    input.addEventListener("input", () => {
       const newTotal = Math.max(0, parseInt(input.value, 10) || 0);
       if(!day.memberTotalOverride) day.memberTotalOverride = {};
       day.memberTotalOverride[name] = newTotal;
       rescaleMemberLines(day, name, newTotal); // この人の具材構成は保ったまま個数だけ配分し直す
-      refreshMemberRow(day, name);
+
+      const synced = updateLineInputsDom(day, name);
+      if(!synced){
+        // 具材の行数が変わった場合（0行⇔1行など）だけ、この人の行を再生成する
+        refreshMemberRow(day, name);
+        return;
+      }
+      refreshDerived(day);
     });
   });
 }
