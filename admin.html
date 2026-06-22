@@ -557,20 +557,20 @@ function getWeekDates(weekOffset){
   return dates;
 }
 
-// 「今週」：今日〜今週木曜まで。今日が月〜木の場合のみ表示し、金・土・日は表示しない
+// 「今週」：今日〜今週金曜まで。今日が月〜金の場合のみ表示し、土・日は表示しない
 function getThisWeekRemainingDates(){
   const today = new Date();
   today.setHours(0, 0, 0, 0);
   const dow = today.getDay();
-  if(dow < 1 || dow > 4) return [];
+  if(dow < 1 || dow > 5) return [];
 
   const thisMonday = getMonday(today);
-  const thisThursday = new Date(thisMonday);
-  thisThursday.setDate(thisMonday.getDate() + 3);
+  const thisFriday = new Date(thisMonday);
+  thisFriday.setDate(thisMonday.getDate() + 4);
 
   const dates = [];
   const cursor = new Date(today);
-  while(cursor <= thisThursday){
+  while(cursor <= thisFriday){
     dates.push(new Date(cursor));
     cursor.setDate(cursor.getDate() + 1);
   }
