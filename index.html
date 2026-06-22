@@ -456,6 +456,29 @@ function mdLabel(dateStr){
   return `${d.getMonth() + 1}/${d.getDate()}`;
 }
 
+// "ツナマヨ×15 スパイシーツナマヨ×9" → [{filling:"ツナマヨ",qty:15}, ...]
+function parseFillingString(str){
+  if(!str) return [];
+  return String(str).trim().split(/\s+/).filter(Boolean).map(part => {
+    const [filling, qtyStr] = part.split("×");
+    return { filling, qty: parseInt(qtyStr, 10) || 0 };
+  });
+}
+
+// "YUMI:ツナマヨ×15 スパイシー×9；MARI:..." → [{name, items, total}]
+function parseNingiBreakdown(str){
+  if(!str) return [];
+  return String(str).split("；").filter(Boolean).map(part => {
+    const idx = part.indexOf(":");
+    const name = idx === -1 ? part : part.slice(0, idx);
+    const itemsStr = idx === -1 ? "" : part.slice(idx + 1);
+    const items = parseFillingString(itemsStr);
+    const total = items.reduce((s, it) => s + it.qty, 0);
+    return { name, items, total };
+  });
+}
+
+// 確定プランシート（日付,曜日,Zuid確定数,UvA確定数,チセ分,ニギニギ隊内訳,本部製造数,本部内訳,確定日時）を取得
 async function fetchConfirmedPlan(){
   try{
     const url = `https://docs.google.com/spreadsheets/d/${SHIFT_SPREADSHEET_ID}/gviz/tq?tqx=out:json&sheet=${encodeURIComponent("確定プラン")}`;
@@ -468,9 +491,16 @@ async function fetchConfirmedPlan(){
     (json.table.rows || []).forEach(r => {
       const c = r.c;
       if(!c || !c[0]) return;
-      map[String(c[0].v)] = {
+      // 日付列はシート上で日付型のため、表示用文字列(f)を "6/23" 形式のキーとして使う
+      const key = String(c[0].f || c[0].v || "");
+      if(!key) return;
+      map[key] = {
         zuid: c[2] && c[2].v !== null ? Number(c[2].v) : null,
         uva: c[3] && c[3].v !== null ? Number(c[3].v) : null,
+        chise: c[4] && c[4].v !== null ? Number(c[4].v) : 0,
+        ningiBreakdown: c[5] ? c[5].v : "",
+        hqQty: c[6] && c[6].v !== null ? Number(c[6].v) : 0,
+        hqBreakdown: c[7] ? c[7].v : "",
       };
     });
     return map;
@@ -573,6 +603,7 @@ const state = {
   cellStatus: {},  // { [dateKey "M/D"]: { [memberName]: { handed: bool, cooked: bool } } }
   memberNeededItems: {}, // { [memberName]: "お米×2、手袋×1" }
   shiftByDate: {}, // { [dateKey "M/D"]: { [memberName]: { qty, raw } } }
+  confirmedPlanByDate: {}, // { [dateKey "M/D"]: { zuid, uva, chise, ningiBreakdown, hqQty, hqBreakdown } }
 };
 
 const FILLING_RATIOS = {
@@ -908,45 +939,46 @@ function renderWeeklyView(){
 
 function renderFillings(){
   const area = document.getElementById("fillingArea");
-  const working = state.members.filter(m => m.on);
 
-  if(working.length === 0){
-    area.innerHTML = `<p class="off-note">本日は出勤メンバーがいません。</p>`;
+  if(!state.dailyResults.length){
+    area.innerHTML = `<p class="off-note">読み込み中...</p>`;
     return;
   }
 
-  const assign = working.map(() => []);
-  FILLINGS.forEach((f, i) => {
-    assign[i % working.length].push(f);
-  });
+  const todayKey = mdLabel(state.dailyResults[0].dateStr);
+  const plan = state.confirmedPlanByDate[todayKey];
 
-  const total = state.todayTotal || 0;
-  const perPerson = Math.floor(total / working.length);
-  const remainder = total - perPerson * working.length;
+  if(!plan){
+    area.innerHTML = `<p class="off-note">まだ確定されていません。</p>`;
+    return;
+  }
 
-  let rows = working.map((m, i) => {
-    const qty = perPerson + (i < remainder ? 1 : 0);
-    return `
-    <tr>
-      <td>${m.name}</td>
-      <td>${assign[i].map(f => `<span class="pill">${f}</span>`).join("")}</td>
-      <td>${qty}個</td>
-    </tr>
-  `;
-  }).join("");
+  const members = parseNingiBreakdown(plan.ningiBreakdown);
+  const hqItems = parseFillingString(plan.hqBreakdown);
 
-  const offMembers = state.members.filter(m => !m.on).map(m => m.name);
-  const offNote = offMembers.length
-    ? `<p class="off-note">本日休み: ${offMembers.join("、")}</p>`
+  const memberRows = members.length
+    ? members.map(m => `
+        <tr>
+          <td>${m.name}</td>
+          <td>${m.items.map(it => `<span class="pill">${it.filling}×${it.qty}</span>`).join("") || "—"}</td>
+          <td>${m.total}個</td>
+        </tr>
+      `).join("")
     : "";
 
+  const hqRow = `
+    <tr>
+      <td>本部</td>
+      <td>${hqItems.map(it => `<span class="pill">${it.filling}×${it.qty}</span>`).join("") || "—"}</td>
+      <td>${plan.hqQty}個</td>
+    </tr>
+  `;
+
   area.innerHTML = `
-    <p class="off-note">本日推奨合計 ${total}個 ÷ 出勤${working.length}人 ＝ 約${perPerson}個/人</p>
     <table>
       <thead><tr><th>担当</th><th>具材</th><th>個数</th></tr></thead>
-      <tbody>${rows}</tbody>
+      <tbody>${memberRows}${hqRow}</tbody>
     </table>
-    ${offNote}
   `;
 }
 
@@ -1093,6 +1125,7 @@ async function loadWeather(){
     state.hourlyByDate = buildHourlyByDate(data.hourly);
     state.dailyResults = buildDailyResults(data.daily, state.hourlyByDate);
     const confirmedMap = await fetchConfirmedPlan();
+    state.confirmedPlanByDate = confirmedMap;
     applyConfirmedOverrides(state.dailyResults, confirmedMap);
     state.memberNeededItems = await fetchMemberNeededItems();
 
