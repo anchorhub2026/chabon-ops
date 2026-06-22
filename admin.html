@@ -1566,6 +1566,7 @@ async function confirmWeek(weekIndex){
   statusEl.textContent = "送信中...";
 
   console.log("確定データ送信:", JSON.stringify(payload));
+  console.log("確定データ:", JSON.stringify(payload.days));
 
   try{
     const result = await fetch(SCRIPT_URL, {
