@@ -1228,7 +1228,7 @@ function computeDaySnapshot(day){
 
 // 具材内訳・チェック表示など「ユーザーが直接編集しない」部分のHTML
 function deriveBlocksHtml(snap){
-  const { total, working, memberCaps, isOverCap, hqBreakdown, hqQty, ningiTotal, allocationTarget } = snap;
+  const { total, working, memberCaps, isOverCap, hqBreakdown, hqQty, ningiTotal, chiseQty } = snap;
 
   const ningiBreakdownSummary = working.length
     ? working.map((name, i) => `${name}:${memberCaps[i]}`).join(" ")
@@ -1238,6 +1238,7 @@ function deriveBlocksHtml(snap){
     <div>総生産数：${total}個</div>
     <div>ニギニギ隊合計：${ningiTotal}個（${ningiBreakdownSummary}）</div>
     <div>本部：${hqQty}個（自動計算）</div>
+    <div>チセさん：${chiseQty}個</div>
     ${isOverCap ? `<div class="warning-line">⚠️ ニギニギ隊の設定生産数が総生産数を超えています</div>` : ""}
   `;
 
@@ -1246,10 +1247,11 @@ function deriveBlocksHtml(snap){
     <div class="prod-row-body">${pillsHtml(hqBreakdown)}</div>
   `;
 
-  const reconciledTotal = ningiTotal + hqQty;
-  const isMismatch = reconciledTotal !== allocationTarget;
+  // 合計チェック：ニギニギ隊合計＋本部合計＋チセさん合計＝総生産数
+  const reconciledTotal = ningiTotal + hqQty + chiseQty;
+  const isMismatch = reconciledTotal !== total;
   const checkHtml = isMismatch
-    ? `<div class="warning-line">⚠️ 合計が合いません（${reconciledTotal}個 / 必要 ${allocationTarget}個）</div>`
+    ? `<div class="warning-line">⚠️ 合計が合いません（${reconciledTotal}個 / 必要 ${total}個）</div>`
     : `<div class="ok-line">✓ OK（${reconciledTotal}個）</div>`;
 
   return { summaryHtml, hqHtml, checkHtml };
