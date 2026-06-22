@@ -195,35 +195,6 @@
     font-size: 0.88rem;
   }
 
-  /* シフト */
-  .member-row{
-    display:flex;
-    align-items:center;
-    gap: 10px;
-    padding: 8px 0;
-    border-bottom: 1px dashed var(--line);
-  }
-  .member-row:last-child{ border-bottom:none; }
-  .member-row input[type=text]{
-    flex: 1;
-    border: 1px solid var(--line);
-    border-radius: 6px;
-    padding: 6px 8px;
-    font-size: 0.92rem;
-    background: #fdfcf9;
-  }
-  .toggle-btn{
-    border: none;
-    border-radius: 100px;
-    padding: 6px 16px;
-    font-size: 0.82rem;
-    font-weight: bold;
-    cursor: pointer;
-    min-width: 76px;
-  }
-  .toggle-btn.on{ background: var(--main); color: #fff; }
-  .toggle-btn.off{ background: #ddd5c5; color: #777; }
-
   /* 具材割り振り */
   table{
     width: 100%;
@@ -332,8 +303,8 @@
     margin: 0 4px 0 10px;
     vertical-align: middle;
   }
-  .legend-dot.handed{ background: #3b6ea5; }
-  .legend-dot.cooked{ background: var(--main); }
+  .legend-dot.handed{ background: var(--main); }
+  .legend-dot.cooked{ background: #3b6ea5; }
   .status-btn{
     border: 1px solid var(--line);
     background: #fff;
@@ -346,8 +317,8 @@
     margin-right: 6px;
     margin-bottom: 4px;
   }
-  .status-btn.handed.active{ background: #3b6ea5; color: #fff; border-color: #3b6ea5; }
-  .status-btn.cooked.active{ background: var(--main); color: #fff; border-color: var(--main); }
+  .status-btn.handed.active{ background: var(--main); color: #fff; border-color: var(--main); }
+  .status-btn.cooked.active{ background: #3b6ea5; color: #fff; border-color: #3b6ea5; }
   .status-btn.shift-toggle.on{ background: var(--main); color: #fff; border-color: var(--main); }
   .status-btn.shift-toggle.off{ background: #ddd5c5; color: #777; border-color: #ddd5c5; }
 
@@ -451,17 +422,12 @@
   </section>
 
   <section>
-    <h2>シフト管理（ニギニギ隊）</h2>
-    <div id="memberList"></div>
-  </section>
-
-  <section>
     <h2>具材割り振り表</h2>
     <div id="fillingArea"></div>
   </section>
 
   <section>
-    <h2>具材ステータス管理（週間）</h2>
+    <h2>ニギニギ隊（週間）</h2>
     <div class="status-legend">✓ 具材渡し済み　❄️ 調理済み</div>
     <div id="fillingStatusArea"></div>
   </section>
@@ -490,6 +456,29 @@ function mdLabel(dateStr){
   return `${d.getMonth() + 1}/${d.getDate()}`;
 }
 
+// "ツナマヨ×15 スパイシーツナマヨ×9" → [{filling:"ツナマヨ",qty:15}, ...]
+function parseFillingString(str){
+  if(!str) return [];
+  return String(str).trim().split(/\s+/).filter(Boolean).map(part => {
+    const [filling, qtyStr] = part.split("×");
+    return { filling, qty: parseInt(qtyStr, 10) || 0 };
+  });
+}
+
+// "YUMI:ツナマヨ×15 スパイシー×9；MARI:..." → [{name, items, total}]
+function parseNingiBreakdown(str){
+  if(!str) return [];
+  return String(str).split("；").filter(Boolean).map(part => {
+    const idx = part.indexOf(":");
+    const name = idx === -1 ? part : part.slice(0, idx);
+    const itemsStr = idx === -1 ? "" : part.slice(idx + 1);
+    const items = parseFillingString(itemsStr);
+    const total = items.reduce((s, it) => s + it.qty, 0);
+    return { name, items, total };
+  });
+}
+
+// 確定プランシート（日付,曜日,Zuid確定数,UvA確定数,チセ分,ニギニギ隊内訳,本部製造数,本部内訳,確定日時）を取得
 async function fetchConfirmedPlan(){
   try{
     const url = `https://docs.google.com/spreadsheets/d/${SHIFT_SPREADSHEET_ID}/gviz/tq?tqx=out:json&sheet=${encodeURIComponent("確定プラン")}`;
@@ -502,9 +491,16 @@ async function fetchConfirmedPlan(){
     (json.table.rows || []).forEach(r => {
       const c = r.c;
       if(!c || !c[0]) return;
-      map[String(c[0].v)] = {
+      // 日付列はシート上で日付型のため、表示用文字列(f)を "6/23" 形式のキーとして使う
+      const key = String(c[0].f || c[0].v || "");
+      if(!key) return;
+      map[key] = {
         zuid: c[2] && c[2].v !== null ? Number(c[2].v) : null,
         uva: c[3] && c[3].v !== null ? Number(c[3].v) : null,
+        chise: c[4] && c[4].v !== null ? Number(c[4].v) : 0,
+        ningiBreakdown: c[5] ? c[5].v : "",
+        hqQty: c[6] && c[6].v !== null ? Number(c[6].v) : 0,
+        hqBreakdown: c[7] ? c[7].v : "",
       };
     });
     return map;
@@ -539,6 +535,42 @@ async function fetchMemberNeededItems(){
   }
 }
 
+function parseQtyNumber(qtyStr){
+  if(!qtyStr) return 0;
+  if(qtyStr === "希望しない") return 0;
+  const m = String(qtyStr).match(/(\d+)/);
+  return m ? parseInt(m[1], 10) : 0;
+}
+
+// シフト回答シート（送信日時,名前,日付,曜日,個数,備考,必要物品）から、日付ごとのメンバー出勤希望を取得
+async function fetchShiftByDate(){
+  try{
+    const url = `https://docs.google.com/spreadsheets/d/${SHIFT_SPREADSHEET_ID}/gviz/tq?tqx=out:json&sheet=${encodeURIComponent("シフト回答")}`;
+    const res = await fetch(url);
+    const text = await res.text();
+    const match = text.match(/setResponse\(([\s\S]*)\);\s*$/);
+    if(!match) return {};
+    const json = JSON.parse(match[1]);
+    const byDate = {};
+    (json.table.rows || []).forEach(r => {
+      const c = r.c;
+      if(!c) return;
+      const name = c[1] && c[1].v;
+      const dateCell = c[2];
+      // 日付列はシート上で日付型のため、表示用文字列(f)を "6/23" 形式のキーとして使う
+      const key = dateCell && (dateCell.f || dateCell.v);
+      const qtyRaw = c[4] && c[4].v;
+      if(!name || !key) return;
+      if(!byDate[key]) byDate[key] = {};
+      byDate[key][name] = { qty: parseQtyNumber(qtyRaw), raw: qtyRaw || "" };
+    });
+    return byDate;
+  }catch(e){
+    console.error("シフト回答の取得に失敗しました", e);
+    return {};
+  }
+}
+
 function applyConfirmedOverrides(results, confirmedMap){
   results.forEach(r => {
     const override = confirmedMap[mdLabel(r.dateStr)];
@@ -567,9 +599,11 @@ const state = {
   dailyResults: [],
   hourlyByDate: {},
   todayTotal: 0,
-  weeklyShift: {}, // { [dow]: { [memberName]: bool } }
-  cellStatus: {},  // { [dow]: { [memberName]: { handed: bool, cooked: bool } } }
+  weeklyShift: {}, // { [dateKey "M/D"]: { [memberName]: bool } }
+  cellStatus: {},  // { [dateKey "M/D"]: { [memberName]: { handed: bool, cooked: bool } } }
   memberNeededItems: {}, // { [memberName]: "お米×2、手袋×1" }
+  shiftByDate: {}, // { [dateKey "M/D"]: { [memberName]: { qty, raw } } }
+  confirmedPlanByDate: {}, // { [dateKey "M/D"]: { zuid, uva, chise, ningiBreakdown, hqQty, hqBreakdown } }
 };
 
 const FILLING_RATIOS = {
@@ -697,10 +731,10 @@ function computeSalesWeather(hourlyByDate, dateStr){
 
 // Zuid（ステーションザウド）：月火水木のみ営業。季節×曜日ベース。
 const ZUID_SEASON_BASE = {
-  winter: { 1: 90, 2: 110, 3: 100, 4: 110 },  // 12〜2月
-  spring: { 1: 100, 2: 125, 3: 115, 4: 125 }, // 3〜5月
-  summer: { 1: 95, 2: 115, 3: 105, 4: 110 },  // 6〜8月（初夏）
-  autumn: { 1: 95, 2: 120, 3: 110, 4: 120 },  // 9〜11月
+  winter: { 1: 90, 2: 110, 3: 100, 4: 110, 5: 90 },  // 12〜2月（金は月と同値）
+  spring: { 1: 100, 2: 125, 3: 115, 4: 125, 5: 100 }, // 3〜5月（金は月と同値）
+  summer: { 1: 95, 2: 115, 3: 105, 4: 110, 5: 95 },  // 6〜8月（初夏）（金は月と同値）
+  autumn: { 1: 95, 2: 120, 3: 110, 4: 120, 5: 95 },  // 9〜11月（金は月と同値）
 };
 const SEASON_LABELS = { winter: "冬", spring: "春", summer: "初夏", autumn: "秋" };
 
@@ -903,109 +937,101 @@ function renderWeeklyView(){
   }).join("");
 }
 
-function renderMembers(){
-  const wrap = document.getElementById("memberList");
-  wrap.innerHTML = "";
-  state.members.forEach((m, idx) => {
-    const row = document.createElement("div");
-    row.className = "member-row";
-    row.innerHTML = `
-      <input type="text" value="${m.name}" data-idx="${idx}" class="name-input">
-      <button class="toggle-btn ${m.on ? "on" : "off"}" data-idx="${idx}">${m.on ? "出勤" : "休み"}</button>
-    `;
-    wrap.appendChild(row);
-  });
-
-  wrap.querySelectorAll(".toggle-btn").forEach(btn => {
-    btn.addEventListener("click", () => {
-      const idx = +btn.dataset.idx;
-      state.members[idx].on = !state.members[idx].on;
-      renderMembers();
-      renderFillings();
-    });
-  });
-
-  wrap.querySelectorAll(".name-input").forEach(input => {
-    input.addEventListener("input", () => {
-      const idx = +input.dataset.idx;
-      state.members[idx].name = input.value;
-      renderFillings();
-    });
-  });
-}
-
 function renderFillings(){
   const area = document.getElementById("fillingArea");
-  const working = state.members.filter(m => m.on);
 
-  if(working.length === 0){
-    area.innerHTML = `<p class="off-note">本日は出勤メンバーがいません。</p>`;
+  if(!state.dailyResults.length){
+    area.innerHTML = `<p class="off-note">読み込み中...</p>`;
     return;
   }
 
-  const assign = working.map(() => []);
-  FILLINGS.forEach((f, i) => {
-    assign[i % working.length].push(f);
-  });
+  const todayKey = mdLabel(state.dailyResults[0].dateStr);
+  const plan = state.confirmedPlanByDate[todayKey];
 
-  const total = state.todayTotal || 0;
-  const perPerson = Math.floor(total / working.length);
-  const remainder = total - perPerson * working.length;
+  if(!plan){
+    area.innerHTML = `<p class="off-note">まだ確定されていません。</p>`;
+    return;
+  }
 
-  let rows = working.map((m, i) => {
-    const qty = perPerson + (i < remainder ? 1 : 0);
-    return `
-    <tr>
-      <td>${m.name}</td>
-      <td>${assign[i].map(f => `<span class="pill">${f}</span>`).join("")}</td>
-      <td>${qty}個</td>
-    </tr>
-  `;
-  }).join("");
+  const members = parseNingiBreakdown(plan.ningiBreakdown);
+  const hqItems = parseFillingString(plan.hqBreakdown);
 
-  const offMembers = state.members.filter(m => !m.on).map(m => m.name);
-  const offNote = offMembers.length
-    ? `<p class="off-note">本日休み: ${offMembers.join("、")}</p>`
+  const memberRows = members.length
+    ? members.map(m => `
+        <tr>
+          <td>${m.name}</td>
+          <td>${m.items.map(it => `<span class="pill">${it.filling}×${it.qty}</span>`).join("") || "—"}</td>
+          <td>${m.total}個</td>
+        </tr>
+      `).join("")
     : "";
 
+  const hqRow = `
+    <tr>
+      <td>本部</td>
+      <td>${hqItems.map(it => `<span class="pill">${it.filling}×${it.qty}</span>`).join("") || "—"}</td>
+      <td>${plan.hqQty}個</td>
+    </tr>
+  `;
+
   area.innerHTML = `
-    <p class="off-note">本日推奨合計 ${total}個 ÷ 出勤${working.length}人 ＝ 約${perPerson}個/人</p>
     <table>
       <thead><tr><th>担当</th><th>具材</th><th>個数</th></tr></thead>
-      <tbody>${rows}</tbody>
+      <tbody>${memberRows}${hqRow}</tbody>
     </table>
-    ${offNote}
   `;
 }
 
-function ensureWeeklyShift(dow){
-  if(!state.weeklyShift[dow]) state.weeklyShift[dow] = {};
+function ensureWeeklyShift(dateKeyStr){
+  if(!state.weeklyShift[dateKeyStr]) state.weeklyShift[dateKeyStr] = {};
+  const submittedForDate = state.shiftByDate[dateKeyStr] || {};
   state.members.forEach(m => {
-    if(!(m.name in state.weeklyShift[dow])) state.weeklyShift[dow][m.name] = m.on;
+    if(!(m.name in state.weeklyShift[dateKeyStr])){
+      const submitted = submittedForDate[m.name];
+      state.weeklyShift[dateKeyStr][m.name] = submitted ? submitted.qty > 0 : m.on;
+    }
   });
 }
 
-function ensureCellStatus(dow, name){
-  if(!state.cellStatus[dow]) state.cellStatus[dow] = {};
-  if(!state.cellStatus[dow][name]) state.cellStatus[dow][name] = { handed: false, cooked: false };
+function ensureCellStatus(dateKeyStr, name){
+  if(!state.cellStatus[dateKeyStr]) state.cellStatus[dateKeyStr] = {};
+  if(!state.cellStatus[dateKeyStr][name]) state.cellStatus[dateKeyStr][name] = { handed: false, cooked: false };
 }
 
 function renderWeeklyStatusTable(){
   const area = document.getElementById("fillingStatusArea");
-  const days = state.dailyResults.filter(r => OPERATING_DAYS.includes(r.dow));
+
+  // 「今週」（今日〜今週木曜）のみに絞る。来週以降は表示しない
+  const today = new Date(state.dailyResults[0].dateStr);
+  today.setHours(0, 0, 0, 0);
+  const todayDow = today.getDay();
+  const diffToMonday = todayDow === 0 ? -6 : 1 - todayDow;
+  const thisMonday = new Date(today);
+  thisMonday.setDate(today.getDate() + diffToMonday);
+  const thisThursday = new Date(thisMonday);
+  thisThursday.setDate(thisMonday.getDate() + 3);
+
+  const days = state.dailyResults.filter(r => {
+    if(!OPERATING_DAYS.includes(r.dow)) return false;
+    const d = new Date(r.dateStr);
+    d.setHours(0, 0, 0, 0);
+    return d <= thisThursday;
+  });
 
   if(days.length === 0){
     area.innerHTML = `<p class="off-note">今週の営業日データがありません。</p>`;
     return;
   }
 
-  days.forEach(d => ensureWeeklyShift(d.dow));
+  // 同じ曜日が複数週にわたって表示されることがあるため、曜日(dow)ではなく日付(M/D)をキーにする
+  days.forEach(d => ensureWeeklyShift(mdLabel(d.dateStr)));
 
-  // 曜日ごとに出勤メンバーへ具材をラウンドロビン割り振り、個数は推奨数×比率で算出
+  // 日付ごとに出勤メンバーへ具材をラウンドロビン割り振り、個数は推奨数×比率で算出
   const dayAssign = {};
   days.forEach(d => {
+    const key = mdLabel(d.dateStr);
     const total = (d.zuid ? d.zuid.total : 0) + (d.uva ? d.uva.total : 0);
-    const working = state.members.filter(m => state.weeklyShift[d.dow][m.name]);
+    const working = state.members.filter(m => state.weeklyShift[key][m.name]);
     const buckets = working.map(() => []);
     if(working.length > 0){
       FILLINGS.forEach((f, i) => {
@@ -1014,8 +1040,8 @@ function renderWeeklyStatusTable(){
       });
     }
     const map = {};
-    working.forEach((m, i) => { map[m.name] = buckets[i]; ensureCellStatus(d.dow, m.name); });
-    dayAssign[d.dow] = map;
+    working.forEach((m, i) => { map[m.name] = buckets[i]; ensureCellStatus(key, m.name); });
+    dayAssign[key] = map;
   });
 
   const headerCells = days.map(d => {
@@ -1025,24 +1051,25 @@ function renderWeeklyStatusTable(){
 
   const bodyRows = state.members.map(m => {
     const cells = days.map(d => {
-      const working = state.weeklyShift[d.dow][m.name];
-      const shiftBtn = `<button class="status-btn shift-toggle ${working ? "on" : "off"}" data-dow="${d.dow}" data-member="${m.name}">${working ? "出勤" : "休み"}</button>`;
+      const key = mdLabel(d.dateStr);
+      const working = state.weeklyShift[key][m.name];
+      const shiftBtn = `<button class="status-btn shift-toggle ${working ? "on" : "off"}" data-key="${key}" data-member="${m.name}">${working ? "出勤" : "休み"}</button>`;
 
       if(!working){
         return `<td>${shiftBtn}</td>`;
       }
 
-      const items = (dayAssign[d.dow][m.name] || []);
+      const items = (dayAssign[key][m.name] || []);
       const fillingText = items.map(it => `${it.filling}×${it.qty}`).join(" ") || "—";
-      const st = state.cellStatus[d.dow][m.name];
+      const st = state.cellStatus[key][m.name];
 
       return `
         <td>
           ${shiftBtn}
           <div class="cell-fillings">${fillingText}</div>
           <div class="cell-status">
-            <button class="status-btn handed ${st.handed ? "active" : ""}" data-dow="${d.dow}" data-member="${m.name}" data-kind="handed">具材渡し済み✓</button>
-            <button class="status-btn cooked ${st.cooked ? "active" : ""}" data-dow="${d.dow}" data-member="${m.name}" data-kind="cooked">調理済み❄️</button>
+            <button class="status-btn handed ${st.handed ? "active" : ""}" data-key="${key}" data-member="${m.name}" data-kind="handed">具材渡し済み✓</button>
+            <button class="status-btn cooked ${st.cooked ? "active" : ""}" data-key="${key}" data-member="${m.name}" data-kind="cooked">調理済み❄️</button>
           </div>
         </td>
       `;
@@ -1063,26 +1090,24 @@ function renderWeeklyStatusTable(){
 
   area.querySelectorAll(".shift-toggle").forEach(btn => {
     btn.addEventListener("click", () => {
-      const dow = +btn.dataset.dow;
+      const key = btn.dataset.key;
       const name = btn.dataset.member;
-      state.weeklyShift[dow][name] = !state.weeklyShift[dow][name];
+      state.weeklyShift[key][name] = !state.weeklyShift[key][name];
       renderWeeklyStatusTable();
     });
   });
 
   area.querySelectorAll(".cell-status .status-btn").forEach(btn => {
     btn.addEventListener("click", () => {
-      const dow = +btn.dataset.dow;
+      const key = btn.dataset.key;
       const name = btn.dataset.member;
       const kind = btn.dataset.kind;
       const label = kind === "handed" ? "渡し済み" : "調理済み";
-      const items = (dayAssign[dow][name] || []);
-      const fillingNames = items.map(it => it.filling).join("・") || "具材";
-      const nextState = !state.cellStatus[dow][name][kind];
+      const nextState = !state.cellStatus[key][name][kind];
       const actionLabel = nextState ? label : `未${label}`;
 
-      showConfirm(`${name}の${fillingNames}を「${actionLabel}」に変更しますか？`, () => {
-        state.cellStatus[dow][name][kind] = nextState;
+      showConfirm(`${name}さんの${key}の具材を『${actionLabel}』にしますか？`, () => {
+        state.cellStatus[key][name][kind] = nextState;
         renderWeeklyStatusTable();
       });
     });
@@ -1100,8 +1125,19 @@ async function loadWeather(){
     state.hourlyByDate = buildHourlyByDate(data.hourly);
     state.dailyResults = buildDailyResults(data.daily, state.hourlyByDate);
     const confirmedMap = await fetchConfirmedPlan();
+    state.confirmedPlanByDate = confirmedMap;
     applyConfirmedOverrides(state.dailyResults, confirmedMap);
     state.memberNeededItems = await fetchMemberNeededItems();
+
+    // 本日のシフト回答（出勤/休み）を実データに反映する
+    state.shiftByDate = await fetchShiftByDate();
+    const todayKey = mdLabel(state.dailyResults[0].dateStr);
+    const todayShift = state.shiftByDate[todayKey] || {};
+    state.members.forEach(m => {
+      const submitted = todayShift[m.name];
+      m.on = !!(submitted && submitted.qty > 0);
+    });
+
     renderWeather(data.daily);
     renderSalesTimeSlots();
     renderRecommendation();
@@ -1118,7 +1154,6 @@ async function loadWeather(){
   }
 }
 
-renderMembers();
 renderFillings();
 loadWeather();
 </script>
