@@ -483,7 +483,7 @@
   </section>
 
   <section>
-    <h2>最終生産割り振り<span class="badge">本部分は自動算出</span></h2>
+    <h2>生産割り振り<span class="badge">本部分は自動算出</span></h2>
     <div id="productionArea"><p class="loading">データを読み込み中...</p></div>
   </section>
 
@@ -854,7 +854,9 @@ const ALLOC_FILLINGS = FILLINGS.filter(f => !ALWAYS_HQ_FILLINGS.includes(f));
 
 // 販売予測数カードで入力された具材ごとの必要数（Zuid＋UvA）
 function neededQtyFor(day, filling){
-  return (day.zuidFillingQty[filling] || 0) + (day.uvaFillingQty[filling] || 0);
+  const chise = state.chiseByDate[mdLabel(day.dateObj)];
+  const chiseAmount = (chise && chise.breakdown[filling]) || 0;
+  return (day.zuidFillingQty[filling] || 0) + (day.uvaFillingQty[filling] || 0) + chiseAmount;
 }
 
 // 必要数を超えないよう3の倍数に切り捨てる。端数は呼び出し側で本部に加算する
@@ -1205,7 +1207,8 @@ function computeDaySnapshot(day){
 
   const capTotal = memberCaps.reduce((s, v) => s + v, 0);
 
-  const allocationTarget = total - chiseQty; // 本部＋ニギニギ隊が作る数（チセ分は割り振り対象外）
+  // 総生産数 = 販売予測数カードの合計（Zuid＋UvA＋チセ）。チセも受け取り先として総生産数に含む
+  const allocationTarget = total;
   const isOverCap = capTotal > allocationTarget;
 
   const { memberBreakdowns } = buildProductionPlan(day, working, memberCaps);
@@ -1215,8 +1218,8 @@ function computeDaySnapshot(day){
   const editedMemberTotals = working.map(name => (day.editableLines[name] || []).reduce((s, l) => s + (l.qty || 0), 0));
   const ningiTotal = editedMemberTotals.reduce((s, v) => s + v, 0);
 
-  // 本部の具材内訳：具材ごとに「販売予測数の必要数（Zuid＋UvA） − ニギニギ隊全員の実際の生産量」の残り。
-  // チセさんは生産者ではなく受け取り先のため、ここでは一切引かない。
+  // 本部の具材内訳：具材ごとに「販売予測数の必要数（Zuid＋UvA＋チセ） − ニギニギ隊全員の実際の生産量」の残り。
+  // チセさんは生産者ではなく受け取り先のため、必要数（neededQtyFor）には含めるが、生産量からは引かない。
   // 具材プルダウンは7種類全てから選べる（枝豆・梅も含む）ため、特例なしで全具材に同じ式を適用する。
   const producedByFilling = {};
   working.forEach(name => {
