@@ -175,6 +175,14 @@
   }
   .week-next-next .day-card .day-head{ color: #3c6577; }
   .week-next-next .week-heading h3{ color: #3c6577; }
+
+  .week-this-week .week-pin-label{ background: #c9853f; }
+  .week-this-week .day-card{
+    background: #fdf3e6;
+    border-color: #e3c391;
+  }
+  .week-this-week .day-card .day-head{ color: #9a6520; }
+  .week-this-week .week-heading h3{ color: #9a6520; }
   .day-card .day-head{
     font-weight: bold;
     color: var(--main-dark);
@@ -549,6 +557,26 @@ function getWeekDates(weekOffset){
   return dates;
 }
 
+// 「今週」：今日〜今週木曜まで。今日が月〜木の場合のみ表示し、金・土・日は表示しない
+function getThisWeekRemainingDates(){
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const dow = today.getDay();
+  if(dow < 1 || dow > 4) return [];
+
+  const thisMonday = getMonday(today);
+  const thisThursday = new Date(thisMonday);
+  thisThursday.setDate(thisMonday.getDate() + 3);
+
+  const dates = [];
+  const cursor = new Date(today);
+  while(cursor <= thisThursday){
+    dates.push(new Date(cursor));
+    cursor.setDate(cursor.getDate() + 1);
+  }
+  return dates;
+}
+
 function formatDateLabel(d){
   return `${d.getMonth() + 1}/${d.getDate()} ${DAY_NAMES[d.getDay()]}曜日`;
 }
@@ -760,9 +788,14 @@ function parseShiftSheet(json){
 /* ---------- データ構築 ---------- */
 
 function buildDays(daily, hourlyByDate){
+  const week0 = getThisWeekRemainingDates();
   const week1 = getWeekDates(1);
   const week2 = getWeekDates(2);
-  const all = [...week1.map(d => ({ d, weekIndex: 0 })), ...week2.map(d => ({ d, weekIndex: 1 }))];
+  const all = [
+    ...week0.map(d => ({ d, weekIndex: 0 })),
+    ...week1.map(d => ({ d, weekIndex: 1 })),
+    ...week2.map(d => ({ d, weekIndex: 2 })),
+  ];
 
   return all.map(({ d, weekIndex }) => {
     const dow = d.getDay();
@@ -843,22 +876,31 @@ function getManualQty(day, name){
 
 /* ---------- レンダリング：カレンダー ---------- */
 
+function thisWeekBadge(days){
+  if(days.length === 0) return "";
+  const fmt = d => `${d.getMonth() + 1}/${d.getDate()}`;
+  return days.length === 1
+    ? fmt(days[0].dateObj)
+    : `${fmt(days[0].dateObj)}〜${fmt(days[days.length - 1].dateObj)}`;
+}
+
 function renderCalendar(){
   const area = document.getElementById("calendarArea");
   const weeks = [
-    { title: "来週", days: state.days.filter(d => d.weekIndex === 0) },
-    { title: "再来週", days: state.days.filter(d => d.weekIndex === 1) },
-  ];
+    { title: "今週", weekIndex: 0, days: state.days.filter(d => d.weekIndex === 0), cssClass: "week-this-week" },
+    { title: "来週", weekIndex: 1, days: state.days.filter(d => d.weekIndex === 1), cssClass: "" },
+    { title: "再来週", weekIndex: 2, days: state.days.filter(d => d.weekIndex === 2), cssClass: "week-next-next" },
+  ].filter(week => week.days.length > 0);
 
-  area.innerHTML = weeks.map((week, wi) => `
-    ${wi > 0 ? `<div class="week-divider"></div>` : ""}
-    <div class="week-group ${wi === 1 ? "week-next-next" : ""}">
+  area.innerHTML = weeks.map((week, idx) => `
+    ${idx > 0 ? `<div class="week-divider"></div>` : ""}
+    <div class="week-group ${week.cssClass}">
       <div class="week-heading">
-        <h3>${week.title}（月〜金）</h3>
+        <h3>${week.title}（${week.weekIndex === 0 ? thisWeekBadge(week.days) : "月〜金"}）</h3>
         <div>
-          <button class="confirm-week-btn" data-week="${wi}">この週を確定・公開する</button>
+          <button class="confirm-week-btn" data-week="${week.weekIndex}">この週を確定・公開する</button>
           <a class="production-link" href="production.html" target="_blank">生産指示書を見る</a>
-          <span class="week-status-msg" id="weekStatus${wi}"></span>
+          <span class="week-status-msg" id="weekStatus${week.weekIndex}"></span>
         </div>
       </div>
       <div class="day-cards">
@@ -1035,13 +1077,14 @@ function bindForecastTableEvents(day){
 function renderProductionSection(){
   const area = document.getElementById("productionArea");
   const weeks = [
-    { title: "来週", days: state.days.filter(d => d.weekIndex === 0) },
-    { title: "再来週", days: state.days.filter(d => d.weekIndex === 1) },
-  ];
+    { title: "今週", weekIndex: 0, days: state.days.filter(d => d.weekIndex === 0) },
+    { title: "来週", weekIndex: 1, days: state.days.filter(d => d.weekIndex === 1) },
+    { title: "再来週", weekIndex: 2, days: state.days.filter(d => d.weekIndex === 2) },
+  ].filter(week => week.days.length > 0);
 
   area.innerHTML = weeks.map(week => `
     <div class="week-group">
-      <h3 class="week-heading-simple">${week.title}（月〜金）</h3>
+      <h3 class="week-heading-simple">${week.title}（${week.weekIndex === 0 ? thisWeekBadge(week.days) : "月〜金"}）</h3>
       ${week.days.map(day => `<div class="prod-card" id="prodday-${day.dateKey}">${productionDayHtml(day)}</div>`).join("")}
     </div>
   `).join("");
