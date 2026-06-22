@@ -567,8 +567,8 @@ const state = {
   dailyResults: [],
   hourlyByDate: {},
   todayTotal: 0,
-  weeklyShift: {}, // { [dow]: { [memberName]: bool } }
-  cellStatus: {},  // { [dow]: { [memberName]: { handed: bool, cooked: bool } } }
+  weeklyShift: {}, // { [dateKey "M/D"]: { [memberName]: bool } }
+  cellStatus: {},  // { [dateKey "M/D"]: { [memberName]: { handed: bool, cooked: bool } } }
   memberNeededItems: {}, // { [memberName]: "お米×2、手袋×1" }
 };
 
@@ -978,34 +978,52 @@ function renderFillings(){
   `;
 }
 
-function ensureWeeklyShift(dow){
-  if(!state.weeklyShift[dow]) state.weeklyShift[dow] = {};
+function ensureWeeklyShift(dateKeyStr){
+  if(!state.weeklyShift[dateKeyStr]) state.weeklyShift[dateKeyStr] = {};
   state.members.forEach(m => {
-    if(!(m.name in state.weeklyShift[dow])) state.weeklyShift[dow][m.name] = m.on;
+    if(!(m.name in state.weeklyShift[dateKeyStr])) state.weeklyShift[dateKeyStr][m.name] = m.on;
   });
 }
 
-function ensureCellStatus(dow, name){
-  if(!state.cellStatus[dow]) state.cellStatus[dow] = {};
-  if(!state.cellStatus[dow][name]) state.cellStatus[dow][name] = { handed: false, cooked: false };
+function ensureCellStatus(dateKeyStr, name){
+  if(!state.cellStatus[dateKeyStr]) state.cellStatus[dateKeyStr] = {};
+  if(!state.cellStatus[dateKeyStr][name]) state.cellStatus[dateKeyStr][name] = { handed: false, cooked: false };
 }
 
 function renderWeeklyStatusTable(){
   const area = document.getElementById("fillingStatusArea");
-  const days = state.dailyResults.filter(r => OPERATING_DAYS.includes(r.dow));
+
+  // 「今週」（今日〜今週木曜）のみに絞る。来週以降は表示しない
+  const today = new Date(state.dailyResults[0].dateStr);
+  today.setHours(0, 0, 0, 0);
+  const todayDow = today.getDay();
+  const diffToMonday = todayDow === 0 ? -6 : 1 - todayDow;
+  const thisMonday = new Date(today);
+  thisMonday.setDate(today.getDate() + diffToMonday);
+  const thisThursday = new Date(thisMonday);
+  thisThursday.setDate(thisMonday.getDate() + 3);
+
+  const days = state.dailyResults.filter(r => {
+    if(!OPERATING_DAYS.includes(r.dow)) return false;
+    const d = new Date(r.dateStr);
+    d.setHours(0, 0, 0, 0);
+    return d <= thisThursday;
+  });
 
   if(days.length === 0){
     area.innerHTML = `<p class="off-note">今週の営業日データがありません。</p>`;
     return;
   }
 
-  days.forEach(d => ensureWeeklyShift(d.dow));
+  // 同じ曜日が複数週にわたって表示されることがあるため、曜日(dow)ではなく日付(M/D)をキーにする
+  days.forEach(d => ensureWeeklyShift(mdLabel(d.dateStr)));
 
-  // 曜日ごとに出勤メンバーへ具材をラウンドロビン割り振り、個数は推奨数×比率で算出
+  // 日付ごとに出勤メンバーへ具材をラウンドロビン割り振り、個数は推奨数×比率で算出
   const dayAssign = {};
   days.forEach(d => {
+    const key = mdLabel(d.dateStr);
     const total = (d.zuid ? d.zuid.total : 0) + (d.uva ? d.uva.total : 0);
-    const working = state.members.filter(m => state.weeklyShift[d.dow][m.name]);
+    const working = state.members.filter(m => state.weeklyShift[key][m.name]);
     const buckets = working.map(() => []);
     if(working.length > 0){
       FILLINGS.forEach((f, i) => {
@@ -1014,8 +1032,8 @@ function renderWeeklyStatusTable(){
       });
     }
     const map = {};
-    working.forEach((m, i) => { map[m.name] = buckets[i]; ensureCellStatus(d.dow, m.name); });
-    dayAssign[d.dow] = map;
+    working.forEach((m, i) => { map[m.name] = buckets[i]; ensureCellStatus(key, m.name); });
+    dayAssign[key] = map;
   });
 
   const headerCells = days.map(d => {
@@ -1025,24 +1043,25 @@ function renderWeeklyStatusTable(){
 
   const bodyRows = state.members.map(m => {
     const cells = days.map(d => {
-      const working = state.weeklyShift[d.dow][m.name];
-      const shiftBtn = `<button class="status-btn shift-toggle ${working ? "on" : "off"}" data-dow="${d.dow}" data-member="${m.name}">${working ? "出勤" : "休み"}</button>`;
+      const key = mdLabel(d.dateStr);
+      const working = state.weeklyShift[key][m.name];
+      const shiftBtn = `<button class="status-btn shift-toggle ${working ? "on" : "off"}" data-key="${key}" data-member="${m.name}">${working ? "出勤" : "休み"}</button>`;
 
       if(!working){
         return `<td>${shiftBtn}</td>`;
       }
 
-      const items = (dayAssign[d.dow][m.name] || []);
+      const items = (dayAssign[key][m.name] || []);
       const fillingText = items.map(it => `${it.filling}×${it.qty}`).join(" ") || "—";
-      const st = state.cellStatus[d.dow][m.name];
+      const st = state.cellStatus[key][m.name];
 
       return `
         <td>
           ${shiftBtn}
           <div class="cell-fillings">${fillingText}</div>
           <div class="cell-status">
-            <button class="status-btn handed ${st.handed ? "active" : ""}" data-dow="${d.dow}" data-member="${m.name}" data-kind="handed">具材渡し済み✓</button>
-            <button class="status-btn cooked ${st.cooked ? "active" : ""}" data-dow="${d.dow}" data-member="${m.name}" data-kind="cooked">調理済み❄️</button>
+            <button class="status-btn handed ${st.handed ? "active" : ""}" data-key="${key}" data-member="${m.name}" data-kind="handed">具材渡し済み✓</button>
+            <button class="status-btn cooked ${st.cooked ? "active" : ""}" data-key="${key}" data-member="${m.name}" data-kind="cooked">調理済み❄️</button>
           </div>
         </td>
       `;
@@ -1063,26 +1082,26 @@ function renderWeeklyStatusTable(){
 
   area.querySelectorAll(".shift-toggle").forEach(btn => {
     btn.addEventListener("click", () => {
-      const dow = +btn.dataset.dow;
+      const key = btn.dataset.key;
       const name = btn.dataset.member;
-      state.weeklyShift[dow][name] = !state.weeklyShift[dow][name];
+      state.weeklyShift[key][name] = !state.weeklyShift[key][name];
       renderWeeklyStatusTable();
     });
   });
 
   area.querySelectorAll(".cell-status .status-btn").forEach(btn => {
     btn.addEventListener("click", () => {
-      const dow = +btn.dataset.dow;
+      const key = btn.dataset.key;
       const name = btn.dataset.member;
       const kind = btn.dataset.kind;
       const label = kind === "handed" ? "渡し済み" : "調理済み";
-      const items = (dayAssign[dow][name] || []);
+      const items = (dayAssign[key][name] || []);
       const fillingNames = items.map(it => it.filling).join("・") || "具材";
-      const nextState = !state.cellStatus[dow][name][kind];
+      const nextState = !state.cellStatus[key][name][kind];
       const actionLabel = nextState ? label : `未${label}`;
 
       showConfirm(`${name}の${fillingNames}を「${actionLabel}」に変更しますか？`, () => {
-        state.cellStatus[dow][name][kind] = nextState;
+        state.cellStatus[key][name][kind] = nextState;
         renderWeeklyStatusTable();
       });
     });
