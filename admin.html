@@ -1248,18 +1248,18 @@ function computeDaySnapshot(day){
 
 // 具材内訳・チェック表示など「ユーザーが直接編集しない」部分のHTML
 function deriveBlocksHtml(snap){
-  const { working, memberCaps, isOverCap, hqBreakdown, hqQty, ningiTotal, chiseQty, allocationTarget } = snap;
+  const { working, memberCaps, isOverCap, hqBreakdown, hqQty, ningiTotal, allocationTarget } = snap;
 
   const ningiBreakdownSummary = working.length
     ? working.map((name, i) => `${name}:${memberCaps[i]}`).join(" ")
     : "なし";
 
-  // 「総生産数」はZuid＋UvAの必要数合計（チセは含めない・受け取り先のため計算に入らない）
+  // チセさんは生産者ではなく受け取り先のため、最終生産割り振りには一切表示・計算しない。
+  // 「総生産数」はZuid＋UvAの必要数合計。
   const summaryHtml = `
     <div>総生産数：${allocationTarget}個</div>
     <div>ニギニギ隊合計：${ningiTotal}個（${ningiBreakdownSummary}）</div>
     <div>本部：${hqQty}個（自動計算）</div>
-    <div class="off-note">（参考）チセさん：${chiseQty}個 ※受け取り先のため計算には含めません</div>
     ${isOverCap ? `<div class="warning-line">⚠️ ニギニギ隊の設定生産数が総生産数を超えています</div>` : ""}
   `;
 
