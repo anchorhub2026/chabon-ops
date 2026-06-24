@@ -142,7 +142,7 @@
 
   .day-cards{
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(360px, 1fr));
+    grid-template-columns: repeat(auto-fit, minmax(400px, 1fr));
     gap: 12px;
   }
   .day-card{
@@ -193,6 +193,83 @@
     font-size: 0.82rem;
     color: #666;
     margin-bottom: 8px;
+  }
+  .day-card-head{
+    display: flex;
+    align-items: flex-start;
+    flex-wrap: nowrap;
+    gap: 8px;
+    margin-bottom: 8px;
+    overflow: visible;
+  }
+  .day-head-main{ flex: 0 0 auto; }
+  .holiday-badge, .ns-badge{
+    display: inline-block;
+    margin-top: 4px;
+    margin-right: 4px;
+    background: #fdecea;
+    color: #c0392b;
+    font-size: 0.66rem;
+    font-weight: bold;
+    padding: 2px 7px;
+    border-radius: 100px;
+    border: 1px solid #f3b6ae;
+    white-space: nowrap;
+  }
+  .day-store-row{
+    display: flex;
+    flex: 1;
+    gap: 12px;
+    overflow: visible;
+  }
+  .day-store-unit{
+    background: #fff;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    padding: 4px 8px;
+    min-width: 0;
+    flex: 1;
+  }
+  .day-store-unit.closed{
+    background: #f7f6f2;
+  }
+  .day-store-label{
+    font-size: 0.64rem;
+    font-weight: bold;
+    color: var(--main-dark);
+    margin-bottom: 1px;
+  }
+  .day-store-unit.closed .day-store-label{ color: #999; }
+  .day-store-content{
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .day-store-num{
+    font-size: 40px;
+    font-weight: bold;
+    color: var(--main);
+    white-space: nowrap;
+    line-height: 1;
+  }
+  .day-store-unit.closed .day-store-num{
+    font-size: 1rem;
+    font-weight: normal;
+    color: #999;
+  }
+  .day-store-reasons{
+    display: flex;
+    flex-direction: column;
+    font-size: 10px;
+    color: #888;
+    line-height: 1.25;
+    min-width: 0;
+    overflow: hidden;
+  }
+  .day-store-reasons div{
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
   .store-toggle-btn{
     border: none;
@@ -716,6 +793,59 @@ function calcUvA(dow, salesWeather){
   return { total, reasons };
 }
 
+/* ---------- 祝日（オランダ・Nager.Date API） ---------- */
+
+const ZUID_MIN_GUARANTEE = 100;
+const UVA_MIN_GUARANTEE = 25;
+const HOLIDAY_PENALTY = 30;
+
+// 無料・APIキー不要のオランダ祝日API。CORS対応済みでブラウザから直接fetch可能
+async function fetchDutchHolidays(years){
+  const lists = await Promise.all(years.map(async year => {
+    try{
+      const res = await fetch(`https://date.nager.at/api/v3/PublicHolidays/${year}/NL`);
+      if(!res.ok) return [];
+      return await res.json();
+    }catch(e){
+      console.error(`祝日データの取得に失敗しました（${year}年）`, e);
+      return [];
+    }
+  }));
+  const map = {};
+  lists.flat().forEach(h => { map[h.date] = h.localName || h.name; });
+  return map;
+}
+
+// 祝日補正：販売推奨数を-30個し、最低保証は維持したまま理由テキストに追記する
+function applyHolidayPenalty(result, minGuarantee){
+  if(!result) return;
+  result.total = Math.max(minGuarantee, result.total - HOLIDAY_PENALTY);
+  result.reasons.push(`祝日 -${HOLIDAY_PENALTY}`);
+}
+
+/* ---------- NSストライキ・運休情報（Apps Script経由でCORSを回避） ---------- */
+
+const NS_PENALTY = 50;
+
+async function fetchNsDisruptions(){
+  try{
+    const res = await fetch(`${SCRIPT_URL}?type=disruptions`);
+    const json = await res.json();
+    if(json.error) console.warn("NS運休・スト情報の取得で警告:", json.error);
+    return json.disruptionsByDate || {};
+  }catch(e){
+    console.error("NS運休・スト情報の取得に失敗しました", e);
+    return {};
+  }
+}
+
+// NS運休・スト補正：販売推奨数を-50個し、最低保証は維持したまま理由テキストに追記する
+function applyNsPenalty(result, minGuarantee){
+  if(!result) return;
+  result.total = Math.max(minGuarantee, result.total - NS_PENALTY);
+  result.reasons.push(`NSスト -${NS_PENALTY}`);
+}
+
 /* ---------- スプレッドシート読み込み（gviz） ---------- */
 
 async function fetchSheetJson(sheetName, spreadsheetId){
@@ -820,6 +950,19 @@ function buildDays(daily, hourlyByDate){
     const salesWeather = computeSalesWeather(hourlyByDate, iso);
     const hasForecast = dIdx !== -1;
 
+    const holidayName = (state.holidaysByIso && state.holidaysByIso[iso]) || null;
+    const nsDisruptions = (state.nsDisruptionsByDate && state.nsDisruptionsByDate[iso]) || null;
+    const zuid = calcZuid(dow, d.getMonth() + 1, salesWeather);
+    const uva = calcUvA(dow, salesWeather);
+    if(holidayName){
+      applyHolidayPenalty(zuid, ZUID_MIN_GUARANTEE);
+      applyHolidayPenalty(uva, UVA_MIN_GUARANTEE);
+    }
+    if(nsDisruptions && nsDisruptions.length){
+      applyNsPenalty(zuid, ZUID_MIN_GUARANTEE);
+      applyNsPenalty(uva, UVA_MIN_GUARANTEE);
+    }
+
     return {
       dateObj: d,
       dateKey: dateKey(d),
@@ -830,8 +973,10 @@ function buildDays(daily, hourlyByDate){
       hasForecast,
       weatherIcon: hasForecast ? weatherInfo(salesWeather ? salesWeather.code : daily.weathercode[dIdx]).icon : "❔",
       tempLabel: salesWeather ? `${Math.round(salesWeather.avgTemp)}°(11-15時平均)` : "—",
-      zuid: calcZuid(dow, d.getMonth() + 1, salesWeather),
-      uva: calcUvA(dow, salesWeather),
+      holidayName,
+      nsDisruptions,
+      zuid,
+      uva,
     };
   }).map(day => {
     day.zuidOpen = day.zuid !== null;
@@ -894,6 +1039,51 @@ function getManualQty(day, name){
 
 /* ---------- レンダリング：カレンダー ---------- */
 
+// 日付カードのヘッダーに収まるよう、理由テキストを短縮する（汎用パターンで季節・温度帯を問わず対応）
+function compactReason(str){
+  let m;
+  if((m = str.match(/^.+・(.)曜ベース (\d+)個$/))) return `${m[1]}曜 ${m[2]}`;
+  if((m = str.match(/^気温.*?([+\-±]\d+)$/))) return `気温 ${m[1]}`;
+  if((m = str.match(/^晴れ\s*([+\-±]\d+)$/))) return `晴 ${m[1]}`;
+  if((m = str.match(/^曇り\s*([+\-±]\d+)$/))) return `曇 ${m[1]}`;
+  if((m = str.match(/^販売時間帯.*に雨 (-?\d+)$/))) return `雨 ${m[1]}`;
+  if(str.includes("天気補正なし")) return "補正なし";
+  if((m = str.match(/^最低保証 (\d+)個/))) return `保証 ${m[1]}`;
+  if((m = str.match(/^基本 (\d+)個$/))) return `基本 ${m[1]}`;
+  return str;
+}
+
+// 日付カードのヘッダー右側、日付・天気と同じ行にZuid/UvAを横並びで出すコンパクトな表示。
+// 白い枠の中：1行目にラベル、2行目に個数（左・大きく）と理由（右・小さく縦並び）を横並びで表示。
+function storeBoxHtml(label, result){
+  if(!result){
+    return `
+      <div class="day-store-unit closed">
+        <div class="day-store-label">${label}</div>
+        <div class="day-store-content"><span class="day-store-num">—</span></div>
+      </div>
+    `;
+  }
+  return `
+    <div class="day-store-unit">
+      <div class="day-store-label">${label}</div>
+      <div class="day-store-content">
+        <span class="day-store-num">${result.total}個</span>
+        <div class="day-store-reasons">${result.reasons.map(r => `<div>${compactReason(r)}</div>`).join("")}</div>
+      </div>
+    </div>
+  `;
+}
+
+function recommendReasonHtml(day){
+  return `
+    <div class="day-store-row">
+      ${storeBoxHtml("Zuid", day.zuid)}
+      ${storeBoxHtml("UvA", day.uva)}
+    </div>
+  `;
+}
+
 function thisWeekBadge(days){
   if(days.length === 0) return "";
   const fmt = d => `${d.getMonth() + 1}/${d.getDate()}`;
@@ -925,8 +1115,15 @@ function renderCalendar(){
         ${week.days.map((day, di) => `
           <div class="day-card">
             ${di === 0 ? `<span class="week-pin-label">${week.title}</span>` : ""}
-            <div class="day-head">${day.label}</div>
-            <div class="day-weather">${day.weatherIcon} ${day.tempLabel}</div>
+            <div class="day-card-head">
+              <div class="day-head-main">
+                <div class="day-head">${day.label}</div>
+                <div class="day-weather">${day.weatherIcon} ${day.tempLabel}</div>
+                ${day.holidayName ? `<div class="holiday-badge">🎉 祝日：${day.holidayName}</div>` : ""}
+                ${day.nsDisruptions && day.nsDisruptions.length ? `<div class="ns-badge">🚆 NSストライキ/運休</div>` : ""}
+              </div>
+              ${recommendReasonHtml(day)}
+            </div>
             <div id="forecastTable-${day.dateKey}">${forecastTableHtml(day)}</div>
           </div>
         `).join("")}
@@ -935,6 +1132,7 @@ function renderCalendar(){
   `).join("");
 
   state.days.forEach(day => bindForecastTableEvents(day));
+  state.days.forEach(day => alignDayStoreBoxes(day));
 
   area.querySelectorAll(".confirm-week-btn").forEach(btn => {
     btn.addEventListener("click", () => confirmWeek(+btn.dataset.week));
@@ -1016,6 +1214,32 @@ function renderForecastTable(day){
   if(!container) return;
   container.innerHTML = forecastTableHtml(day);
   bindForecastTableEvents(day);
+  alignDayStoreBoxes(day);
+}
+
+// ヘッダーのZuid/UvA枠を、テーブルのZuid列・UvA列の真上に来るよう水平位置を揃える。
+// テーブルは具材名の長さで列幅が変わる(table-layout:auto)ため、テーブル・ヘッダーの構造は変えず、
+// 実際に描画された列の中心位置を測ってtranslateXで視覚的にだけ合わせる。
+function alignDayStoreBoxes(day){
+  const tableWrap = document.getElementById(`forecastTable-${day.dateKey}`);
+  const card = tableWrap && tableWrap.closest(".day-card");
+  const table = tableWrap && tableWrap.querySelector("table.forecast-table");
+  if(!card || !table) return;
+
+  const ths = table.querySelectorAll("thead th");
+  const units = card.querySelectorAll(".day-store-unit");
+  if(ths.length < 3 || units.length < 2) return;
+
+  const targets = [ths[1], ths[2]]; // Zuid列, UvA列
+  units.forEach((unit, i) => {
+    const th = targets[i];
+    if(!unit || !th) return;
+    unit.style.transform = ""; // 前回分のずらしをリセットしてから測る
+    const thRect = th.getBoundingClientRect();
+    const unitRect = unit.getBoundingClientRect();
+    const offset = (thRect.left + thRect.width / 2) - (unitRect.left + unitRect.width / 2);
+    unit.style.transform = `translateX(${offset}px)`;
+  });
 }
 
 function bindForecastTableEvents(day){
@@ -1650,12 +1874,17 @@ async function init(){
       `&hourly=temperature_2m,precipitation,weathercode` +
       `&forecast_days=16&timezone=Europe%2FAmsterdam`;
 
-    const [weatherRes, chiseJson, shiftJson] = await Promise.all([
+    const thisYear = new Date().getFullYear();
+    const [weatherRes, chiseJson, shiftJson, holidaysByIso, nsDisruptionsByDate] = await Promise.all([
       fetch(weatherUrl).then(r => r.json()),
       fetchSheetJson(null).catch(e => { console.error("チセさんシート取得失敗", e); return null; }),
       fetchSheetJson("シフト回答", SHIFT_SPREADSHEET_ID).catch(e => { console.error("シフト回答シート取得失敗", e); return null; }),
+      fetchDutchHolidays([thisYear, thisYear + 1]),
+      fetchNsDisruptions(),
     ]);
 
+    state.holidaysByIso = holidaysByIso;
+    state.nsDisruptionsByDate = nsDisruptionsByDate;
     const hourlyByDate = buildHourlyByDate(weatherRes.hourly);
     state.days = buildDays(weatherRes.daily, hourlyByDate);
     state.chiseByDate = chiseJson ? parseChiseSheet(chiseJson) : {};
@@ -1676,6 +1905,15 @@ async function init(){
 }
 
 init();
+
+// 画面幅が変わるとテーブルの列幅も変わるため、ヘッダーのZuid/UvA枠の位置を再調整する
+let alignResizeTimer = null;
+window.addEventListener("resize", () => {
+  clearTimeout(alignResizeTimer);
+  alignResizeTimer = setTimeout(() => {
+    state.days.forEach(day => alignDayStoreBoxes(day));
+  }, 150);
+});
 </script>
 
 </body>
