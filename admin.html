@@ -283,6 +283,19 @@
   }
   .store-toggle-btn.on{ background: var(--main); color: #fff; }
   .store-toggle-btn.off{ background: #ddd5c5; color: #777; }
+  .reset-recommend-btn{
+    border: 1px solid var(--line);
+    background: #fff;
+    color: var(--main-dark);
+    font-size: 0.62rem;
+    font-weight: bold;
+    padding: 1px 6px;
+    margin-left: 4px;
+    border-radius: 100px;
+    cursor: pointer;
+    vertical-align: middle;
+  }
+  .reset-recommend-btn:active{ background: var(--main-light); }
   table.forecast-table{
     width: 100%;
     border-collapse: collapse;
@@ -389,95 +402,31 @@
     margin-bottom: 8px;
     font-size: 0.9rem;
   }
-  .prod-row{
-    border-top: 1px dashed var(--line);
-    padding: 8px 0;
+  .undo-btn{
+    margin-left: auto;
   }
-  .prod-row:first-of-type{ border-top: none; }
-  .prod-row-head{ font-weight: bold; font-size: 0.85rem; color: var(--ink); margin-bottom: 4px; }
-  .prod-row-body{ margin-bottom: 4px; }
-  .prod-row-foot{ font-size: 0.8rem; color: #666; margin-top: 4px; }
-  .line-row{
-    display: flex;
-    align-items: center;
-    flex-wrap: wrap;
-    gap: 6px;
-    margin-bottom: 4px;
+  .undo-btn:disabled{
+    opacity: 0.4;
+    cursor: default;
   }
-  .line-filling-select{
-    flex: 1;
-    font-size: 0.8rem;
-    padding: 4px 6px;
-    border: 1px solid var(--line);
-    border-radius: 6px;
-    background: #fff;
-    color: var(--ink);
-  }
-  .line-qty-input{
-    width: 56px;
-    padding: 4px;
-    border: 1px solid var(--line);
-    border-radius: 6px;
-    font-size: 0.8rem;
-    text-align: center;
-  }
-  .line-qty-step-btn{
-    width: 34px;
-    height: 34px;
-    line-height: 1;
-    border: 1px solid var(--line);
-    background: #fff;
-    color: var(--main-dark);
-    font-size: 1.1rem;
-    font-weight: bold;
-    border-radius: 8px;
-    cursor: pointer;
-    padding: 0;
-    flex-shrink: 0;
-  }
-  .line-qty-step-btn:active{ background: var(--main-light); }
-  .line-unit{ font-size: 0.78rem; color: #888; }
-  .line-delete-btn{
-    border: none;
-    background: none;
-    color: var(--accent);
+  .prod-table-wrap{ overflow-x: auto; }
+  table.prod-table{
+    width: 100%;
+    border-collapse: collapse;
     font-size: 0.78rem;
-    cursor: pointer;
-    padding: 2px 4px;
+    min-width: 640px;
   }
-  .add-line-btn{
-    border: 1px dashed var(--line);
-    background: #fff;
-    color: var(--main-dark);
-    font-size: 0.76rem;
-    padding: 5px 10px;
-    border-radius: 100px;
-    cursor: pointer;
-    margin-top: 2px;
-  }
-  .wish-readonly{ font-size: 0.78rem; color: #888; margin-bottom: 4px; }
-  .total-override-input{
-    width: 56px;
-    padding: 4px;
-    border: 1px solid var(--line);
-    border-radius: 6px;
-    font-size: 0.84rem;
+  table.prod-table th, table.prod-table td{
+    border-bottom: 1px solid var(--line);
+    padding: 5px 4px;
     text-align: center;
-    font-weight: bold;
-    color: var(--main-dark);
   }
-  .member-mismatch{
-    color: var(--accent);
-    font-size: 0.76rem;
-    font-weight: bold;
-    margin-top: 2px;
-  }
-  .ok-line{
-    font-size: 0.85rem;
-    color: var(--main-dark);
-    font-weight: bold;
-    margin-top: 4px;
-  }
+  table.prod-table th{ color: var(--main-dark); font-weight: bold; background: var(--main-light); white-space: nowrap; }
+  table.prod-table td.f-name{ text-align: left; color: var(--ink); white-space: nowrap; }
+  table.prod-table td.cell-readonly{ color: #666; }
+  table.prod-table td.cell-row-total{ font-weight: bold; color: var(--main-dark); }
+  table.prod-table tfoot td{ font-weight: bold; color: var(--main-dark); border-bottom: none; border-top: 2px solid var(--main-light); padding-top: 6px; }
+  .wish-hint{ display: block; font-weight: normal; color: #888; font-size: 0.66rem; }
   .prod-summary{
     font-size: 0.82rem;
     color: #555;
@@ -1009,17 +958,17 @@ function floorToMultipleOf3(qty){
   return Math.floor(qty / 3) * 3;
 }
 
-function pillsHtml(breakdown){
-  return Object.entries(breakdown).map(([f, q]) => `<span class="pill">${f}×${q}</span>`).join("");
-}
-
-// メンバーの具材割り振り（具材名・個数）を松木さんが手動編集できるようにするための編集状態を確保する
-function ensureEditableLines(day, working, memberBreakdowns){
-  if(!day.editableLines) day.editableLines = {};
+// メンバー×具材の個数（テーブルの各セル）を松木さんが手動編集できるようにするための編集状態を確保する。
+// 既に値が入っているメンバーには触れない（自動割り振りの初期値は1回だけ適用する）。
+function ensureMemberFillingQty(day, working, memberBreakdowns){
+  if(!day.memberFillingQty) day.memberFillingQty = {};
   working.forEach((name, i) => {
-    if(!day.editableLines[name]){
-      const entries = Object.entries(memberBreakdowns[i] || {}).map(([filling, qty]) => ({ filling, qty }));
-      day.editableLines[name] = entries.length ? entries : [{ filling: ALLOC_FILLINGS[0], qty: 0 }];
+    if(!day.memberFillingQty[name]){
+      const qtyMap = {};
+      FILLINGS.forEach(f => { qtyMap[f] = (memberBreakdowns[i] && memberBreakdowns[i][f]) || 0; });
+      day.memberFillingQty[name] = qtyMap;
+    } else {
+      FILLINGS.forEach(f => { if(!(f in day.memberFillingQty[name])) day.memberFillingQty[name][f] = 0; });
     }
   });
 }
@@ -1162,6 +1111,8 @@ function forecastTableHtml(day){
   const uvaToggle = showUva
     ? `<button class="store-toggle-btn ${day.uvaOpen ? "on" : "off"}" data-key="${day.dateKey}" data-store="uva">${day.uvaOpen ? "営業" : "休み"}</button>`
     : "";
+  const zuidReset = day.zuid ? `<button type="button" class="reset-recommend-btn" data-key="${day.dateKey}" data-store="zuid" title="推奨個数に戻す">↺ 推奨に戻す</button>` : "";
+  const uvaReset = (showUva && day.uva) ? `<button type="button" class="reset-recommend-btn" data-key="${day.dateKey}" data-store="uva" title="推奨個数に戻す">↺ 推奨に戻す</button>` : "";
 
   const rows = FILLINGS.map(f => {
     const zuidQty = day.zuidFillingQty[f] || 0;
@@ -1189,8 +1140,8 @@ function forecastTableHtml(day){
       <thead>
         <tr>
           <th>具材</th>
-          <th>Zuid${zuidToggle}</th>
-          <th>UvA${uvaToggle}</th>
+          <th>Zuid${zuidToggle}${zuidReset}</th>
+          <th>UvA${uvaToggle}${uvaReset}</th>
           <th>チセ</th>
           <th>合計</th>
         </tr>
@@ -1285,7 +1236,20 @@ function bindForecastTableEvents(day){
       }
 
       // 必要数（Zuid+UvA合計）が変わったので、本部内訳・合計チェックだけ再計算（メンバーの入力欄には触れない）
-      refreshDerived(day);
+      refreshProductionCellDerived(day);
+    });
+  });
+
+  container.querySelectorAll(".reset-recommend-btn").forEach(btn => {
+    btn.addEventListener("click", () => {
+      const store = btn.dataset.store;
+      if(store === "zuid" && day.zuid){
+        day.zuidFillingQty = buildFillingDefaults(day.zuid.total);
+      } else if(store === "uva" && day.uva){
+        day.uvaFillingQty = buildFillingDefaults(day.uva.total);
+      }
+      renderForecastTable(day);
+      refreshProductionCellDerived(day);
     });
   });
 
@@ -1309,7 +1273,7 @@ function bindForecastTableEvents(day){
 
       // 営業/休みの切り替えは具材の必要数が丸ごと変わる構造的な変更なので表は再生成する
       renderForecastTable(day);
-      refreshDerived(day);
+      refreshProductionCellDerived(day);
     });
   });
 }
@@ -1403,17 +1367,6 @@ function buildProductionPlan(day, working, memberCaps){
   return { memberBreakdowns, memberQtys: totals, hqBreakdown };
 }
 
-// 合計個数（松木さんが調整可能。デフォルトは希望数）
-function getEffectiveTotal(day, name){
-  if(day.memberTotalOverride && name in day.memberTotalOverride) return day.memberTotalOverride[name];
-  return getManualQty(day, name);
-}
-
-// 合計個数が変わったら、その日の割り振りを丸ごと自動再計算する
-function resetDayPlan(day){
-  day.editableLines = {};
-}
-
 // その日の最終生産割り振りの確定版データを1ヶ所で計算する（描画・確定保存の両方で共用）
 function computeDaySnapshot(day){
   const chise = state.chiseByDate[mdLabel(day.dateObj)];
@@ -1421,13 +1374,7 @@ function computeDaySnapshot(day){
   const total = (zuidFinal(day) || 0) + (uvaFinal(day) || 0) + chiseQty;
 
   const working = MEMBERS.filter(name => getManualQty(day, name) > 0);
-  const memberCaps = working.map(name => getEffectiveTotal(day, name));
-
-  // 合計個数入力欄に必ずデフォルト値が表示されるよう、override未設定のメンバーにも値を確定させておく
-  if(!day.memberTotalOverride) day.memberTotalOverride = {};
-  working.forEach((name, i) => {
-    if(!(name in day.memberTotalOverride)) day.memberTotalOverride[name] = memberCaps[i];
-  });
+  const memberCaps = working.map(name => getManualQty(day, name)); // 希望数（表として表示するだけで、実際の個数はセル編集で決まる）
 
   const capTotal = memberCaps.reduce((s, v) => s + v, 0);
 
@@ -1436,221 +1383,180 @@ function computeDaySnapshot(day){
   const isOverCap = capTotal > allocationTarget;
 
   const { memberBreakdowns } = buildProductionPlan(day, working, memberCaps);
-  ensureEditableLines(day, working, memberBreakdowns);
+  ensureMemberFillingQty(day, working, memberBreakdowns);
 
-  // ニギニギ隊合計は「現在実際に割り振られている個数」（手動編集も含む）の合計
-  const editedMemberTotals = working.map(name => (day.editableLines[name] || []).reduce((s, l) => s + (l.qty || 0), 0));
-  const ningiTotal = editedMemberTotals.reduce((s, v) => s + v, 0);
+  // ニギニギ隊合計は「現在実際にテーブルに入っている個数」（手動編集も含む）の合計
+  const memberTotals = working.map(name => FILLINGS.reduce((s, f) => s + ((day.memberFillingQty[name] && day.memberFillingQty[name][f]) || 0), 0));
+  const ningiTotal = memberTotals.reduce((s, v) => s + v, 0);
 
   // 本部の具材内訳：具材ごとに「販売予測数の必要数（Zuid＋UvA＋チセ） − ニギニギ隊全員の実際の生産量」の残り。
   // チセさんは生産者ではなく受け取り先のため、必要数（neededQtyFor）には含めるが、生産量からは引かない。
-  // 具材プルダウンは7種類全てから選べる（枝豆・梅も含む）ため、特例なしで全具材に同じ式を適用する。
   const producedByFilling = {};
   working.forEach(name => {
-    (day.editableLines[name] || []).forEach(line => {
-      if(line.qty > 0) producedByFilling[line.filling] = (producedByFilling[line.filling] || 0) + line.qty;
+    FILLINGS.forEach(f => {
+      const qty = (day.memberFillingQty[name] && day.memberFillingQty[name][f]) || 0;
+      if(qty > 0) producedByFilling[f] = (producedByFilling[f] || 0) + qty;
     });
   });
   const hqBreakdown = {};
-  const hqDebugRows = [];
   FILLINGS.forEach(f => {
     const needed = neededQtyFor(day, f);
     const produced = producedByFilling[f] || 0;
-    const remainder = needed - produced;
-    if(remainder > 0) hqBreakdown[f] = remainder;
-    hqDebugRows.push({ 具材: f, 必要数: needed, ニギニギ隊生産量: produced, 本部分: Math.max(0, remainder) });
+    hqBreakdown[f] = Math.max(0, needed - produced);
   });
 
   // 本部合計は「全具材の本部分の合計」を正式な値とする（独立した別計算式は使わない）
   const hqQty = Object.values(hqBreakdown).reduce((s, v) => s + v, 0);
 
-  console.log(`[本部内訳検証] ${day.label || day.dateKey}`, hqDebugRows);
-  console.log(`[本部内訳検証] 本部合計（全具材の本部分の合計）=${hqQty}`);
-
   return {
     chiseQty, total, working, memberCaps, capTotal, allocationTarget, isOverCap,
-    hqBreakdown, hqQty, editedMemberTotals, ningiTotal,
+    hqBreakdown, hqQty, memberTotals, ningiTotal,
   };
 }
 
-// 具材内訳・チェック表示など「ユーザーが直接編集しない」部分のHTML
-function deriveBlocksHtml(snap){
-  const { working, memberCaps, isOverCap, hqBreakdown, hqQty, ningiTotal, allocationTarget } = snap;
-
-  const ningiBreakdownSummary = working.length
-    ? working.map((name, i) => `${name}:${memberCaps[i]}`).join(" ")
-    : "なし";
-
-  // チセさんは生産者ではなく受け取り先のため、最終生産割り振りには一切表示・計算しない。
-  // 「総生産数」はZuid＋UvAの必要数合計。
-  const summaryHtml = `
-    <div>総生産数：${allocationTarget}個</div>
-    <div>ニギニギ隊合計：${ningiTotal}個（${ningiBreakdownSummary}）</div>
-    <div>本部：${hqQty}個（自動計算）</div>
-    ${isOverCap ? `<div class="warning-line">⚠️ ニギニギ隊の設定生産数が総生産数を超えています</div>` : ""}
+function summaryHtmlFor(snap){
+  return `
+    <div>総生産数：${snap.allocationTarget}個</div>
+    <div>ニギニギ隊合計：${snap.ningiTotal}個</div>
+    <div>本部：${snap.hqQty}個（自動計算）</div>
+    ${snap.isOverCap ? `<div class="warning-line">⚠️ ニギニギ隊の希望数合計が総生産数を超えています</div>` : ""}
   `;
-
-  const hqHtml = `
-    <div class="prod-row-head">本部（自動算出：${hqQty}個）</div>
-    <div class="prod-row-body">${pillsHtml(hqBreakdown)}</div>
-  `;
-
-  // 合計チェック：ニギニギ隊合計＋本部製造数＝総生産数（チセは含めない）
-  const reconciledTotal = ningiTotal + hqQty;
-  const isMismatch = reconciledTotal !== allocationTarget;
-  const checkHtml = isMismatch
-    ? `<div class="warning-line">⚠️ 合計が合いません（${reconciledTotal}個 / 必要 ${allocationTarget}個）</div>`
-    : `<div class="ok-line">✓ OK（${reconciledTotal}個）</div>`;
-
-  return { summaryHtml, hqHtml, checkHtml };
 }
 
-// 1人分の行（具材名・個数・合計個数の入力欄を含む）。ユーザーが直接編集する部分。
-function memberRowHtml(day, snap, idx){
-  const name = snap.working[idx];
-  const lines = day.editableLines[name] || [];
-  const wish = getManualQty(day, name);
-  const cap = snap.memberCaps[idx];
-  const editedTotal = snap.editedMemberTotals[idx];
-  const mismatch = editedTotal !== cap;
-
-  const linesHtml = lines.map((line, li) => `
-    <div class="line-row">
-      <select class="line-filling-select" data-key="${day.dateKey}" data-name="${name}" data-line="${li}">
-        ${FILLINGS.map(f => `<option value="${f}" ${f === line.filling ? "selected" : ""}>${f}</option>`).join("")}
-      </select>
-      <button type="button" class="line-qty-step-btn" data-action="dec" data-key="${day.dateKey}" data-name="${name}" data-line="${li}">−</button>
-      <input type="text" inputmode="numeric" pattern="[0-9]*" class="line-qty-input" value="${line.qty}" data-key="${day.dateKey}" data-name="${name}" data-line="${li}">
-      <button type="button" class="line-qty-step-btn" data-action="inc" data-key="${day.dateKey}" data-name="${name}" data-line="${li}">＋</button>
-      <span class="line-unit">個</span>
-      <button type="button" class="line-delete-btn" data-key="${day.dateKey}" data-name="${name}" data-line="${li}">削除</button>
-    </div>
-  `).join("");
-
+// ±ボタン付きの個数入力欄（生産割り振りテーブルのセル用）
+function prodCellStepperHtml(day, name, filling, qty){
   return `
-    <div class="prod-row" id="memberRow-${day.dateKey}-${name}">
-      <div class="prod-row-head">${name}</div>
-      <div class="wish-readonly">希望：${wish}個（読み取り専用）</div>
-      <div class="line-row">
-        <span class="line-unit">合計個数：</span>
-        <input type="text" inputmode="numeric" pattern="[0-9]*" class="total-override-input" value="${cap}" data-key="${day.dateKey}" data-name="${name}">
-        <span class="line-unit">個</span>
-      </div>
-      ${linesHtml}
-      <button type="button" class="add-line-btn" data-key="${day.dateKey}" data-name="${name}">＋具材を追加</button>
-      <div class="prod-row-foot" id="memberFooter-${day.dateKey}-${name}">合計：${editedTotal}個</div>
-      <div class="member-mismatch" id="memberMismatch-${day.dateKey}-${name}" ${mismatch ? "" : 'style="display:none;"'}>⚠️ 合計が合いません（${editedTotal}個 / 設定${cap}個）</div>
+    <div class="qty-stepper">
+      <button type="button" class="qty-step-btn prod-qty-step-btn" data-action="dec" data-key="${day.dateKey}" data-name="${name}" data-filling="${filling}">−</button>
+      <input type="number" min="0" class="cell-input prod-cell-input" data-key="${day.dateKey}" data-name="${name}" data-filling="${filling}" value="${qty}">
+      <button type="button" class="qty-step-btn prod-qty-step-btn" data-action="inc" data-key="${day.dateKey}" data-name="${name}" data-filling="${filling}">＋</button>
     </div>
   `;
+}
+
+// 生産割り振り表：列＝メンバー＋本部＋合計、行＝具材＋合計
+function productionTableHtml(day, snap){
+  const { working, memberCaps, hqBreakdown, hqQty, memberTotals, ningiTotal } = snap;
+
+  const headerCells = working.map((name, i) => `<th>${name}<small class="wish-hint">希望:${memberCaps[i]}個</small></th>`).join("");
+
+  const rows = FILLINGS.map(f => {
+    const isFixedHq = ALWAYS_HQ_FILLINGS.includes(f);
+    const memberCells = working.map(name => {
+      const qty = (day.memberFillingQty[name] && day.memberFillingQty[name][f]) || 0;
+      return isFixedHq
+        ? `<td class="cell-readonly">—</td>`
+        : `<td>${prodCellStepperHtml(day, name, f, qty)}</td>`;
+    }).join("");
+    const hqVal = hqBreakdown[f] || 0;
+    const rowTotal = working.reduce((s, name) => s + ((day.memberFillingQty[name] && day.memberFillingQty[name][f]) || 0), 0) + hqVal;
+
+    return `
+      <tr>
+        <td class="f-name">${f}</td>
+        ${memberCells}
+        <td class="cell-readonly" id="prodHq-${day.dateKey}-${f}">${hqVal}</td>
+        <td class="cell-readonly cell-row-total" id="prodRowTotal-${day.dateKey}-${f}">${rowTotal}</td>
+      </tr>
+    `;
+  }).join("");
+
+  const colTotalCells = working.map((name, i) => `<td class="cell-readonly cell-row-total" id="prodColTotal-${day.dateKey}-${name}">${memberTotals[i]}</td>`).join("");
+  const grandTotal = ningiTotal + hqQty;
+
+  return `
+    <div class="prod-table-wrap">
+      <table class="prod-table">
+        <thead>
+          <tr><th>具材</th>${headerCells}<th>本部</th><th>合計</th></tr>
+        </thead>
+        <tbody>${rows}</tbody>
+        <tfoot>
+          <tr>
+            <td>合計</td>
+            ${colTotalCells}
+            <td class="cell-readonly" id="prodHqTotal-${day.dateKey}">${hqQty}</td>
+            <td class="cell-readonly cell-row-total" id="prodGrandTotal-${day.dateKey}">${grandTotal}</td>
+          </tr>
+        </tfoot>
+      </table>
+    </div>
+  `;
+}
+
+// 1日分のメンバー×具材の個数をディープコピーで保存する（アンドゥ用に直前の状態を1つだけ保持）
+function snapshotMemberFillingQty(day){
+  return JSON.parse(JSON.stringify(day.memberFillingQty || {}));
+}
+
+// 全員の合計個数をvalに揃え、具材ごとの自動割り振りロジックでテーブルへ反映する
+function applyBulkValue(day, val){
+  const working = MEMBERS.filter(name => getManualQty(day, name) > 0);
+  if(working.length === 0) return;
+
+  const caps = working.map(() => val);
+  const { memberBreakdowns } = buildProductionPlan(day, working, caps);
+  day.memberFillingQty = {};
+  working.forEach((name, i) => {
+    const qtyMap = {};
+    FILLINGS.forEach(f => { qtyMap[f] = (memberBreakdowns[i] && memberBreakdowns[i][f]) || 0; });
+    day.memberFillingQty[name] = qtyMap;
+  });
+  day.bulkValue = val;
 }
 
 function productionDayHtml(day){
   const snap = computeDaySnapshot(day);
-  const { summaryHtml, hqHtml, checkHtml } = deriveBlocksHtml(snap);
 
   const bulkActionsHtml = `
     <div class="bulk-actions">
       <button type="button" class="bulk-btn ${day.bulkValue === 24 ? "active" : ""}" data-key="${day.dateKey}" data-val="24">全員24個</button>
       <button type="button" class="bulk-btn ${day.bulkValue === 27 ? "active" : ""}" data-key="${day.dateKey}" data-val="27">全員27個</button>
       <button type="button" class="bulk-btn ${day.bulkValue === 30 ? "active" : ""}" data-key="${day.dateKey}" data-val="30">全員30個</button>
+      <button type="button" class="bulk-btn ${day.bulkValue === 45 ? "active" : ""}" data-key="${day.dateKey}" data-val="45">全員45個</button>
+      <button type="button" class="bulk-btn undo-btn" data-key="${day.dateKey}" ${day.undoSnapshot ? "" : "disabled"}>↺ 元に戻す</button>
     </div>
   `;
 
-  const memberRowsHtml = snap.working.length
-    ? snap.working.map((name, i) => memberRowHtml(day, snap, i)).join("")
+  const tableHtml = snap.working.length
+    ? productionTableHtml(day, snap)
     : `<p class="off-note">出勤予定のメンバーがいません。</p>`;
 
   return `
     <div class="fd-head">${day.label}</div>
     ${bulkActionsHtml}
-    <div class="prod-summary" id="summaryBlock-${day.dateKey}">${summaryHtml}</div>
-    <div id="memberRowsArea-${day.dateKey}">${memberRowsHtml}</div>
-    <div class="prod-row" id="hqBlock-${day.dateKey}">${hqHtml}</div>
-    <div id="checkBlock-${day.dateKey}">${checkHtml}</div>
+    <div class="prod-summary" id="summaryBlock-${day.dateKey}">${summaryHtmlFor(snap)}</div>
+    <div id="prodTableArea-${day.dateKey}">${tableHtml}</div>
   `;
 }
 
-// 本部の内訳・合計チェックなど「ユーザーが編集しない」部分だけを更新する。
-// メンバーの合計個数・具材名・個数の入力欄には一切触れない。
-function refreshDerived(day){
+// セル個数の入力中に、テーブル自体は再生成せず、本部列・合計行・合計列・summaryだけを更新する（フォーカスを失わない）
+function refreshProductionCellDerived(day){
   const snap = computeDaySnapshot(day);
-  const { summaryHtml, hqHtml, checkHtml } = deriveBlocksHtml(snap);
 
   const summaryEl = document.getElementById(`summaryBlock-${day.dateKey}`);
-  if(summaryEl) summaryEl.innerHTML = summaryHtml;
+  if(summaryEl) summaryEl.innerHTML = summaryHtmlFor(snap);
 
-  const hqEl = document.getElementById(`hqBlock-${day.dateKey}`);
-  if(hqEl) hqEl.innerHTML = hqHtml;
+  FILLINGS.forEach(f => {
+    const hqVal = snap.hqBreakdown[f] || 0;
+    const hqEl = document.getElementById(`prodHq-${day.dateKey}-${f}`);
+    if(hqEl) hqEl.textContent = hqVal;
 
-  const checkEl = document.getElementById(`checkBlock-${day.dateKey}`);
-  if(checkEl) checkEl.innerHTML = checkHtml;
+    const rowTotal = snap.working.reduce((s, name) => s + ((day.memberFillingQty[name] && day.memberFillingQty[name][f]) || 0), 0) + hqVal;
+    const rowTotalEl = document.getElementById(`prodRowTotal-${day.dateKey}-${f}`);
+    if(rowTotalEl) rowTotalEl.textContent = rowTotal;
+  });
 
   snap.working.forEach((name, i) => {
-    const footerEl = document.getElementById(`memberFooter-${day.dateKey}-${name}`);
-    if(footerEl) footerEl.textContent = `合計：${snap.editedMemberTotals[i]}個`;
-
-    const mismatchEl = document.getElementById(`memberMismatch-${day.dateKey}-${name}`);
-    if(mismatchEl){
-      const mismatch = snap.editedMemberTotals[i] !== snap.memberCaps[i];
-      mismatchEl.style.display = mismatch ? "" : "none";
-      if(mismatch){
-        mismatchEl.textContent = `⚠️ 合計が合いません（${snap.editedMemberTotals[i]}個 / 設定${snap.memberCaps[i]}個）`;
-      }
-    }
+    const colTotalEl = document.getElementById(`prodColTotal-${day.dateKey}-${name}`);
+    if(colTotalEl) colTotalEl.textContent = snap.memberTotals[i];
   });
-}
 
-// 合計個数(total-override-input)の入力中に、行の入れ替えなしで具材個数入力欄の表示だけを同期する。
-// 行数が変わっていれば false を返し、呼び出し側でその人の行を丸ごと再生成させる。
-function updateLineInputsDom(day, name){
-  const lines = day.editableLines[name] || [];
-  const row = document.getElementById(`memberRow-${day.dateKey}-${name}`);
-  if(!row) return false;
-  const lineInputs = row.querySelectorAll(".line-qty-input");
-  if(lineInputs.length !== lines.length) return false;
-  lineInputs.forEach((input, i) => { input.value = lines[i].qty; });
-  return true;
-}
+  const hqTotalEl = document.getElementById(`prodHqTotal-${day.dateKey}`);
+  if(hqTotalEl) hqTotalEl.textContent = snap.hqQty;
 
-// 1人分の行だけを丸ごと再生成する（具材の追加・削除・合計個数変更など、行の構成自体が変わる場合に使う）
-function refreshMemberRow(day, name){
-  const snap = computeDaySnapshot(day);
-  const idx = snap.working.indexOf(name);
-  const rowEl = document.getElementById(`memberRow-${day.dateKey}-${name}`);
-  if(idx === -1 || !rowEl){
-    refreshProductionDay(day);
-    return;
-  }
-  rowEl.outerHTML = memberRowHtml(day, snap, idx);
-  bindMemberRowEvents(day, name);
-  refreshDerived(day);
-}
-
-// 合計個数（cap）が変わったとき、既存の具材構成（種類）は保ったまま個数だけを比例配分し直す
-function rescaleMemberLines(day, name, newTotal){
-  const lines = day.editableLines[name] || [];
-
-  if(lines.length === 0){
-    day.editableLines[name] = newTotal > 0 ? [{ filling: ALLOC_FILLINGS[0], qty: newTotal }] : [];
-    return;
-  }
-
-  const oldTotal = lines.reduce((s, l) => s + (l.qty || 0), 0);
-  if(oldTotal === 0){
-    day.editableLines[name] = lines.map((l, i) => ({ filling: l.filling, qty: i === 0 ? newTotal : 0 }));
-    return;
-  }
-
-  let allocated = 0;
-  const rescaled = lines.map((l, i) => {
-    if(i === lines.length - 1){
-      return { filling: l.filling, qty: Math.max(0, newTotal - allocated) };
-    }
-    const qty = Math.floor(((l.qty / oldTotal) * newTotal) / 3) * 3;
-    allocated += qty;
-    return { filling: l.filling, qty };
-  });
-  day.editableLines[name] = rescaled;
+  const grandTotalEl = document.getElementById(`prodGrandTotal-${day.dateKey}`);
+  if(grandTotalEl) grandTotalEl.textContent = snap.ningiTotal + snap.hqQty;
 }
 
 function refreshProductionDay(day){
@@ -1660,37 +1566,25 @@ function refreshProductionDay(day){
   bindProductionDayEvents(day);
 }
 
-// 1人分の行の中の入力（具材名・個数）だけをバインドする
-function bindMemberRowEvents(day, name){
-  const row = document.getElementById(`memberRow-${day.dateKey}-${name}`);
-  if(!row) return;
+function bindProductionDayEvents(day){
+  const container = document.getElementById(`prodday-${day.dateKey}`);
+  if(!container) return;
 
-  row.querySelectorAll(".line-filling-select").forEach(sel => {
-    sel.addEventListener("change", () => {
-      const li = parseInt(sel.dataset.line, 10);
-      if(day.editableLines[name] && day.editableLines[name][li]){
-        day.editableLines[name][li].filling = sel.value;
-      }
-      // 具材名の変更は個数を変えないので、本部内訳・チェックだけ更新（他の入力欄には触れない）
-      refreshDerived(day);
-    });
-  });
-
-  row.querySelectorAll(".line-qty-input").forEach(input => {
+  container.querySelectorAll(".prod-cell-input").forEach(input => {
     input.addEventListener("input", () => {
-      const li = parseInt(input.dataset.line, 10);
-      if(day.editableLines[name] && day.editableLines[name][li]){
-        day.editableLines[name][li].qty = Math.max(0, parseInt(input.value, 10) || 0);
-      }
-      // 入力中でも本部内訳・チェックはリアルタイム更新するが、入力欄自体は再生成しない
-      refreshDerived(day);
+      const name = input.dataset.name;
+      const filling = input.dataset.filling;
+      if(!day.memberFillingQty[name]) day.memberFillingQty[name] = {};
+      day.memberFillingQty[name][filling] = Math.max(0, parseInt(input.value, 10) || 0);
+      refreshProductionCellDerived(day);
     });
   });
 
-  row.querySelectorAll(".line-qty-step-btn").forEach(btn => {
+  container.querySelectorAll(".prod-qty-step-btn").forEach(btn => {
     btn.addEventListener("click", () => {
-      const li = btn.dataset.line;
-      const input = row.querySelector(`.line-qty-input[data-line="${li}"]`);
+      const name = btn.dataset.name;
+      const filling = btn.dataset.filling;
+      const input = container.querySelector(`.prod-cell-input[data-name="${name}"][data-filling="${filling}"]`);
       if(!input) return;
       const delta = btn.dataset.action === "inc" ? 1 : -1;
       input.value = Math.max(0, (parseInt(input.value, 10) || 0) + delta);
@@ -1698,65 +1592,32 @@ function bindMemberRowEvents(day, name){
     });
   });
 
-  row.querySelectorAll(".line-delete-btn").forEach(btn => {
-    btn.addEventListener("click", () => {
-      const li = parseInt(btn.dataset.line, 10);
-      if(day.editableLines[name]) day.editableLines[name].splice(li, 1);
-      refreshMemberRow(day, name);
-    });
-  });
-
-  row.querySelectorAll(".add-line-btn").forEach(btn => {
-    btn.addEventListener("click", () => {
-      if(!day.editableLines[name]) day.editableLines[name] = [];
-      day.editableLines[name].push({ filling: ALLOC_FILLINGS[0], qty: 0 });
-      refreshMemberRow(day, name);
-    });
-  });
-
-  row.querySelectorAll(".total-override-input").forEach(input => {
-    // 入力ごとにリアルタイムで再計算するが、この入力欄自体は再生成しない（フォーカスを失わない）
-    input.addEventListener("input", () => {
-      const newTotal = Math.max(0, parseInt(input.value, 10) || 0);
-      if(!day.memberTotalOverride) day.memberTotalOverride = {};
-      day.memberTotalOverride[name] = newTotal;
-      rescaleMemberLines(day, name, newTotal); // この人の具材構成は保ったまま個数だけ配分し直す
-
-      const synced = updateLineInputsDom(day, name);
-      if(!synced){
-        // 具材の行数が変わった場合（0行⇔1行など）だけ、この人の行を再生成する
-        refreshMemberRow(day, name);
-        return;
-      }
-      refreshDerived(day);
-    });
-  });
-}
-
-function bindProductionDayEvents(day){
-  const container = document.getElementById(`prodday-${day.dateKey}`);
-  if(!container) return;
-
-  MEMBERS.forEach(name => bindMemberRowEvents(day, name));
-
-  container.querySelectorAll(".bulk-btn").forEach(btn => {
+  container.querySelectorAll(".bulk-btn:not(.undo-btn)").forEach(btn => {
     btn.addEventListener("click", () => {
       const val = parseInt(btn.dataset.val, 10);
       const working = MEMBERS.filter(name => getManualQty(day, name) > 0);
       if(working.length === 0) return;
 
-      day.bulkValue = val;
-      if(!day.memberTotalOverride) day.memberTotalOverride = {};
-      working.forEach(name => { day.memberTotalOverride[name] = val; });
-      resetDayPlan(day);
+      day.undoSnapshot = { memberFillingQty: snapshotMemberFillingQty(day), bulkValue: day.bulkValue };
+      applyBulkValue(day, val);
+      refreshProductionDay(day);
+    });
+  });
+
+  container.querySelectorAll(".undo-btn").forEach(btn => {
+    btn.addEventListener("click", () => {
+      if(!day.undoSnapshot) return;
+      day.memberFillingQty = day.undoSnapshot.memberFillingQty;
+      day.bulkValue = day.undoSnapshot.bulkValue;
+      day.undoSnapshot = null;
       refreshProductionDay(day);
     });
   });
 }
 
-// メンバー別の具材割り振りを文字列化（例："ツナマヨ×15 スパイシーツナマヨ×9"）
-function fillingLinesToString(lines){
-  return (lines || []).filter(l => l.qty > 0).map(l => `${l.filling}×${l.qty}`).join(" ");
+// メンバー1人分の具材割り振りを文字列化（例："ツナマヨ×15 スパイシーツナマヨ×9"）
+function memberFillingToString(qtyMap){
+  return FILLINGS.filter(f => (qtyMap && qtyMap[f] || 0) > 0).map(f => `${f}×${qtyMap[f]}`).join(" ");
 }
 
 function hqBreakdownToString(hqBreakdown){
@@ -1770,7 +1631,7 @@ async function confirmWeek(weekIndex){
     days: days.map(d => {
       const snap = computeDaySnapshot(d);
       const ningiBreakdown = snap.working
-        .map(name => `${name}:${fillingLinesToString(d.editableLines[name])}`)
+        .map(name => `${name}:${memberFillingToString(d.memberFillingQty[name])}`)
         .join("；");
 
       return {
