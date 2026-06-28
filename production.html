@@ -352,8 +352,7 @@
 
 <header>
   <div class="header-left">
-    <h1>🍙 Chabon Ops</h1>
-    <p>おにぎり生産カレンダー（ニギニギ隊）</p>
+    <h1>🍙 おにぎり生産カレンダー</h1>
     <nav class="header-nav">
       <a href="index.html">← トップへ</a>
       <a href="shift.html">シフト入力</a>
@@ -543,6 +542,11 @@ function renderCalendar(){
         html += `<div class="cell-total">`;
         html += `<span class="total-label">TOTAL</span>`;
         html += `<span class="total-num">${dispTotal}個</span>`;
+        html += `</div>`;
+      } else if(plan){
+        html += `<div class="cell-total">`;
+        html += `<span class="total-label">TOTAL</span>`;
+        html += `<span class="total-num">0個</span>`;
         html += `</div>`;
       } else if(!isPast){
         html += `<div class="no-plan">未確定</div>`;
