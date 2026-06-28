@@ -489,6 +489,21 @@
   }
   #shiftTableArea th{ background: var(--main-light); color: var(--main-dark); }
   #shiftTableArea td:first-child, #shiftTableArea th:first-child{ text-align: left; }
+  /* 週グループ行（colspan行）*/
+  #shiftTableArea th.shift-grp{ color: #fff; font-size: 0.78rem; text-align: center; }
+  #shiftTableArea th.shift-grp-w0{ background: #9a6520; }
+  #shiftTableArea th.shift-grp-w1{ background: var(--main); }
+  #shiftTableArea th.shift-grp-w2{ background: #4f7a8c; }
+  /* 日付ヘッダー行（週ごとに背景色を変える）*/
+  #shiftTableArea th.shift-day-w0{ background: #fdf3e6; color: #9a6520; }
+  #shiftTableArea th.shift-day-w1{ background: var(--main-light); color: var(--main-dark); }
+  #shiftTableArea th.shift-day-w2{ background: #ddeef3; color: #3c6577; }
+  /* ボディセル：週2はわずかに色付け */
+  #shiftTableArea td.shift-cell-w0{ background: #fdfaf6; }
+  #shiftTableArea td.shift-cell-w2{ background: #f0f6f8; }
+  /* 週間の縦区切り */
+  #shiftTableArea .shift-grp-sep,
+  #shiftTableArea .shift-col-sep{ border-left: 3px solid #aaa !important; }
   .manual-readonly{
     font-weight: bold;
     font-size: 0.88rem;
@@ -1726,44 +1741,54 @@ function renderShiftTable(){
   function dateRangeLabel(days){
     if(!days.length) return "";
     const fmt = d => `${d.getMonth()+1}/${d.getDate()}`;
-    return days.length === 1
-      ? fmt(days[0].dateObj)
+    return days.length === 1 ? fmt(days[0].dateObj)
       : `${fmt(days[0].dateObj)}〜${fmt(days[days.length-1].dateObj)}`;
   }
 
-  area.innerHTML = weekGroups.map((wg, wi) => {
-    const headerCells = wg.days.map(d =>
-      `<th>${DAY_NAMES[d.dow]}曜<br>${d.dateObj.getMonth()+1}/${d.dateObj.getDate()}</th>`
-    ).join("");
+  // ヘッダー行1：週グループ（colspan）
+  const groupRow = weekGroups.map((wg, wi) => {
+    const sep = wi > 0 ? " shift-grp-sep" : "";
+    return `<th colspan="${wg.days.length}" class="shift-grp shift-grp-w${wi}${sep}">${wg.title}（${dateRangeLabel(wg.days)}）</th>`;
+  }).join("");
 
-    const bodyRows = MEMBERS.map(name => {
-      const cells = wg.days.map(day => {
+  // ヘッダー行2：日付
+  const dayRow = weekGroups.map((wg, wi) =>
+    wg.days.map((d, di) => {
+      const sep = di === 0 && wi > 0 ? " shift-col-sep" : "";
+      return `<th class="shift-day shift-day-w${wi}${sep}">${DAY_NAMES[d.dow]}曜<br>${d.dateObj.getMonth()+1}/${d.dateObj.getDate()}</th>`;
+    }).join("")
+  ).join("");
+
+  // ボディ行
+  const bodyRows = MEMBERS.map(name => {
+    const cells = weekGroups.map((wg, wi) =>
+      wg.days.map((day, di) => {
         const shiftKey = mdLabel(day.dateObj);
         const submitted = state.shiftByDate[shiftKey] && state.shiftByDate[shiftKey][name];
         const display = submitted
           ? `<div class="manual-readonly">${getManualQty(day, name)}個</div>`
           : `<div class="manual-readonly unanswered">未回答</div>`;
-        return `<td>${display}</td>`;
-      }).join("");
-      const mn = state.notesByName && state.notesByName[name];
-      const noteHtml = mn ? [
-        mn.note     ? `<div class="shift-note">📝 ${mn.note}</div>` : "",
-        mn.supplies ? `<div class="shift-note">📦 ${mn.supplies}</div>` : "",
-      ].join("") : "";
-      return `<tr><td><strong>${name}</strong>${noteHtml}</td>${cells}</tr>`;
-    }).join("");
-
-    return `
-      ${wi > 0 ? '<hr class="shift-week-sep">' : ""}
-      <div class="shift-week-section">
-        <div class="shift-week-heading">${wg.title}（${dateRangeLabel(wg.days)}）</div>
-        <table>
-          <thead><tr><th>メンバー</th>${headerCells}</tr></thead>
-          <tbody>${bodyRows}</tbody>
-        </table>
-      </div>
-    `;
+        const sep = di === 0 && wi > 0 ? " shift-col-sep" : "";
+        return `<td class="shift-cell-w${wi}${sep}">${display}</td>`;
+      }).join("")
+    ).join("");
+    const mn = state.notesByName && state.notesByName[name];
+    const noteHtml = mn ? [
+      mn.note     ? `<div class="shift-note">📝 ${mn.note}</div>` : "",
+      mn.supplies ? `<div class="shift-note">📦 ${mn.supplies}</div>` : "",
+    ].join("") : "";
+    return `<tr><td><strong>${name}</strong>${noteHtml}</td>${cells}</tr>`;
   }).join("");
+
+  area.innerHTML = `
+    <table>
+      <thead>
+        <tr><th rowspan="2">メンバー</th>${groupRow}</tr>
+        <tr>${dayRow}</tr>
+      </thead>
+      <tbody>${bodyRows}</tbody>
+    </table>
+  `;
 }
 
 /* ---------- シフト希望の再読み込み ---------- */
