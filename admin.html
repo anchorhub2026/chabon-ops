@@ -1926,8 +1926,19 @@ function resetDayData(day){
 
 function toggleWeek(weekIndex){
   weekCollapsed[weekIndex] = !weekCollapsed[weekIndex];
-  renderCalendar();
-  renderProductionSection();
+  const collapsed = weekCollapsed[weekIndex];
+  const weekTitle = weekIndex === 1 ? "来週" : "再来週";
+  const btnText = collapsed ? `${weekTitle}を表示 ▼` : `${weekTitle}を折りたたむ ▲`;
+
+  // 再描画せず DOM を直接操作する（再描画するとイベント再バインドのタイミング問題が起きる）
+  [document.getElementById("calendarArea"), document.getElementById("productionArea")].forEach(area => {
+    if(!area) return;
+    area.querySelectorAll(`.toggle-week-btn[data-week-index="${weekIndex}"]`).forEach(btn => {
+      btn.textContent = btnText;
+      const weekGroup = btn.closest(".week-group");
+      if(weekGroup) weekGroup.classList.toggle("week-collapsed", collapsed);
+    });
+  });
 }
 
 /* ---------- showConfirm ---------- */
