@@ -489,6 +489,16 @@
   }
   #shiftTableArea th{ background: var(--main-light); color: var(--main-dark); }
   #shiftTableArea td:first-child, #shiftTableArea th:first-child{ text-align: left; }
+  /* シフト合計行 */
+  #shiftTableArea tfoot td{
+    background: var(--main);
+    color: #fff;
+    font-weight: bold;
+    font-size: 0.88rem;
+    border-bottom: none;
+    border-top: 2px solid var(--main-dark);
+  }
+  #shiftTableArea tfoot td:first-child{ text-align: left; }
   /* 週グループ行（colspan行）*/
   #shiftTableArea th.shift-grp{ color: #fff; font-size: 0.78rem; text-align: center; }
   #shiftTableArea th.shift-grp-w0{ background: #9a6520; }
@@ -1780,6 +1790,18 @@ function renderShiftTable(){
     return `<tr><td><strong>${name}</strong>${noteHtml}</td>${cells}</tr>`;
   }).join("");
 
+  // 合計行：各日付列の出勤個数合計
+  const totalCells = weekGroups.map((wg, wi) =>
+    wg.days.map((day, di) => {
+      const shiftKey = mdLabel(day.dateObj);
+      const dayTotal = MEMBERS.reduce((sum, name) => {
+        return sum + getManualQty(day, name);
+      }, 0);
+      const sep = di === 0 && wi > 0 ? " shift-col-sep" : "";
+      return `<td class="${sep}">${dayTotal}個</td>`;
+    }).join("")
+  ).join("");
+
   area.innerHTML = `
     <table>
       <thead>
@@ -1787,6 +1809,9 @@ function renderShiftTable(){
         <tr>${dayRow}</tr>
       </thead>
       <tbody>${bodyRows}</tbody>
+      <tfoot>
+        <tr><td>合計</td>${totalCells}</tr>
+      </tfoot>
     </table>
   `;
 }
