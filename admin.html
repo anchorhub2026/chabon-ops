@@ -543,6 +543,85 @@
     color: #999;
     padding: 20px 0 40px;
   }
+
+  /* 再来週折りたたみ */
+  .toggle-nnw-btn{
+    font-size: 0.75rem;
+    padding: 4px 12px;
+    border: 1px solid var(--main);
+    border-radius: 100px;
+    background: #fff;
+    color: var(--main-dark);
+    cursor: pointer;
+  }
+  .week-collapsed .day-cards,
+  .week-collapsed .prod-cards-wrap{ display: none; }
+  .prod-heading-row{
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 4px;
+  }
+
+  /* 本部マイナス */
+  .hq-negative{ color: #c0392b; font-weight: bold; }
+  .hq-over-badge{
+    display: inline-block;
+    font-size: 0.6rem;
+    background: #c0392b;
+    color: #fff;
+    border-radius: 3px;
+    padding: 0 3px;
+    margin-left: 3px;
+    vertical-align: middle;
+  }
+
+  /* 具材渡し済み・調理済み */
+  .status-legend{ font-size: 0.8rem; color: #888; margin-bottom: 10px; }
+  .status-btn{
+    font-size: 0.68rem;
+    padding: 3px 8px;
+    border: 1.5px solid #bbb;
+    border-radius: 100px;
+    background: #f5f5f5;
+    color: #555;
+    cursor: pointer;
+    display: inline-block;
+  }
+  .status-btn.handed.active{ background: var(--main); color: #fff; border-color: var(--main); }
+  .status-btn.cooked.active{ background: #3b6ea5; color: #fff; border-color: #3b6ea5; }
+  .cell-fillings{ font-size: 0.72rem; color: #555; margin-bottom: 4px; line-height: 1.4; }
+  .cell-status{ display: flex; flex-wrap: wrap; gap: 3px; }
+  #cellStatusArea table{ width: 100%; border-collapse: collapse; font-size: 0.82rem; min-width: 640px; }
+  #cellStatusArea th, #cellStatusArea td{
+    border-bottom: 1px solid var(--line);
+    padding: 8px 6px;
+    text-align: center;
+    vertical-align: top;
+  }
+  #cellStatusArea th{ background: var(--main-light); color: var(--main-dark); }
+  #cellStatusArea td:first-child, #cellStatusArea th:first-child{ text-align: left; }
+  #cellStatusArea td.no-plan{ color: #bbb; font-size: 0.75rem; }
+  #cellStatusArea .cell-status-wrap{ overflow-x: auto; }
+
+  /* 確認ダイアログ */
+  .confirm-overlay{
+    display: none; position: fixed; inset: 0;
+    background: rgba(0,0,0,0.45);
+    align-items: center; justify-content: center;
+    padding: 20px; z-index: 1000;
+  }
+  .confirm-overlay.show{ display: flex; }
+  .confirm-box{
+    background: #fff; border-radius: 16px; padding: 24px 20px;
+    width: 100%; max-width: 340px;
+    box-shadow: 0 8px 24px rgba(0,0,0,0.2);
+  }
+  .confirm-message{ margin: 0 0 20px; font-size: 1rem; color: var(--ink); line-height: 1.6; text-align: center; }
+  .confirm-actions{ display: flex; flex-direction: column; gap: 10px; }
+  .confirm-btn{ border: none; border-radius: 10px; padding: 14px; font-size: 1rem; font-weight: bold; cursor: pointer; width: 100%; }
+  .confirm-btn.yes{ background: var(--main); color: #fff; }
+  .confirm-btn.no{ background: #e2ddd0; color: #555; }
 </style>
 </head>
 <body>
@@ -572,11 +651,29 @@
   </section>
 
   <section>
+    <h2>具材渡し済み・調理済み管理<span class="badge">来週・再来週</span></h2>
+    <div class="status-legend">✓ 具材渡し済み　❄️ 調理済み</div>
+    <div class="cell-status-wrap">
+      <div id="cellStatusArea"><p class="loading">生産割り振りデータを読み込み後に表示されます...</p></div>
+    </div>
+  </section>
+
+  <section>
     <h2>生産割り振り<span class="badge">本部分は自動算出</span></h2>
     <div id="productionArea"><p class="loading">データを読み込み中...</p></div>
   </section>
 
 </main>
+
+<div class="confirm-overlay" id="confirmOverlay">
+  <div class="confirm-box">
+    <p class="confirm-message" id="confirmMessage"></p>
+    <div class="confirm-actions">
+      <button class="confirm-btn yes" id="confirmYesBtn">はい、変更する</button>
+      <button class="confirm-btn no" id="confirmNoBtn">キャンセル</button>
+    </div>
+  </div>
+</div>
 
 <footer>Chabon Ops — Amsterdam Onigiri Truck（管理画面）</footer>
 
@@ -638,7 +735,10 @@ const state = {
   shiftByDate: {},      // dateKey -> { memberName: { qty:number, raw:string } }
   notesByName: {},      // memberName -> { note:string, supplies:string }
   confirmedByDate: {},  // "M/D" -> { zuidTotal, uvaTotal, confirmed:true }
+  cellStatus: {},       // "M/D" -> { memberName: { handed:bool, cooked:bool } }
 };
+
+let nextNextCollapsed = false;
 
 /* ---------- 日付ユーティリティ ---------- */
 
@@ -1138,42 +1238,50 @@ function renderCalendar(){
     { title: "再来週", weekIndex: 2, days: state.days.filter(d => d.weekIndex === 2), cssClass: "week-next-next" },
   ].filter(week => week.days.length > 0);
 
-  area.innerHTML = weeks.map((week, idx) => `
-    ${idx > 0 ? `<div class="week-divider"></div>` : ""}
-    <div class="week-group ${week.cssClass}">
-      <div class="week-heading">
-        <h3>${week.title}（${week.weekIndex === 0 ? thisWeekBadge(week.days) : "月〜金"}）</h3>
-        <div>
-          <button class="confirm-week-btn" data-week="${week.weekIndex}">この週を確定・公開する</button>
-          <a class="production-link" href="production.html" target="_blank">生産指示書を見る</a>
-          <span class="week-status-msg" id="weekStatus${week.weekIndex}"></span>
+  area.innerHTML = weeks.map((week, idx) => {
+    const isNNW = week.weekIndex === 2;
+    const collapsed = isNNW && nextNextCollapsed;
+    return `
+      ${idx > 0 ? `<div class="week-divider"></div>` : ""}
+      <div class="week-group ${week.cssClass}${collapsed ? " week-collapsed" : ""}">
+        <div class="week-heading">
+          <h3>${week.title}（${week.weekIndex === 0 ? thisWeekBadge(week.days) : "月〜金"}）</h3>
+          <div>
+            ${isNNW ? `<button class="toggle-nnw-btn" data-section="calendar">${collapsed ? "再来週を表示 ▼" : "再来週を折りたたむ ▲"}</button>` : ""}
+            <button class="confirm-week-btn" data-week="${week.weekIndex}">この週を確定・公開する</button>
+            <a class="production-link" href="production.html" target="_blank">生産指示書を見る</a>
+            <span class="week-status-msg" id="weekStatus${week.weekIndex}"></span>
+          </div>
+        </div>
+        <div class="day-cards">
+          ${week.days.map((day, di) => `
+            <div class="day-card">
+              ${di === 0 ? `<span class="week-pin-label">${week.title}</span>` : ""}
+              <div class="day-card-head">
+                <div class="day-head-main">
+                  <div class="day-head">${day.label}</div>
+                  <div class="day-weather"><span class="weather-icon">${day.weatherIcon}</span><span class="weather-temp">${day.tempLabel}</span></div>
+                  ${day.holidayName ? `<div class="holiday-badge">🎉 祝日：${day.holidayName}</div>` : ""}
+                  ${day.nsDisruptions && day.nsDisruptions.length ? `<div class="ns-badge">🚆 NSストライキ/運休</div>` : ""}
+                  ${(state.confirmedByDate && state.confirmedByDate[mdLabel(day.dateObj)]) ? `<div class="confirmed-badge">✓ 確定済み</div>` : ""}
+                </div>
+                ${recommendReasonHtml(day)}
+              </div>
+              <div id="forecastTable-${day.dateKey}">${forecastTableHtml(day)}</div>
+            </div>
+          `).join("")}
         </div>
       </div>
-      <div class="day-cards">
-        ${week.days.map((day, di) => `
-          <div class="day-card">
-            ${di === 0 ? `<span class="week-pin-label">${week.title}</span>` : ""}
-            <div class="day-card-head">
-              <div class="day-head-main">
-                <div class="day-head">${day.label}</div>
-                <div class="day-weather"><span class="weather-icon">${day.weatherIcon}</span><span class="weather-temp">${day.tempLabel}</span></div>
-                ${day.holidayName ? `<div class="holiday-badge">🎉 祝日：${day.holidayName}</div>` : ""}
-                ${day.nsDisruptions && day.nsDisruptions.length ? `<div class="ns-badge">🚆 NSストライキ/運休</div>` : ""}
-                ${(state.confirmedByDate && state.confirmedByDate[mdLabel(day.dateObj)]) ? `<div class="confirmed-badge">✓ 確定済み</div>` : ""}
-              </div>
-              ${recommendReasonHtml(day)}
-            </div>
-            <div id="forecastTable-${day.dateKey}">${forecastTableHtml(day)}</div>
-          </div>
-        `).join("")}
-      </div>
-    </div>
-  `).join("");
+    `;
+  }).join("");
 
   state.days.forEach(day => bindForecastTableEvents(day));
 
   area.querySelectorAll(".confirm-week-btn").forEach(btn => {
     btn.addEventListener("click", () => confirmWeek(+btn.dataset.week));
+  });
+  area.querySelectorAll(".toggle-nnw-btn").forEach(btn => {
+    btn.addEventListener("click", toggleNextNextWeek);
   });
 }
 
@@ -1352,14 +1460,27 @@ function renderProductionSection(){
     { title: "再来週", weekIndex: 2, days: state.days.filter(d => d.weekIndex === 2) },
   ].filter(week => week.days.length > 0);
 
-  area.innerHTML = weeks.map(week => `
-    <div class="week-group">
-      <h3 class="week-heading-simple">${week.title}（${week.weekIndex === 0 ? thisWeekBadge(week.days) : "月〜金"}）</h3>
-      ${week.days.map(day => `<div class="prod-card" id="prodday-${day.dateKey}">${productionDayHtml(day)}</div>`).join("")}
-    </div>
-  `).join("");
+  area.innerHTML = weeks.map(week => {
+    const isNNW = week.weekIndex === 2;
+    const collapsed = isNNW && nextNextCollapsed;
+    return `
+      <div class="week-group${collapsed ? " week-collapsed" : ""}">
+        <div class="prod-heading-row">
+          <h3 class="week-heading-simple">${week.title}（${week.weekIndex === 0 ? thisWeekBadge(week.days) : "月〜金"}）</h3>
+          ${isNNW ? `<button class="toggle-nnw-btn" data-section="production">${collapsed ? "再来週を表示 ▼" : "再来週を折りたたむ ▲"}</button>` : ""}
+        </div>
+        <div class="prod-cards-wrap">
+          ${week.days.map(day => `<div class="prod-card" id="prodday-${day.dateKey}">${productionDayHtml(day)}</div>`).join("")}
+        </div>
+      </div>
+    `;
+  }).join("");
 
   state.days.forEach(day => bindProductionDayEvents(day));
+
+  area.querySelectorAll(".toggle-nnw-btn").forEach(btn => {
+    btn.addEventListener("click", toggleNextNextWeek);
+  });
 }
 
 // 必要数（ALLOC_FILLINGS順）を「テープ」として、出勤メンバーの設定生産数(cap)で
@@ -1466,7 +1587,7 @@ function computeDaySnapshot(day){
   FILLINGS.forEach(f => {
     const needed = neededQtyFor(day, f);
     const produced = producedByFilling[f] || 0;
-    hqBreakdown[f] = Math.max(0, needed - produced);
+    hqBreakdown[f] = needed - produced;
   });
 
   // 本部合計は「全具材の本部分の合計」を正式な値とする（独立した別計算式は使わない）
@@ -1514,12 +1635,15 @@ function productionTableHtml(day, snap){
     }).join("");
     const hqVal = hqBreakdown[f] || 0;
     const rowTotal = working.reduce((s, name) => s + ((day.memberFillingQty[name] && day.memberFillingQty[name][f]) || 0), 0) + hqVal;
+    const hqDisplay = hqVal < 0
+      ? `<span class="hq-negative">${hqVal}<span class="hq-over-badge">⚠️超過</span></span>`
+      : `${hqVal}`;
 
     return `
       <tr>
         <td class="f-name">${f}</td>
         ${memberCells}
-        <td class="cell-readonly" id="prodHq-${day.dateKey}-${f}">${hqVal}</td>
+        <td class="cell-readonly" id="prodHq-${day.dateKey}-${f}">${hqDisplay}</td>
         <td class="cell-readonly cell-row-total" id="prodRowTotal-${day.dateKey}-${f}">${rowTotal}</td>
       </tr>
     `;
@@ -1539,7 +1663,7 @@ function productionTableHtml(day, snap){
           <tr>
             <td>合計</td>
             ${colTotalCells}
-            <td class="cell-readonly" id="prodHqTotal-${day.dateKey}">${hqQty}</td>
+            <td class="cell-readonly" id="prodHqTotal-${day.dateKey}">${hqQty < 0 ? `<span class="hq-negative">${hqQty}<span class="hq-over-badge">⚠️超過</span></span>` : hqQty}</td>
             <td class="cell-readonly cell-row-total" id="prodGrandTotal-${day.dateKey}">${grandTotal}</td>
           </tr>
         </tfoot>
@@ -1604,7 +1728,9 @@ function refreshProductionCellDerived(day){
   FILLINGS.forEach(f => {
     const hqVal = snap.hqBreakdown[f] || 0;
     const hqEl = document.getElementById(`prodHq-${day.dateKey}-${f}`);
-    if(hqEl) hqEl.textContent = hqVal;
+    if(hqEl) hqEl.innerHTML = hqVal < 0
+      ? `<span class="hq-negative">${hqVal}<span class="hq-over-badge">⚠️超過</span></span>`
+      : `${hqVal}`;
 
     const rowTotal = snap.working.reduce((s, name) => s + ((day.memberFillingQty[name] && day.memberFillingQty[name][f]) || 0), 0) + hqVal;
     const rowTotalEl = document.getElementById(`prodRowTotal-${day.dateKey}-${f}`);
@@ -1617,7 +1743,9 @@ function refreshProductionCellDerived(day){
   });
 
   const hqTotalEl = document.getElementById(`prodHqTotal-${day.dateKey}`);
-  if(hqTotalEl) hqTotalEl.textContent = snap.hqQty;
+  if(hqTotalEl) hqTotalEl.innerHTML = snap.hqQty < 0
+    ? `<span class="hq-negative">${snap.hqQty}<span class="hq-over-badge">⚠️超過</span></span>`
+    : `${snap.hqQty}`;
 
   const grandTotalEl = document.getElementById(`prodGrandTotal-${day.dateKey}`);
   if(grandTotalEl) grandTotalEl.textContent = snap.ningiTotal + snap.hqQty;
@@ -1680,6 +1808,128 @@ function bindProductionDayEvents(day){
 }
 
 // メンバー1人分の具材割り振りを文字列化（例："ツナマヨ×15 スパイシーツナマヨ×9"）
+/* ---------- 折りたたみトグル ---------- */
+
+function toggleNextNextWeek(){
+  nextNextCollapsed = !nextNextCollapsed;
+  renderCalendar();
+  renderProductionSection();
+}
+
+/* ---------- showConfirm ---------- */
+
+function showConfirm(message, onConfirm){
+  const overlay = document.getElementById("confirmOverlay");
+  const yesBtn  = document.getElementById("confirmYesBtn");
+  const noBtn   = document.getElementById("confirmNoBtn");
+  document.getElementById("confirmMessage").textContent = message;
+
+  function cleanup(){
+    overlay.classList.remove("show");
+    yesBtn.removeEventListener("click", yesHandler);
+    noBtn.removeEventListener("click", noHandler);
+    overlay.removeEventListener("click", overlayHandler);
+  }
+  function yesHandler(){ cleanup(); onConfirm(); }
+  function noHandler(){ cleanup(); }
+  function overlayHandler(e){ if(e.target === overlay) cleanup(); }
+
+  yesBtn.addEventListener("click", yesHandler);
+  noBtn.addEventListener("click", noHandler);
+  overlay.addEventListener("click", overlayHandler);
+  overlay.classList.add("show");
+}
+
+/* ---------- 具材渡し済み・調理済み ---------- */
+
+function ensureCellStatus(dateKey, name){
+  if(!state.cellStatus[dateKey]) state.cellStatus[dateKey] = {};
+  if(!state.cellStatus[dateKey][name]) state.cellStatus[dateKey][name] = { handed: false, cooked: false };
+}
+
+function loadCellStatusFromStorage(){
+  const result = {};
+  try{
+    for(let i = 0; i < localStorage.length; i++){
+      const k = localStorage.key(i);
+      if(k && k.startsWith("chabon_cell_")){
+        result[k.replace("chabon_cell_", "")] = JSON.parse(localStorage.getItem(k));
+      }
+    }
+  }catch(e){}
+  return result;
+}
+
+function saveCellStatus(dateKey){
+  try{
+    localStorage.setItem(`chabon_cell_${dateKey}`, JSON.stringify(state.cellStatus[dateKey] || {}));
+  }catch(e){}
+}
+
+function renderCellStatusTable(){
+  const area = document.getElementById("cellStatusArea");
+
+  // 出勤メンバーがいる日のみ表示
+  const activeDays = state.days.filter(d => MEMBERS.some(name => getManualQty(d, name) > 0));
+
+  if(activeDays.length === 0){
+    area.innerHTML = `<p class="off-note">生産割り振りにデータがありません。</p>`;
+    return;
+  }
+
+  const headerCells = activeDays.map(d =>
+    `<th>${DAY_NAMES[d.dow]}曜<br><span style="font-weight:normal;font-size:0.72rem;">${d.dateObj.getMonth()+1}/${d.dateObj.getDate()}</span></th>`
+  ).join("");
+
+  const bodyRows = MEMBERS.map(name => {
+    let anyDay = false;
+    const cells = activeDays.map(day => {
+      const qty = getManualQty(day, name);
+      if(qty <= 0) return `<td class="no-plan">—</td>`;
+      anyDay = true;
+      const key = mdLabel(day.dateObj);
+      ensureCellStatus(key, name);
+      const st = state.cellStatus[key][name];
+      const fillings = FILLINGS.filter(f => (day.memberFillingQty[name] && day.memberFillingQty[name][f] || 0) > 0);
+      const fillingText = fillings.map(f => `${f}×${day.memberFillingQty[name][f]}`).join(" ") || `${qty}個`;
+      return `
+        <td>
+          <div class="cell-fillings">${fillingText}</div>
+          <div class="cell-status">
+            <button class="status-btn handed ${st.handed ? "active" : ""}" data-key="${key}" data-member="${name}" data-kind="handed">具材渡し済み✓</button>
+            <button class="status-btn cooked ${st.cooked ? "active" : ""}" data-key="${key}" data-member="${name}" data-kind="cooked">調理済み❄️</button>
+          </div>
+        </td>
+      `;
+    }).join("");
+    if(!anyDay) return "";
+    return `<tr><td><strong>${name}</strong></td>${cells}</tr>`;
+  }).filter(Boolean).join("");
+
+  area.innerHTML = `
+    <table>
+      <thead><tr><th>メンバー</th>${headerCells}</tr></thead>
+      <tbody>${bodyRows}</tbody>
+    </table>
+  `;
+
+  area.querySelectorAll(".status-btn").forEach(btn => {
+    btn.addEventListener("click", () => {
+      const key  = btn.dataset.key;
+      const name = btn.dataset.member;
+      const kind = btn.dataset.kind;
+      const label = kind === "handed" ? "渡し済み" : "調理済み";
+      const nextVal = !state.cellStatus[key][name][kind];
+      const actionLabel = nextVal ? label : `未${label}`;
+      showConfirm(`${name}さんの${key}の具材を『${actionLabel}』にしますか？`, () => {
+        state.cellStatus[key][name][kind] = nextVal;
+        saveCellStatus(key);
+        renderCellStatusTable();
+      });
+    });
+  });
+}
+
 function memberFillingToString(qtyMap){
   return FILLINGS.filter(f => (qtyMap && qtyMap[f] || 0) > 0).map(f => `${f}×${qtyMap[f]}`).join(" ");
 }
@@ -1873,6 +2123,7 @@ async function init(){
     state.holidaysByIso = holidaysByIso;
     state.nsDisruptionsByDate = nsDisruptionsByDate;
     state.confirmedByDate = loadConfirmedFromStorage();
+    state.cellStatus = loadCellStatusFromStorage();
     const hourlyByDate = buildHourlyByDate(weatherRes.hourly);
     state.days = buildDays(weatherRes.daily, hourlyByDate);
     state.chiseByDate = chiseJson ? parseChiseSheet(chiseJson) : {};
@@ -1883,6 +2134,7 @@ async function init(){
     renderCalendar();
     renderShiftTable();
     renderProductionSection();
+    renderCellStatusTable();
 
     const refreshBtn = document.getElementById("refreshShiftBtn");
     if(refreshBtn) refreshBtn.addEventListener("click", refreshShiftData);
