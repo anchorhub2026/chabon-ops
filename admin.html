@@ -190,10 +190,13 @@
     margin-bottom: 6px;
   }
   .day-card .day-weather{
-    font-size: 0.82rem;
-    color: #666;
+    display: flex;
+    align-items: center;
+    gap: 6px;
     margin-bottom: 8px;
   }
+  .weather-icon{ font-size: 2rem; line-height: 1; }
+  .weather-temp{ font-size: 0.82rem; color: #666; }
   .day-card-head{
     display: flex;
     align-items: flex-start;
@@ -269,6 +272,40 @@
     color: #666;
     margin-top: 3px;
     line-height: 1.4;
+  }
+  /* シフト一覧：週ごと見出し・区切り */
+  .shift-week-section{ margin-bottom: 10px; }
+  .shift-week-heading{
+    font-size: 0.88rem;
+    font-weight: bold;
+    color: var(--main-dark);
+    padding: 5px 0 4px;
+    border-bottom: 2px solid var(--main-light);
+    margin-bottom: 8px;
+  }
+  .shift-week-sep{
+    border: none;
+    border-top: 2px dashed var(--line);
+    margin: 18px 0 14px;
+  }
+  /* 確定済みバッジ */
+  .confirmed-badge{
+    display: inline-block;
+    margin-top: 4px;
+    background: var(--main);
+    color: #fff;
+    font-size: 0.64rem;
+    font-weight: bold;
+    padding: 2px 9px;
+    border-radius: 100px;
+  }
+  /* 確定済みの推奨数ボックスハイライト */
+  .store-item.confirmed{
+    background: var(--main-light);
+    border-color: var(--main);
+  }
+  .store-item.confirmed .store-item-num{
+    color: var(--main-dark);
   }
   .store-toggle-btn{
     border: none;
@@ -495,7 +532,7 @@
 <main>
 
   <section>
-    <h2>販売予測数<span class="badge">来週・再来週 月〜木</span></h2>
+    <h2>販売予測数・決定数<span class="badge">来週・再来週 月〜木</span></h2>
     <div id="calendarArea"><p class="loading">データを読み込み中...</p></div>
   </section>
 
@@ -569,10 +606,11 @@ function weatherCategory(code){
 }
 
 const state = {
-  days: [],          // 来週+再来週 月〜木の8日分
-  chiseByDate: {},   // dateKey -> { breakdown:{product:qty}, subtotal }
-  shiftByDate: {},   // dateKey -> { memberName: { qty:number, raw:string } }
-  notesByName: {},   // memberName -> { note:string, supplies:string }
+  days: [],             // 来週+再来週 月〜木の8日分
+  chiseByDate: {},      // dateKey -> { breakdown:{product:qty}, subtotal }
+  shiftByDate: {},      // dateKey -> { memberName: { qty:number, raw:string } }
+  notesByName: {},      // memberName -> { note:string, supplies:string }
+  confirmedByDate: {},  // "M/D" -> { zuidTotal, uvaTotal, confirmed:true }
 };
 
 /* ---------- 日付ユーティリティ ---------- */
@@ -861,6 +899,20 @@ function parseQtyNumber(qtyStr){
   return m ? parseInt(m[1], 10) : 0;
 }
 
+// localStorage から確定済みデータを読み込む。キー形式: chabon_confirmed_{M/D}
+function loadConfirmedFromStorage(){
+  const result = {};
+  try{
+    for(let i = 0; i < localStorage.length; i++){
+      const k = localStorage.key(i);
+      if(k && k.startsWith("chabon_confirmed_")){
+        result[k.replace("chabon_confirmed_", "")] = JSON.parse(localStorage.getItem(k));
+      }
+    }
+  }catch(e){ console.warn("localStorage読み込みエラー:", e); }
+  return result;
+}
+
 // シフト回答シート（送信日時, 名前, 日付, 曜日, 個数, 備考, 必要物品）を解析。キーは "6/23" 形式
 function parseShiftSheet(json){
   const rawRows = json.table.rows || [];
@@ -1008,11 +1060,12 @@ function compactReason(str){
 }
 
 // 日付カードヘッダー右側：Zuid/UvAを縦積みで表示。
-// 各ボックス内：店舗名（左）と個数（右）を1行目、理由テキストを2行目に表示。
-function storeBoxHtml(label, result){
+// isConfirmed=true のとき .confirmed クラスを付けて薄グリーンにハイライト。
+function storeBoxHtml(label, result, isConfirmed){
+  const confirmCls = isConfirmed ? " confirmed" : "";
   if(!result){
     return `
-      <div class="store-item closed">
+      <div class="store-item closed${confirmCls}">
         <div class="store-item-header">
           <span class="store-item-name">${label}</span>
           <span class="store-item-num">—</span>
@@ -1022,7 +1075,7 @@ function storeBoxHtml(label, result){
   }
   const reasonText = result.reasons.map(r => compactReason(r)).join(" / ");
   return `
-    <div class="store-item">
+    <div class="store-item${confirmCls}">
       <div class="store-item-header">
         <span class="store-item-name">${label}</span>
         <span class="store-item-num">${result.total}個</span>
@@ -1033,10 +1086,11 @@ function storeBoxHtml(label, result){
 }
 
 function recommendReasonHtml(day){
+  const isConfirmed = !!(state.confirmedByDate && state.confirmedByDate[mdLabel(day.dateObj)]);
   return `
     <div class="store-stack">
-      ${storeBoxHtml("Zuid", day.zuid)}
-      ${storeBoxHtml("UvA", day.uva)}
+      ${storeBoxHtml("Zuid", day.zuid, isConfirmed)}
+      ${storeBoxHtml("UvA", day.uva, isConfirmed)}
     </div>
   `;
 }
@@ -1075,9 +1129,10 @@ function renderCalendar(){
             <div class="day-card-head">
               <div class="day-head-main">
                 <div class="day-head">${day.label}</div>
-                <div class="day-weather">${day.weatherIcon} ${day.tempLabel}</div>
+                <div class="day-weather"><span class="weather-icon">${day.weatherIcon}</span><span class="weather-temp">${day.tempLabel}</span></div>
                 ${day.holidayName ? `<div class="holiday-badge">🎉 祝日：${day.holidayName}</div>` : ""}
                 ${day.nsDisruptions && day.nsDisruptions.length ? `<div class="ns-badge">🚆 NSストライキ/運休</div>` : ""}
+                ${(state.confirmedByDate && state.confirmedByDate[mdLabel(day.dateObj)]) ? `<div class="confirmed-badge">✓ 確定済み</div>` : ""}
               </div>
               ${recommendReasonHtml(day)}
             </div>
@@ -1643,6 +1698,14 @@ async function confirmWeek(weekIndex){
     });
     console.log("送信成功:", result);
     statusEl.textContent = "確定・公開しました ✓";
+    // localStorage に確定データを保存し、カレンダーを再描画
+    days.forEach(d => {
+      const dateStr = mdLabel(d.dateObj);
+      const entry = { zuidTotal: zuidFinal(d), uvaTotal: uvaFinal(d), confirmed: true };
+      try{ localStorage.setItem(`chabon_confirmed_${dateStr}`, JSON.stringify(entry)); }catch(e){}
+      state.confirmedByDate[dateStr] = entry;
+    });
+    renderCalendar();
   }catch(e){
     console.error("送信失敗:", e);
     statusEl.textContent = "送信に失敗しました";
@@ -1654,31 +1717,53 @@ async function confirmWeek(weekIndex){
 function renderShiftTable(){
   const area = document.getElementById("shiftTableArea");
 
-  const headerCells = state.days.map(d => `<th>${DAY_NAMES[d.dow]}曜<br>${d.dateObj.getMonth() + 1}/${d.dateObj.getDate()}</th>`).join("");
+  const weekGroups = [
+    { title: "今週",   weekIndex: 0, days: state.days.filter(d => d.weekIndex === 0) },
+    { title: "来週",   weekIndex: 1, days: state.days.filter(d => d.weekIndex === 1) },
+    { title: "再来週", weekIndex: 2, days: state.days.filter(d => d.weekIndex === 2) },
+  ].filter(w => w.days.length > 0);
 
-  const bodyRows = MEMBERS.map(name => {
-    const cells = state.days.map(day => {
-      const shiftKey = mdLabel(day.dateObj);
-      const submitted = state.shiftByDate[shiftKey] && state.shiftByDate[shiftKey][name];
-      const display = submitted
-        ? `<div class="manual-readonly">${getManualQty(day, name)}個</div>`
-        : `<div class="manual-readonly unanswered">未回答</div>`;
-      return `<td>${display}</td>`;
+  function dateRangeLabel(days){
+    if(!days.length) return "";
+    const fmt = d => `${d.getMonth()+1}/${d.getDate()}`;
+    return days.length === 1
+      ? fmt(days[0].dateObj)
+      : `${fmt(days[0].dateObj)}〜${fmt(days[days.length-1].dateObj)}`;
+  }
+
+  area.innerHTML = weekGroups.map((wg, wi) => {
+    const headerCells = wg.days.map(d =>
+      `<th>${DAY_NAMES[d.dow]}曜<br>${d.dateObj.getMonth()+1}/${d.dateObj.getDate()}</th>`
+    ).join("");
+
+    const bodyRows = MEMBERS.map(name => {
+      const cells = wg.days.map(day => {
+        const shiftKey = mdLabel(day.dateObj);
+        const submitted = state.shiftByDate[shiftKey] && state.shiftByDate[shiftKey][name];
+        const display = submitted
+          ? `<div class="manual-readonly">${getManualQty(day, name)}個</div>`
+          : `<div class="manual-readonly unanswered">未回答</div>`;
+        return `<td>${display}</td>`;
+      }).join("");
+      const mn = state.notesByName && state.notesByName[name];
+      const noteHtml = mn ? [
+        mn.note     ? `<div class="shift-note">📝 ${mn.note}</div>` : "",
+        mn.supplies ? `<div class="shift-note">📦 ${mn.supplies}</div>` : "",
+      ].join("") : "";
+      return `<tr><td><strong>${name}</strong>${noteHtml}</td>${cells}</tr>`;
     }).join("");
-    const mn = state.notesByName && state.notesByName[name];
-    const noteHtml = mn ? [
-      mn.note     ? `<div class="shift-note">📝 ${mn.note}</div>` : "",
-      mn.supplies ? `<div class="shift-note">📦 ${mn.supplies}</div>` : "",
-    ].join("") : "";
-    return `<tr><td><strong>${name}</strong>${noteHtml}</td>${cells}</tr>`;
-  }).join("");
 
-  area.innerHTML = `
-    <table>
-      <thead><tr><th>メンバー</th>${headerCells}</tr></thead>
-      <tbody>${bodyRows}</tbody>
-    </table>
-  `;
+    return `
+      ${wi > 0 ? '<hr class="shift-week-sep">' : ""}
+      <div class="shift-week-section">
+        <div class="shift-week-heading">${wg.title}（${dateRangeLabel(wg.days)}）</div>
+        <table>
+          <thead><tr><th>メンバー</th>${headerCells}</tr></thead>
+          <tbody>${bodyRows}</tbody>
+        </table>
+      </div>
+    `;
+  }).join("");
 }
 
 /* ---------- シフト希望の再読み込み ---------- */
@@ -1735,6 +1820,7 @@ async function init(){
 
     state.holidaysByIso = holidaysByIso;
     state.nsDisruptionsByDate = nsDisruptionsByDate;
+    state.confirmedByDate = loadConfirmedFromStorage();
     const hourlyByDate = buildHourlyByDate(weatherRes.hourly);
     state.days = buildDays(weatherRes.daily, hourlyByDate);
     state.chiseByDate = chiseJson ? parseChiseSheet(chiseJson) : {};
