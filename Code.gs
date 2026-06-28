@@ -21,11 +21,11 @@ function handleShiftSubmit(ss, data) {
   var sheet = ss.getSheetByName("シフト回答");
   if (!sheet) {
     sheet = ss.insertSheet("シフト回答");
-    sheet.appendRow(["送信日時", "名前", "日付", "曜日", "個数", "備考"]);
+    sheet.appendRow(["送信日時", "名前", "日付", "曜日", "個数", "備考", "必要物品"]);
   }
   for (var i = 0; i < data.entries.length; i++) {
     var entry = data.entries[i];
-    sheet.appendRow([new Date(), data.name, entry.date, entry.day, entry.count, data.note]);
+    sheet.appendRow([new Date(), data.name, entry.date, entry.day, entry.count, data.note || "", data.supplies || ""]);
   }
 }
 

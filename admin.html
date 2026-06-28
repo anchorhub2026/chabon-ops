@@ -216,60 +216,59 @@
     border: 1px solid #f3b6ae;
     white-space: nowrap;
   }
-  .day-store-row{
-    display: flex;
+  /* 推奨数：縦積みレイアウト（Zuid→UvAの順） */
+  .store-stack{
     flex: 1;
-    gap: 12px;
-    overflow: visible;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
   }
-  .day-store-unit{
+  .store-item{
     background: #fff;
     border: 1px solid var(--line);
     border-radius: 8px;
-    padding: 4px 8px;
-    min-width: 0;
-    flex: 1;
+    padding: 5px 8px;
   }
-  .day-store-unit.closed{
-    background: #f7f6f2;
-  }
-  .day-store-label{
-    font-size: 0.64rem;
-    font-weight: bold;
-    color: var(--main-dark);
-    margin-bottom: 1px;
-  }
-  .day-store-unit.closed .day-store-label{ color: #999; }
-  .day-store-content{
+  .store-item.closed{ background: #f7f6f2; }
+  .store-item-header{
     display: flex;
-    align-items: center;
+    justify-content: space-between;
+    align-items: baseline;
     gap: 6px;
   }
-  .day-store-num{
-    font-size: 20px;
+  .store-item-name{
+    font-size: 0.72rem;
+    font-weight: bold;
+    color: var(--main-dark);
+    white-space: nowrap;
+  }
+  .store-item.closed .store-item-name{ color: #999; }
+  .store-item-num{
+    font-size: 1.1rem;
     font-weight: bold;
     color: var(--main);
     white-space: nowrap;
     line-height: 1;
   }
-  .day-store-unit.closed .day-store-num{
-    font-size: 1rem;
+  .store-item.closed .store-item-num{
+    font-size: 0.9rem;
     font-weight: normal;
     color: #999;
   }
-  .day-store-reasons{
-    display: flex;
-    flex-direction: column;
-    font-size: 10px;
+  .store-item-reasons{
+    font-size: 0.62rem;
     color: #888;
-    line-height: 1.25;
-    min-width: 0;
-    overflow: hidden;
+    line-height: 1.4;
+    margin-top: 3px;
+    word-break: break-word;
   }
-  .day-store-reasons div{
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
+  /* シフト一覧の備考・必要物品 */
+  .shift-note{
+    font-size: 0.72rem;
+    color: #666;
+    margin-top: 3px;
+    line-height: 1.4;
   }
   .store-toggle-btn{
     border: none;
@@ -573,6 +572,7 @@ const state = {
   days: [],          // 来週+再来週 月〜木の8日分
   chiseByDate: {},   // dateKey -> { breakdown:{product:qty}, subtotal }
   shiftByDate: {},   // dateKey -> { memberName: { qty:number, raw:string } }
+  notesByName: {},   // memberName -> { note:string, supplies:string }
 };
 
 /* ---------- 日付ユーティリティ ---------- */
@@ -861,10 +861,11 @@ function parseQtyNumber(qtyStr){
   return m ? parseInt(m[1], 10) : 0;
 }
 
-// シフト回答シート（送信日時, 名前, 日付, 曜日, 個数, 備考）を解析。キーは "6/23" 形式
+// シフト回答シート（送信日時, 名前, 日付, 曜日, 個数, 備考, 必要物品）を解析。キーは "6/23" 形式
 function parseShiftSheet(json){
   const rawRows = json.table.rows || [];
   const byDate = {};
+  const notesByName = {};
   rawRows.forEach(row => {
     const c = row.c;
     if(!c) return;
@@ -873,11 +874,15 @@ function parseShiftSheet(json){
     // 「日付」列はシート側で日付型に自動変換されているため、表示用文字列(f)を "6/23" 形式のキーとして使う
     const key = dateCell && (dateCell.f || dateCell.v);
     const qtyRaw = c[4] && c[4].v;
+    const note     = c[5] ? String(c[5].v || "").trim() : "";
+    const supplies = c[6] ? String(c[6].v || "").trim() : "";
     if(!name || !key) return;
     if(!byDate[key]) byDate[key] = {};
     byDate[key][name] = { qty: parseQtyNumber(qtyRaw), raw: qtyRaw || "" };
+    // 後から来た行で上書き（最新の回答を優先）
+    if(note || supplies) notesByName[name] = { note, supplies };
   });
-  return byDate;
+  return { byDate, notesByName };
 }
 
 /* ---------- データ構築 ---------- */
@@ -1002,31 +1007,34 @@ function compactReason(str){
   return str;
 }
 
-// 日付カードのヘッダー右側、日付・天気と同じ行にZuid/UvAを横並びで出すコンパクトな表示。
-// 白い枠の中：1行目にラベル、2行目に個数（左・大きく）と理由（右・小さく縦並び）を横並びで表示。
+// 日付カードヘッダー右側：Zuid/UvAを縦積みで表示。
+// 各ボックス内：店舗名（左）と個数（右）を1行目、理由テキストを2行目に表示。
 function storeBoxHtml(label, result){
   if(!result){
     return `
-      <div class="day-store-unit closed">
-        <div class="day-store-label">${label}</div>
-        <div class="day-store-content"><span class="day-store-num">—</span></div>
+      <div class="store-item closed">
+        <div class="store-item-header">
+          <span class="store-item-name">${label}</span>
+          <span class="store-item-num">—</span>
+        </div>
       </div>
     `;
   }
+  const reasonText = result.reasons.map(r => compactReason(r)).join(" / ");
   return `
-    <div class="day-store-unit">
-      <div class="day-store-label">${label}</div>
-      <div class="day-store-content">
-        <span class="day-store-num">${result.total}個</span>
-        <div class="day-store-reasons">${result.reasons.map(r => `<div>${compactReason(r)}</div>`).join("")}</div>
+    <div class="store-item">
+      <div class="store-item-header">
+        <span class="store-item-name">${label}</span>
+        <span class="store-item-num">${result.total}個</span>
       </div>
+      ${reasonText ? `<div class="store-item-reasons">${reasonText}</div>` : ""}
     </div>
   `;
 }
 
 function recommendReasonHtml(day){
   return `
-    <div class="day-store-row">
+    <div class="store-stack">
       ${storeBoxHtml("Zuid", day.zuid)}
       ${storeBoxHtml("UvA", day.uva)}
     </div>
@@ -1081,7 +1089,6 @@ function renderCalendar(){
   `).join("");
 
   state.days.forEach(day => bindForecastTableEvents(day));
-  state.days.forEach(day => alignDayStoreBoxes(day));
 
   area.querySelectorAll(".confirm-week-btn").forEach(btn => {
     btn.addEventListener("click", () => confirmWeek(+btn.dataset.week));
@@ -1165,33 +1172,8 @@ function renderForecastTable(day){
   if(!container) return;
   container.innerHTML = forecastTableHtml(day);
   bindForecastTableEvents(day);
-  alignDayStoreBoxes(day);
 }
 
-// ヘッダーのZuid/UvA枠を、テーブルのZuid列・UvA列の真上に来るよう水平位置を揃える。
-// テーブルは具材名の長さで列幅が変わる(table-layout:auto)ため、テーブル・ヘッダーの構造は変えず、
-// 実際に描画された列の中心位置を測ってtranslateXで視覚的にだけ合わせる。
-function alignDayStoreBoxes(day){
-  const tableWrap = document.getElementById(`forecastTable-${day.dateKey}`);
-  const card = tableWrap && tableWrap.closest(".day-card");
-  const table = tableWrap && tableWrap.querySelector("table.forecast-table");
-  if(!card || !table) return;
-
-  const ths = table.querySelectorAll("thead th");
-  const units = card.querySelectorAll(".day-store-unit");
-  if(ths.length < 3 || units.length < 2) return;
-
-  const targets = [ths[1], ths[2]]; // Zuid列, UvA列
-  units.forEach((unit, i) => {
-    const th = targets[i];
-    if(!unit || !th) return;
-    unit.style.transform = ""; // 前回分のずらしをリセットしてから測る
-    const thRect = th.getBoundingClientRect();
-    const unitRect = unit.getBoundingClientRect();
-    const offset = (thRect.left + thRect.width / 2) - (unitRect.left + unitRect.width / 2);
-    unit.style.transform = `translateX(${offset}px)`;
-  });
-}
 
 function bindForecastTableEvents(day){
   const container = document.getElementById(`forecastTable-${day.dateKey}`);
@@ -1683,7 +1665,12 @@ function renderShiftTable(){
         : `<div class="manual-readonly unanswered">未回答</div>`;
       return `<td>${display}</td>`;
     }).join("");
-    return `<tr><td><strong>${name}</strong></td>${cells}</tr>`;
+    const mn = state.notesByName && state.notesByName[name];
+    const noteHtml = mn ? [
+      mn.note     ? `<div class="shift-note">📝 ${mn.note}</div>` : "",
+      mn.supplies ? `<div class="shift-note">📦 ${mn.supplies}</div>` : "",
+    ].join("") : "";
+    return `<tr><td><strong>${name}</strong>${noteHtml}</td>${cells}</tr>`;
   }).join("");
 
   area.innerHTML = `
@@ -1707,7 +1694,9 @@ async function refreshShiftData(){
 
   try{
     const shiftJson = await fetchSheetJson("シフト回答", SHIFT_SPREADSHEET_ID);
-    state.shiftByDate = shiftJson ? parseShiftSheet(shiftJson) : {};
+    const refreshParsed = shiftJson ? parseShiftSheet(shiftJson) : { byDate: {}, notesByName: {} };
+    state.shiftByDate = refreshParsed.byDate;
+    state.notesByName = refreshParsed.notesByName;
 
     renderShiftTable();
     renderProductionSection();
@@ -1749,7 +1738,9 @@ async function init(){
     const hourlyByDate = buildHourlyByDate(weatherRes.hourly);
     state.days = buildDays(weatherRes.daily, hourlyByDate);
     state.chiseByDate = chiseJson ? parseChiseSheet(chiseJson) : {};
-    state.shiftByDate = shiftJson ? parseShiftSheet(shiftJson) : {};
+    const shiftParsed = shiftJson ? parseShiftSheet(shiftJson) : { byDate: {}, notesByName: {} };
+    state.shiftByDate  = shiftParsed.byDate;
+    state.notesByName  = shiftParsed.notesByName;
 
     renderCalendar();
     renderShiftTable();
@@ -1767,14 +1758,6 @@ async function init(){
 
 init();
 
-// 画面幅が変わるとテーブルの列幅も変わるため、ヘッダーのZuid/UvA枠の位置を再調整する
-let alignResizeTimer = null;
-window.addEventListener("resize", () => {
-  clearTimeout(alignResizeTimer);
-  alignResizeTimer = setTimeout(() => {
-    state.days.forEach(day => alignDayStoreBoxes(day));
-  }, 150);
-});
 </script>
 
 </body>
