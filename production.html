@@ -43,7 +43,6 @@
   }
   .header-left h1{
     margin: 0;
-    font-family: "Noto Serif JP", serif;
     font-size: 1.25rem;
     letter-spacing: 0.05em;
   }
@@ -63,7 +62,7 @@
   }
   .header-nav a:hover{ background: rgba(255,255,255,0.22); }
   .header-logo{
-    height: 50px;
+    height: 100px;
     width: auto;
     object-fit: contain;
     flex-shrink: 0;
@@ -93,7 +92,7 @@
   }
   .month-nav button:hover{ background: var(--main-dark); }
   .month-title{
-    font-family: "Noto Serif JP", serif;
+    font-family: "DM Sans", "Hiragino Sans", sans-serif;
     font-size: 1.1rem;
     font-weight: 700;
     color: var(--main-dark);
@@ -331,7 +330,7 @@
   @media (max-width: 540px){
     header{ padding: 12px 14px; }
     .header-left h1{ font-size: 1.05rem; }
-    .header-logo{ height: 40px; }
+    .header-logo{ height: 80px; }
     .cal-card{ padding: 8px 6px; }
     .cal{ min-width: 320px; border-spacing: 3px; }
     .cal thead th{ font-size: 0.72rem; padding: 5px 2px; }
@@ -354,7 +353,7 @@
 <header>
   <div class="header-left">
     <h1>🍙 Chabon Ops</h1>
-    <p>生産カレンダー（ニギニギ隊向け）</p>
+    <p>おにぎり生産カレンダー（ニギニギ隊）</p>
     <nav class="header-nav">
       <a href="index.html">← トップへ</a>
       <a href="shift.html">シフト入力</a>
@@ -534,13 +533,13 @@ function renderCalendar(){
       if(isToday) html += `<span class="today-badge">TODAY</span>`;
       html += `</div>`;
 
-      if(plan && plan.members.length > 0){
-        plan.members.forEach((m, i) => {
+      const activeMembers = plan ? plan.members.filter(m => m.total > 0) : [];
+      if(activeMembers.length > 0){
+        activeMembers.forEach((m, i) => {
           if(i > 0) html += `<hr class="member-sep">`;
           html += memberBlockHtml(m);
         });
-        const dispTotal = plan.total > 0 ? plan.total
-          : plan.members.reduce((s, m) => s + m.total, 0);
+        const dispTotal = activeMembers.reduce((s, m) => s + m.total, 0);
         html += `<div class="cell-total">`;
         html += `<span class="total-label">TOTAL</span>`;
         html += `<span class="total-num">${dispTotal}個</span>`;
