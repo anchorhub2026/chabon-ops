@@ -544,6 +544,24 @@
     padding: 20px 0 40px;
   }
 
+  /* リセットボタン */
+  .reset-day-btn{
+    font-size: 0.68rem;
+    padding: 3px 9px;
+    border: 1px solid #e0c4c4;
+    border-radius: 100px;
+    background: #fff5f5;
+    color: #c0392b;
+    cursor: pointer;
+  }
+  .reset-day-btn:hover{ background: #fdeaea; }
+  /* 保存済みインジケータ */
+  .saved-indicator{
+    font-size: 0.65rem;
+    color: #aaa;
+    margin-left: 6px;
+  }
+
   /* 再来週折りたたみ */
   .toggle-nnw-btn{
     font-size: 0.75rem;
@@ -1332,6 +1350,8 @@ function forecastTableHtml(day){
   const uvaTotal = showUva ? sumQtyMap(day.uvaFillingQty) : 0;
   const grandTotal = zuidTotal + uvaTotal + chiseQty;
 
+  const hasSavedForecast = !!localStorage.getItem(`chabon_forecast_${mdLabel(day.dateObj)}`);
+
   return `
     <table class="forecast-table">
       <thead>
@@ -1354,6 +1374,10 @@ function forecastTableHtml(day){
         </tr>
       </tfoot>
     </table>
+    <div style="text-align:right;margin-top:4px;">
+      ${hasSavedForecast ? `<span class="saved-indicator">💾 保存済み</span>` : ""}
+      <button type="button" class="reset-day-btn" data-key="${day.dateKey}">🗑 この日をリセット</button>
+    </div>
   `;
 }
 
@@ -1407,6 +1431,7 @@ function bindForecastTableEvents(day){
         grandTotalEl.textContent = sumQtyMap(day.zuidFillingQty) + (showUva ? sumQtyMap(day.uvaFillingQty) : 0) + chiseQty;
       }
 
+      saveForecast(day);
       // 必要数（Zuid+UvA合計）が変わったので、本部内訳・合計チェックだけ再計算（メンバーの入力欄には触れない）
       refreshProductionCellDerived(day);
     });
@@ -1420,6 +1445,7 @@ function bindForecastTableEvents(day){
       } else if(store === "uva" && day.uva){
         day.uvaFillingQty = buildFillingDefaults(day.uva.total);
       }
+      saveForecast(day);
       renderForecastTable(day);
       refreshProductionCellDerived(day);
     });
@@ -1443,9 +1469,19 @@ function bindForecastTableEvents(day){
           : buildFillingDefaults(0);
       }
 
+      saveForecast(day);
       // 営業/休みの切り替えは具材の必要数が丸ごと変わる構造的な変更なので表は再生成する
       renderForecastTable(day);
       refreshProductionCellDerived(day);
+    });
+  });
+
+  // この日の全データをリセット（forecast + production 両方）
+  container.querySelectorAll(".reset-day-btn").forEach(btn => {
+    btn.addEventListener("click", () => {
+      showConfirm(`${day.label}の販売予測数・生産割り振りを推奨値にリセットしますか？`, () => {
+        resetDayData(day);
+      });
     });
   });
 }
@@ -1696,6 +1732,8 @@ function applyBulkValue(day, val){
 function productionDayHtml(day){
   const snap = computeDaySnapshot(day);
 
+  const hasSavedProd = !!localStorage.getItem(`chabon_prod_${mdLabel(day.dateObj)}`);
+
   const bulkActionsHtml = `
     <div class="bulk-actions">
       <button type="button" class="bulk-btn ${day.bulkValue === 24 ? "active" : ""}" data-key="${day.dateKey}" data-val="24">全員24個</button>
@@ -1703,6 +1741,8 @@ function productionDayHtml(day){
       <button type="button" class="bulk-btn ${day.bulkValue === 30 ? "active" : ""}" data-key="${day.dateKey}" data-val="30">全員30個</button>
       <button type="button" class="bulk-btn ${day.bulkValue === 45 ? "active" : ""}" data-key="${day.dateKey}" data-val="45">全員45個</button>
       <button type="button" class="bulk-btn undo-btn" data-key="${day.dateKey}" ${day.undoSnapshot ? "" : "disabled"}>↺ 元に戻す</button>
+      ${hasSavedProd ? `<span class="saved-indicator">💾 保存済み</span>` : ""}
+      <button type="button" class="reset-prod-btn reset-day-btn" data-key="${day.dateKey}">🗑 割り振りリセット</button>
     </div>
   `;
 
@@ -1768,6 +1808,7 @@ function bindProductionDayEvents(day){
       const filling = input.dataset.filling;
       if(!day.memberFillingQty[name]) day.memberFillingQty[name] = {};
       day.memberFillingQty[name][filling] = Math.max(0, parseInt(input.value, 10) || 0);
+      saveProdAlloc(day);
       refreshProductionCellDerived(day);
     });
   });
@@ -1784,7 +1825,7 @@ function bindProductionDayEvents(day){
     });
   });
 
-  container.querySelectorAll(".bulk-btn:not(.undo-btn)").forEach(btn => {
+  container.querySelectorAll(".bulk-btn:not(.undo-btn):not(.reset-prod-btn)").forEach(btn => {
     btn.addEventListener("click", () => {
       const val = parseInt(btn.dataset.val, 10);
       const working = MEMBERS.filter(name => getManualQty(day, name) > 0);
@@ -1792,6 +1833,7 @@ function bindProductionDayEvents(day){
 
       day.undoSnapshot = { memberFillingQty: snapshotMemberFillingQty(day), bulkValue: day.bulkValue };
       applyBulkValue(day, val);
+      saveProdAlloc(day);
       refreshProductionDay(day);
     });
   });
@@ -1802,12 +1844,82 @@ function bindProductionDayEvents(day){
       day.memberFillingQty = day.undoSnapshot.memberFillingQty;
       day.bulkValue = day.undoSnapshot.bulkValue;
       day.undoSnapshot = null;
+      saveProdAlloc(day);
       refreshProductionDay(day);
+    });
+  });
+
+  // 生産割り振りのみリセット
+  container.querySelectorAll(".reset-prod-btn").forEach(btn => {
+    btn.addEventListener("click", () => {
+      showConfirm(`${day.label}の生産割り振りをリセットしますか？`, () => {
+        const dateStr = mdLabel(day.dateObj);
+        try{ localStorage.removeItem(`chabon_prod_${dateStr}`); }catch(e){}
+        day.bulkValue = null;
+        day.undoSnapshot = null;
+        day.memberFillingQty = {};
+        refreshProductionDay(day);
+        renderCellStatusTable();
+      });
     });
   });
 }
 
 // メンバー1人分の具材割り振りを文字列化（例："ツナマヨ×15 スパイシーツナマヨ×9"）
+/* ---------- localStorage: 販売予測数・生産割り振り ---------- */
+
+function saveForecast(day){
+  const data = {
+    zuidFillingQty: { ...day.zuidFillingQty },
+    uvaFillingQty:  { ...day.uvaFillingQty },
+    zuidOpen: day.zuidOpen,
+    uvaOpen:  day.uvaOpen,
+  };
+  try{ localStorage.setItem(`chabon_forecast_${mdLabel(day.dateObj)}`, JSON.stringify(data)); }catch(e){}
+}
+
+function loadForecastData(day){
+  try{
+    const raw = localStorage.getItem(`chabon_forecast_${mdLabel(day.dateObj)}`);
+    if(!raw) return false;
+    const data = JSON.parse(raw);
+    if(data.zuidFillingQty) day.zuidFillingQty = { ...buildFillingDefaults(0), ...data.zuidFillingQty };
+    if(data.uvaFillingQty)  day.uvaFillingQty  = { ...buildFillingDefaults(0), ...data.uvaFillingQty };
+    if(data.zuidOpen !== undefined) day.zuidOpen = data.zuidOpen;
+    if(data.uvaOpen  !== undefined) day.uvaOpen  = data.uvaOpen;
+    return true;
+  }catch(e){ return false; }
+}
+
+function saveProdAlloc(day){
+  try{ localStorage.setItem(`chabon_prod_${mdLabel(day.dateObj)}`, JSON.stringify(day.memberFillingQty || {})); }catch(e){}
+}
+
+function loadProdAllocData(day){
+  try{
+    const raw = localStorage.getItem(`chabon_prod_${mdLabel(day.dateObj)}`);
+    if(!raw) return false;
+    day.memberFillingQty = JSON.parse(raw);
+    return true;
+  }catch(e){ return false; }
+}
+
+function resetDayData(day){
+  const dateStr = mdLabel(day.dateObj);
+  try{ localStorage.removeItem(`chabon_forecast_${dateStr}`); }catch(e){}
+  try{ localStorage.removeItem(`chabon_prod_${dateStr}`); }catch(e){}
+  day.zuidOpen = day.zuid !== null;
+  day.zuidFillingQty = day.zuid ? buildFillingDefaults(day.zuid.total) : buildFillingDefaults(0);
+  day.uvaOpen = day.uva !== null;
+  day.uvaFillingQty = day.uva ? buildFillingDefaults(day.uva.total) : buildFillingDefaults(0);
+  day.bulkValue = null;
+  day.undoSnapshot = null;
+  day.memberFillingQty = {};
+  renderForecastTable(day);
+  refreshProductionDay(day);
+  renderCellStatusTable();
+}
+
 /* ---------- 折りたたみトグル ---------- */
 
 function toggleNextNextWeek(){
@@ -2126,6 +2238,11 @@ async function init(){
     state.cellStatus = loadCellStatusFromStorage();
     const hourlyByDate = buildHourlyByDate(weatherRes.hourly);
     state.days = buildDays(weatherRes.daily, hourlyByDate);
+    // localStorageから保存済みの販売予測数・生産割り振りを復元
+    state.days.forEach(day => {
+      loadForecastData(day);
+      loadProdAllocData(day);
+    });
     state.chiseByDate = chiseJson ? parseChiseSheet(chiseJson) : {};
     const shiftParsed = shiftJson ? parseShiftSheet(shiftJson) : { byDate: {}, notesByName: {} };
     state.shiftByDate  = shiftParsed.byDate;
