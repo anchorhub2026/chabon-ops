@@ -562,8 +562,8 @@
     margin-left: 6px;
   }
 
-  /* 再来週折りたたみ */
-  .toggle-nnw-btn{
+  /* 週折りたたみ */
+  .toggle-week-btn{
     font-size: 0.75rem;
     padding: 4px 12px;
     border: 1px solid var(--main);
@@ -756,7 +756,7 @@ const state = {
   cellStatus: {},       // "M/D" -> { memberName: { handed:bool, cooked:bool } }
 };
 
-let nextNextCollapsed = false;
+const weekCollapsed = { 1: false, 2: false };
 
 /* ---------- 日付ユーティリティ ---------- */
 
@@ -1257,15 +1257,16 @@ function renderCalendar(){
   ].filter(week => week.days.length > 0);
 
   area.innerHTML = weeks.map((week, idx) => {
-    const isNNW = week.weekIndex === 2;
-    const collapsed = isNNW && nextNextCollapsed;
+    const collapsible = week.weekIndex >= 1;
+    const collapsed = collapsible && weekCollapsed[week.weekIndex];
+    const btnLabel = collapsed ? `${week.title}を表示 ▼` : `${week.title}を折りたたむ ▲`;
     return `
       ${idx > 0 ? `<div class="week-divider"></div>` : ""}
       <div class="week-group ${week.cssClass}${collapsed ? " week-collapsed" : ""}">
         <div class="week-heading">
           <h3>${week.title}（${week.weekIndex === 0 ? thisWeekBadge(week.days) : "月〜金"}）</h3>
           <div>
-            ${isNNW ? `<button class="toggle-nnw-btn" data-section="calendar">${collapsed ? "再来週を表示 ▼" : "再来週を折りたたむ ▲"}</button>` : ""}
+            ${collapsible ? `<button class="toggle-week-btn" data-week-index="${week.weekIndex}">${btnLabel}</button>` : ""}
             <button class="confirm-week-btn" data-week="${week.weekIndex}">この週を確定・公開する</button>
             <a class="production-link" href="production.html" target="_blank">生産指示書を見る</a>
             <span class="week-status-msg" id="weekStatus${week.weekIndex}"></span>
@@ -1298,8 +1299,8 @@ function renderCalendar(){
   area.querySelectorAll(".confirm-week-btn").forEach(btn => {
     btn.addEventListener("click", () => confirmWeek(+btn.dataset.week));
   });
-  area.querySelectorAll(".toggle-nnw-btn").forEach(btn => {
-    btn.addEventListener("click", toggleNextNextWeek);
+  area.querySelectorAll(".toggle-week-btn").forEach(btn => {
+    btn.addEventListener("click", () => toggleWeek(+btn.dataset.weekIndex));
   });
 }
 
@@ -1497,13 +1498,14 @@ function renderProductionSection(){
   ].filter(week => week.days.length > 0);
 
   area.innerHTML = weeks.map(week => {
-    const isNNW = week.weekIndex === 2;
-    const collapsed = isNNW && nextNextCollapsed;
+    const collapsible = week.weekIndex >= 1;
+    const collapsed = collapsible && weekCollapsed[week.weekIndex];
+    const btnLabel = collapsed ? `${week.title}を表示 ▼` : `${week.title}を折りたたむ ▲`;
     return `
       <div class="week-group${collapsed ? " week-collapsed" : ""}">
         <div class="prod-heading-row">
           <h3 class="week-heading-simple">${week.title}（${week.weekIndex === 0 ? thisWeekBadge(week.days) : "月〜金"}）</h3>
-          ${isNNW ? `<button class="toggle-nnw-btn" data-section="production">${collapsed ? "再来週を表示 ▼" : "再来週を折りたたむ ▲"}</button>` : ""}
+          ${collapsible ? `<button class="toggle-week-btn" data-week-index="${week.weekIndex}">${btnLabel}</button>` : ""}
         </div>
         <div class="prod-cards-wrap">
           ${week.days.map(day => `<div class="prod-card" id="prodday-${day.dateKey}">${productionDayHtml(day)}</div>`).join("")}
@@ -1514,8 +1516,8 @@ function renderProductionSection(){
 
   state.days.forEach(day => bindProductionDayEvents(day));
 
-  area.querySelectorAll(".toggle-nnw-btn").forEach(btn => {
-    btn.addEventListener("click", toggleNextNextWeek);
+  area.querySelectorAll(".toggle-week-btn").forEach(btn => {
+    btn.addEventListener("click", () => toggleWeek(+btn.dataset.weekIndex));
   });
 }
 
@@ -1922,8 +1924,8 @@ function resetDayData(day){
 
 /* ---------- 折りたたみトグル ---------- */
 
-function toggleNextNextWeek(){
-  nextNextCollapsed = !nextNextCollapsed;
+function toggleWeek(weekIndex){
+  weekCollapsed[weekIndex] = !weekCollapsed[weekIndex];
   renderCalendar();
   renderProductionSection();
 }
