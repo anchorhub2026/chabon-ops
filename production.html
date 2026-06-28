@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>生産指示書｜Chabon Ops</title>
+<title>生産カレンダー｜Chabon Ops</title>
 <style>
   :root{
     --main: #4a7c59;
@@ -14,260 +14,416 @@
     --card: #ffffff;
     --ink: #2b2b28;
     --line: #e2ddd0;
+    --sun: #c0392b;
+    --today-bg: #fff8e6;
+    --today-bd: #e6a820;
   }
-  *{box-sizing:border-box;}
+  *{ box-sizing: border-box; }
   body{
-    margin:0;
+    margin: 0;
     font-family: "Hiragino Sans", "Yu Gothic", "Noto Sans JP", sans-serif;
     background: var(--bg);
     color: var(--ink);
-    line-height: 1.6;
+    line-height: 1.4;
   }
+
+  /* ── Header ── */
   header{
     background: var(--main);
     color: #fff;
-    padding: 20px 16px;
-    text-align: center;
+    padding: 12px 16px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
   }
-  header h1{ margin: 0; font-size: 1.3rem; letter-spacing: 0.05em; }
-  header p{ margin: 6px 0 0; font-size: 0.82rem; opacity: 0.9; }
-  .header-nav{ margin-top: 12px; }
+  .header-left h1{ margin: 0; font-size: 1.05rem; letter-spacing: 0.05em; }
+  .header-left p{ margin: 2px 0 0; font-size: 0.75rem; opacity: 0.85; }
+  .header-nav{ margin-top: 8px; display: flex; gap: 6px; flex-wrap: wrap; }
   .header-nav a{
     display: inline-block;
     background: rgba(255,255,255,0.15);
     color: #fff;
     text-decoration: none;
+    font-size: 0.72rem;
+    font-weight: bold;
+    padding: 4px 10px;
+    border-radius: 100px;
+    border: 1px solid rgba(255,255,255,0.35);
+  }
+  .header-logo{
+    height: 46px;
+    width: auto;
+    object-fit: contain;
+    flex-shrink: 0;
+  }
+
+  /* ── Month nav ── */
+  .month-nav{
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 16px;
+    padding: 10px 16px;
+    background: var(--main-light);
+    border-bottom: 1px solid var(--line);
+  }
+  .month-nav button{
+    background: var(--main);
+    color: #fff;
+    border: none;
+    border-radius: 100px;
+    padding: 5px 14px;
     font-size: 0.8rem;
     font-weight: bold;
-    padding: 7px 16px;
-    border-radius: 100px;
-    border: 1px solid rgba(255,255,255,0.4);
-    margin: 0 4px;
+    cursor: pointer;
+    transition: background 0.15s;
   }
-  main{
-    max-width: 560px;
-    margin: 0 auto;
-    padding: 18px 16px 60px;
-  }
-  .loading, .off-note{ color: #999; font-size: 0.9rem; text-align: center; padding: 20px; }
-
-  .list-title{
+  .month-nav button:hover{ background: var(--main-dark); }
+  .month-title{
+    font-size: 1.05rem;
+    font-weight: bold;
+    color: var(--main-dark);
+    min-width: 110px;
     text-align: center;
-    color: var(--main-dark);
-    font-weight: bold;
-    font-size: 1rem;
-    letter-spacing: 0.05em;
-    margin: 4px 0 20px;
-  }
-  .list-title::before,
-  .list-title::after{
-    content: "～";
-    color: var(--main);
-    margin: 0 8px;
+    letter-spacing: 0.04em;
   }
 
-  .day-block{ padding: 14px 2px; }
-  .day-title{
-    font-size: 1.08rem;
-    font-weight: bold;
-    color: var(--main-dark);
-    margin-bottom: 10px;
-  }
-  .line-row{
-    padding: 6px 0 6px 4px;
-    font-size: 0.95rem;
-    border-bottom: 1px dashed var(--line);
-  }
-  .line-row:last-of-type{ border-bottom: none; }
-  .line-row .who{
-    font-weight: bold;
-    color: var(--main-dark);
-  }
-  .line-row .items{ color: var(--ink); }
-  .line-row .items.empty{ color: #aaa; }
-  .line-row.hq{
-    margin-top: 4px;
-    background: var(--main-light);
-    border-radius: 8px;
-    padding: 8px 10px;
-    border-bottom: none;
-  }
-  .line-row.hq .who{ color: var(--main-dark); }
-
-  .day-divider{
-    border: none;
-    border-top: 2px dashed var(--line);
-    margin: 4px 0 4px;
+  /* ── Calendar wrapper ── */
+  .calendar-wrap{
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    padding: 10px 8px 50px;
   }
 
-  .confirmed-at{
-    font-size: 0.72rem;
-    color: #aaa;
-    text-align: right;
-    margin-top: 4px;
+  /* ── Table ── */
+  .cal{
+    width: 100%;
+    min-width: 380px;
+    border-collapse: collapse;
+    table-layout: fixed;
   }
-
-  footer{
-    text-align:center;
+  .cal thead th{
+    background: var(--main);
+    color: #fff;
     font-size: 0.78rem;
+    font-weight: bold;
+    padding: 6px 2px;
+    text-align: center;
+    letter-spacing: 0.04em;
+    border: 1px solid var(--main-dark);
+  }
+  .cal thead th.col-sun{ background: #9b2c2c; }
+
+  .cal tbody td{
+    border: 1px solid var(--line);
+    vertical-align: top;
+    background: var(--card);
+    width: calc(100% / 6);
+    padding: 0;
+  }
+  .cal tbody td.empty-cell{ background: var(--bg); }
+  .cal tbody td.is-today{
+    background: var(--today-bg);
+    border: 2px solid var(--today-bd);
+  }
+  .cal tbody td.is-past{ background: #f5f4f0; }
+
+  /* ── Cell inner ── */
+  .cell{
+    padding: 4px 4px 5px;
+    min-height: 72px;
+  }
+  .cell-date{
+    font-size: 0.8rem;
+    font-weight: bold;
+    color: var(--ink);
+    margin-bottom: 3px;
+    display: flex;
+    align-items: center;
+    gap: 3px;
+  }
+  .cell-date.is-sun{ color: var(--sun); }
+  .today-pip{
+    display: inline-block;
+    width: 5px;
+    height: 5px;
+    border-radius: 50%;
+    background: var(--today-bd);
+    flex-shrink: 0;
+  }
+
+  /* ── Member rows ── */
+  .member{
+    margin-bottom: 2px;
+  }
+  .member-name{
+    font-size: 0.65rem;
+    font-weight: bold;
+    color: var(--main-dark);
+    line-height: 1.3;
+  }
+  .member-items{
+    font-size: 0.6rem;
+    color: #5a5a50;
+    line-height: 1.3;
+    padding-left: 5px;
+  }
+  .member-items.no-item{ color: #bbb; }
+
+  /* ── Total ── */
+  .cell-total{
+    margin-top: 4px;
+    padding-top: 3px;
+    border-top: 1px solid var(--line);
+    font-size: 0.68rem;
+    font-weight: bold;
+    color: var(--main-dark);
+    text-align: right;
+  }
+
+  .no-plan{ font-size: 0.58rem; color: #ccc; }
+
+  /* ── Loading / error ── */
+  .msg{ color: #999; font-size: 0.88rem; text-align: center; padding: 30px 16px; }
+
+  /* ── Footer ── */
+  footer{
+    text-align: center;
+    font-size: 0.75rem;
     color: #999;
-    padding: 20px 0 40px;
+    padding: 16px;
+    border-top: 1px solid var(--line);
+  }
+
+  /* ── Responsive (smartphone) ── */
+  @media (max-width: 480px){
+    .cal{ min-width: 330px; }
+    .cell{ padding: 3px 3px 4px; min-height: 60px; }
+    .cell-date{ font-size: 0.72rem; }
+    .member-name{ font-size: 0.6rem; }
+    .member-items{ font-size: 0.55rem; }
+    .cell-total{ font-size: 0.6rem; }
   }
 </style>
 </head>
 <body>
 
 <header>
-  <h1>🍙 Chabon Ops</h1>
-  <p>📋 生産指示書（ニギニギ隊向け）</p>
-  <nav class="header-nav">
-    <a href="index.html">← トップへ</a>
-    <a href="shift.html">シフト入力</a>
-  </nav>
+  <div class="header-left">
+    <h1>🍙 Chabon Ops</h1>
+    <p>生産カレンダー</p>
+    <nav class="header-nav">
+      <a href="index.html">← トップへ</a>
+      <a href="shift.html">シフト入力</a>
+    </nav>
+  </div>
+  <img src="chabon-logo.png" alt="CHABON STAND" class="header-logo">
 </header>
 
-<main>
-  <div id="planArea"><p class="loading">読み込み中...</p></div>
-</main>
+<div class="month-nav">
+  <button id="prevBtn">◀ 前月</button>
+  <div class="month-title" id="monthTitle"></div>
+  <button id="nextBtn">翌月 ▶</button>
+</div>
+
+<div class="calendar-wrap">
+  <div id="calArea"><p class="msg">読み込み中...</p></div>
+</div>
 
 <footer>Chabon Ops — Amsterdam Onigiri Truck</footer>
 
 <script>
-const SHIFT_SPREADSHEET_ID = "1PHf1o3smqIQdeFkhBHjBZUEub7VtRcynQLllmSR7w-s";
-const DAY_NAMES = ["日","月","火","水","木","金","土"];
+const SPREADSHEET_ID = "1PHf1o3smqIQdeFkhBHjBZUEub7VtRcynQLllmSR7w-s";
+const COL_LABELS = ["日","月","火","水","木","金"];
 
-async function fetchSheetJson(sheetName, spreadsheetId){
-  const url = `https://docs.google.com/spreadsheets/d/${spreadsheetId}/gviz/tq?tqx=out:json` +
-    (sheetName ? `&sheet=${encodeURIComponent(sheetName)}` : "");
+let dispYear, dispMonth;
+let allPlans = {};   // key: "YYYY-M-D" → plan object
+
+/* ── Data fetch & parse ── */
+async function fetchSheetJson(sheetName){
+  const url = `https://docs.google.com/spreadsheets/d/${SPREADSHEET_ID}/gviz/tq?tqx=out:json&sheet=${encodeURIComponent(sheetName)}`;
   const res = await fetch(url);
   const text = await res.text();
-  const match = text.match(/setResponse\(([\s\S]*)\);\s*$/);
-  if(!match) throw new Error("シートの解析に失敗しました: " + sheetName);
-  return JSON.parse(match[1]);
+  const m = text.match(/setResponse\(([\s\S]*)\);\s*$/);
+  if(!m) throw new Error("シート解析失敗: " + sheetName);
+  return JSON.parse(m[1]);
 }
 
-// "ツナマヨ×15 スパイシーツナマヨ×9" → [{filling:"ツナマヨ",qty:15}, ...]
-function parseFillingString(str){
+function parseFillings(str){
   if(!str) return [];
   return str.trim().split(/\s+/).filter(Boolean).map(part => {
     const [filling, qtyStr] = part.split("×");
-    return { filling, qty: parseInt(qtyStr, 10) || 0 };
+    return { filling: filling || "", qty: parseInt(qtyStr, 10) || 0 };
   });
 }
 
-// "YUMI:ツナマヨ×15 スパイシー×9；MARI:..." → [{name, items, total}]
-function parseNingiBreakdown(str){
+function parseMembers(str){
   if(!str) return [];
   return str.split("；").filter(Boolean).map(part => {
     const idx = part.indexOf(":");
-    const name = idx === -1 ? part : part.slice(0, idx);
-    const itemsStr = idx === -1 ? "" : part.slice(idx + 1);
-    const items = parseFillingString(itemsStr);
+    const name = idx === -1 ? part.trim() : part.slice(0, idx).trim();
+    const items = parseFillings(idx === -1 ? "" : part.slice(idx + 1));
     const total = items.reduce((s, it) => s + it.qty, 0);
     return { name, items, total };
   });
 }
 
-// "6/23" のような月日ラベルから、今日に近い実際の日付を推測する（年をまたぐケースに対応）
-function inferDate(mdStr, today){
-  const [m, d] = mdStr.split("/").map(n => parseInt(n, 10));
+function inferDate(mdStr){
+  const [m, d] = mdStr.split("/").map(Number);
   if(!m || !d) return null;
-  let year = today.getFullYear();
-  let candidate = new Date(year, m - 1, d);
-  const diffDays = (candidate - today) / 86400000;
-  if(diffDays < -180) candidate = new Date(year + 1, m - 1, d);
-  else if(diffDays > 180) candidate = new Date(year - 1, m - 1, d);
-  return candidate;
+  const today = new Date();
+  let yr = today.getFullYear();
+  let cand = new Date(yr, m - 1, d);
+  const diff = (cand - today) / 86400000;
+  if(diff < -180) cand = new Date(yr + 1, m - 1, d);
+  else if(diff > 180) cand = new Date(yr - 1, m - 1, d);
+  return cand;
 }
 
-function itemsText(items){
-  if(!items || items.length === 0) return "";
-  return items.map(it => `${it.filling}×${it.qty}`).join(" ");
+async function loadData(){
+  const json = await fetchSheetJson("確定プラン");
+  const rows = json.table.rows || [];
+  const byLabel = new Map();
+
+  rows.filter(r => r.c && r.c[0]).forEach(r => {
+    const c = r.c;
+    const dateLabel = String(c[0]?.f || c[0]?.v || "").trim();
+    if(!dateLabel) return;
+    const zuidQty  = Number(c[2]?.v) || 0;
+    const uvaQty   = Number(c[3]?.v) || 0;
+    const chiseQty = Number(c[4]?.v) || 0;
+    const members  = parseMembers(c[5]?.v);
+    const total    = zuidQty + uvaQty + chiseQty;
+    const sortDate = inferDate(dateLabel);
+    byLabel.set(dateLabel, { dateLabel, members, total, sortDate });
+  });
+
+  allPlans = {};
+  byLabel.forEach(plan => {
+    if(!plan.sortDate) return;
+    const yr = plan.sortDate.getFullYear();
+    const mo = plan.sortDate.getMonth() + 1;
+    const dy = plan.sortDate.getDate();
+    allPlans[`${yr}-${mo}-${dy}`] = plan;
+  });
 }
 
-function dayBlockHtml(plan, isLast){
-  const memberLines = plan.members.map(m => `
-    <div class="line-row">
-      <span class="who">${m.name}：</span>
-      <span class="items ${m.items.length ? "" : "empty"}">${itemsText(m.items) || "割り振りなし"}</span>
-    </div>
-  `).join("");
+/* ── Calendar render ── */
+function buildWeeks(yr, mo){
+  const lastDay = new Date(yr, mo + 1, 0).getDate();
+  const weeks = [];
+  let week = new Array(6).fill(null);
 
-  const hqLine = `
-    <div class="line-row hq">
-      <span class="who">本部：</span>
-      <span class="items ${plan.hqItems.length ? "" : "empty"}">${itemsText(plan.hqItems) || "なし"}</span>
-    </div>
-  `;
-
-  return `
-    <div class="day-block">
-      <div class="day-title">📅 ${plan.dateLabel}（${plan.dayName}）</div>
-      ${plan.members.length ? memberLines : `<p class="off-note">ニギニギ隊の割り振りデータがありません。</p>`}
-      ${hqLine}
-      ${plan.confirmedAt ? `<div class="confirmed-at">確定日時：${plan.confirmedAt}</div>` : ""}
-    </div>
-    ${isLast ? "" : `<hr class="day-divider">`}
-  `;
-}
-
-async function init(){
-  const area = document.getElementById("planArea");
-  try{
-    console.log("[production.html] 確定プランシートを取得します", SHIFT_SPREADSHEET_ID);
-    const json = await fetchSheetJson("確定プラン", SHIFT_SPREADSHEET_ID);
-    console.log("[production.html] gviz レスポンス（生データ）:", json);
-
-    const rawRows = json.table.rows || [];
-    console.log("[production.html] 行数:", rawRows.length);
-
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-
-    // 同じ日付が複数行ある場合は、シート上で後ろにある行（最新）で上書きする
-    const byDate = new Map();
-    rawRows
-      .filter(r => r.c && r.c[0])
-      .forEach(r => {
-        const c = r.c;
-        // 日付・確定日時はシート上で日付型になっているため、表示用文字列(f)を優先して使う
-        const dateLabel = c[0] ? String(c[0].f || c[0].v || "") : "";
-        if(!dateLabel) return;
-        const dayName = (c[1] && c[1].v) || "";
-        const zuid = Number(c[2] && c[2].v) || 0;
-        const uva = Number(c[3] && c[3].v) || 0;
-        const chise = Number(c[4] && c[4].v) || 0;
-        const members = parseNingiBreakdown(c[5] && c[5].v);
-        const hqQty = Number(c[6] && c[6].v) || 0;
-        const hqItems = parseFillingString(c[7] && c[7].v);
-        const confirmedAt = c[8] ? String(c[8].f || c[8].v || "") : "";
-        const total = zuid + uva + chise;
-        byDate.set(dateLabel, { dateLabel, dayName, zuid, uva, chise, members, hqQty, hqItems, confirmedAt, total, sortDate: inferDate(dateLabel, today) });
-      });
-
-    const plans = Array.from(byDate.values())
-      .filter(p => p.sortDate && p.sortDate >= today)
-      .sort((a, b) => a.sortDate - b.sortDate);
-
-    console.log("[production.html] 解析後のプラン件数（今日以降・重複排除済み）:", plans.length, plans);
-
-    if(plans.length === 0){
-      area.innerHTML = `<p class="off-note">確定済みの生産プランがまだありません。<br>管理画面で「この週を確定・公開する」を押すと表示されます。</p>`;
-      return;
+  for(let d = 1; d <= lastDay; d++){
+    const dow = new Date(yr, mo, d).getDay(); // 0=Sun..6=Sat
+    if(dow === 6) continue; // skip Saturday
+    week[dow] = d;
+    if(dow === 5){          // Friday → push week
+      weeks.push(week);
+      week = new Array(6).fill(null);
     }
-
-    area.innerHTML = `
-      <div class="list-title">今週の生産指示</div>
-      ${plans.map((plan, i) => dayBlockHtml(plan, i === plans.length - 1)).join("")}
-    `;
-  }catch(e){
-    console.error("[production.html] データ取得・解析に失敗しました", e);
-    area.innerHTML = `<p class="off-note">データの取得に失敗しました。</p>`;
   }
+  if(week.some(v => v !== null)) weeks.push(week);
+  return weeks;
+}
+
+function memberItemsText(items){
+  if(!items.length) return null;
+  return items.map(it => `${it.filling} ${it.qty}`).join(" / ");
+}
+
+function renderCalendar(){
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+
+  const yr = dispYear;
+  const mo = dispMonth;
+  document.getElementById("monthTitle").textContent = `${yr}年${mo + 1}月`;
+
+  const weeks = buildWeeks(yr, mo);
+
+  let html = `<table class="cal"><thead><tr>`;
+  COL_LABELS.forEach((lbl, i) => {
+    html += `<th class="${i === 0 ? "col-sun" : ""}">${lbl}</th>`;
+  });
+  html += `</tr></thead><tbody>`;
+
+  for(const wk of weeks){
+    html += `<tr>`;
+    for(let ci = 0; ci < 6; ci++){
+      const day = wk[ci];
+      if(day === null){
+        html += `<td class="empty-cell"></td>`;
+        continue;
+      }
+      const dateObj = new Date(yr, mo, day);
+      const isToday = dateObj.getTime() === today.getTime();
+      const isPast  = dateObj < today;
+      const isSun   = ci === 0;
+      const key     = `${yr}-${mo + 1}-${day}`;
+      const plan    = allPlans[key];
+
+      let tdCls = "";
+      if(isToday) tdCls = "is-today";
+      else if(isPast) tdCls = "is-past";
+
+      html += `<td${tdCls ? ` class="${tdCls}"` : ""}>`;
+      html += `<div class="cell">`;
+      html += `<div class="cell-date${isSun ? " is-sun" : ""}">${day}${isToday ? '<span class="today-pip"></span>' : ""}</div>`;
+
+      if(plan && plan.members.length > 0){
+        plan.members.forEach(m => {
+          const text = memberItemsText(m.items);
+          html += `<div class="member">`;
+          html += `<div class="member-name">${m.name}</div>`;
+          html += `<div class="member-items${text ? "" : " no-item"}">${text || "—"}</div>`;
+          html += `</div>`;
+        });
+        const dispTotal = plan.total > 0 ? plan.total
+          : plan.members.reduce((s, m) => s + m.total, 0);
+        html += `<div class="cell-total">TOTAL: ${dispTotal}個</div>`;
+      } else if(!isPast){
+        html += `<div class="no-plan">未確定</div>`;
+      }
+
+      html += `</div></td>`;
+    }
+    html += `</tr>`;
+  }
+
+  html += `</tbody></table>`;
+  document.getElementById("calArea").innerHTML = html;
+}
+
+/* ── Init ── */
+async function init(){
+  const now = new Date();
+  dispYear  = now.getFullYear();
+  dispMonth = now.getMonth();
+
+  document.getElementById("prevBtn").addEventListener("click", () => {
+    dispMonth--;
+    if(dispMonth < 0){ dispMonth = 11; dispYear--; }
+    renderCalendar();
+  });
+  document.getElementById("nextBtn").addEventListener("click", () => {
+    dispMonth++;
+    if(dispMonth > 11){ dispMonth = 0; dispYear++; }
+    renderCalendar();
+  });
+
+  try{
+    await loadData();
+  }catch(e){
+    console.error("[production.html] データ取得失敗", e);
+    document.getElementById("calArea").innerHTML = '<p class="msg">データの取得に失敗しました。</p>';
+    return;
+  }
+  renderCalendar();
 }
 
 init();
 </script>
-
 </body>
 </html>
