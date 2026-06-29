@@ -222,7 +222,7 @@
     overflow: hidden;
   }
   .member-name{
-    font-size: 0.58rem;
+    font-size: 0.75rem;
     font-weight: 700;
     color: var(--main-dark);
     letter-spacing: 0;
@@ -236,7 +236,7 @@
 
   .member-subtotal{
     font-family: "DM Sans", sans-serif;
-    font-size: 0.65rem;
+    font-size: 0.8rem;
     font-weight: 700;
     color: var(--main);
     line-height: 1.2;
@@ -298,11 +298,11 @@
     letter-spacing: 0.02em;
   }
   .total-label{
-    font-size: 0.46rem;
+    font-size: 0.6rem;
     opacity: 0.9;
   }
   .total-num{
-    font-size: 0.68rem;
+    font-size: 0.8rem;
     font-weight: 700;
     line-height: 1;
   }
@@ -604,7 +604,7 @@ function memberBlockHtml(m){
   return `<div class="member">
     <div class="member-header">
       <span class="member-name">${m.name}</span>
-      <span class="member-subtotal">${m.total}個</span>
+      <span class="member-subtotal">${m.total}</span>
     </div>
   </div>`;
 }
@@ -677,13 +677,13 @@ function renderCalendar(){
         const dispTotal = activeMembers.reduce((s, m) => s + m.total, 0);
         html += `<div class="cell-total">`;
         html += `<span class="total-label">TOTAL</span>`;
-        html += `<span class="total-num">${dispTotal}個</span>`;
+        html += `<span class="total-num">${dispTotal}</span>`;
         html += `</div>`;
         html += `<div class="tap-hint">詳細 ›</div>`;
       } else if(plan){
         html += `<div class="cell-total">`;
         html += `<span class="total-label">TOTAL</span>`;
-        html += `<span class="total-num">0個</span>`;
+        html += `<span class="total-num">0</span>`;
         html += `</div>`;
       } else if(!isPast){
         html += `<div class="no-plan">未確定</div>`;
