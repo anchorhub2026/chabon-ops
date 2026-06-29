@@ -154,8 +154,8 @@
     background: var(--card);
     border: 1px solid var(--line);
     border-radius: 10px;
-    padding: 4px 4px 3px;
-    min-height: 52px;
+    padding: 8px 7px 7px;
+    min-height: 82px;
     overflow: hidden;
     box-shadow: 0 1px 4px rgba(0,0,0,0.04);
   }
@@ -181,16 +181,16 @@
   .cell-date{
     display: flex;
     align-items: center;
-    gap: 3px;
-    margin-bottom: 3px;
-    padding-bottom: 3px;
+    gap: 5px;
+    margin-bottom: 5px;
+    padding-bottom: 5px;
     border-bottom: 1px solid var(--line);
   }
   td.is-today .cell-date{ border-bottom-color: rgba(74,124,89,0.25); }
 
   .date-num{
     font-family: "DM Sans", sans-serif;
-    font-size: 0.78rem;
+    font-size: 1rem;
     font-weight: 700;
     color: var(--ink);
     line-height: 1;
@@ -222,11 +222,11 @@
     overflow: hidden;
   }
   .member-name{
-    font-size: 0.75rem;
+    font-size: 0.7rem;
     font-weight: 700;
     color: var(--main-dark);
-    letter-spacing: 0;
-    line-height: 1.2;
+    letter-spacing: 0.02em;
+    line-height: 1.3;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -236,10 +236,10 @@
 
   .member-subtotal{
     font-family: "DM Sans", sans-serif;
-    font-size: 0.8rem;
+    font-size: 1rem;
     font-weight: 700;
     color: var(--main);
-    line-height: 1.2;
+    line-height: 1;
     white-space: nowrap;
     flex-shrink: 0;
   }
@@ -288,21 +288,21 @@
     display: flex;
     justify-content: space-between;
     align-items: center;
-    margin-top: 3px;
+    margin-top: 6px;
     background: var(--main);
     color: #fff;
-    border-radius: 5px;
-    padding: 2px 5px;
+    border-radius: 7px;
+    padding: 4px 8px;
     font-family: "DM Sans", sans-serif;
     font-weight: 700;
-    letter-spacing: 0.02em;
+    letter-spacing: 0.04em;
   }
   .total-label{
-    font-size: 0.6rem;
+    font-size: 0.62rem;
     opacity: 0.9;
   }
   .total-num{
-    font-size: 0.8rem;
+    font-size: 0.95rem;
     font-weight: 700;
     line-height: 1;
   }
@@ -331,23 +331,9 @@
     font-family: "DM Sans", sans-serif;
   }
 
-  /* ── タップ可能セル ── */
-  .cell.has-plan{
-    cursor: pointer;
-    transition: box-shadow 0.12s, border-color 0.12s;
-  }
-  .cell.has-plan:hover{
-    box-shadow: 0 2px 12px rgba(74,124,89,0.2);
-    border-color: var(--main);
-  }
-  .cell.has-plan:active{ opacity: 0.82; }
-  .tap-hint{
-    font-size: 0.48rem;
-    color: #ccc;
-    text-align: right;
-    margin-top: 3px;
-    letter-spacing: 0.03em;
-  }
+  /* ── タップ可能セル（スマホのみ有効） ── */
+  .cell.has-plan{ transition: box-shadow 0.12s, border-color 0.12s; }
+  .tap-hint{ display: none; }
 
   /* ── 詳細モーダル ── */
   .modal-overlay{
@@ -443,27 +429,41 @@
   }
   .modal-close-btn:active{ background: var(--line); }
 
-  /* ── スマホ対応 ── */
-  @media (max-width: 540px){
+  /* ── スマホ：コンパクト表示（768px以下） ── */
+  @media (max-width: 768px){
     header{ padding: 12px 14px; }
     .header-left h1{ font-size: 1.05rem; }
     .header-logo{ height: 80px; }
     .cal-card{ padding: 6px 3px; }
     .cal{ min-width: 0; border-spacing: 2px; }
-    .cal thead th{ font-size: 0.62rem; padding: 4px 1px; border-radius: 4px; }
-    .cell{ padding: 3px 3px 2px; min-height: 42px; border-radius: 5px; }
-    .cell-date{ margin-bottom: 2px; padding-bottom: 2px; gap: 2px; }
-    .date-num{ font-size: 0.68rem; }
-    .today-badge{ font-size: 0.38rem; padding: 1px 3px; }
-    .member-name{ font-size: 0.5rem; }
-    .member-subtotal{ font-size: 0.56rem; }
-    .cell-total{ padding: 2px 4px; border-radius: 4px; margin-top: 2px; }
-    .total-label{ font-size: 0.38rem; }
-    .total-num{ font-size: 0.58rem; }
-    .tap-hint{ font-size: 0.36rem; margin-top: 1px; }
+    .cal thead th{ font-size: 0.65rem; padding: 4px 1px; border-radius: 4px; }
+    /* セル：コンパクト化 */
+    .cell{ padding: 4px 3px 3px; min-height: 48px; border-radius: 6px; }
+    .cell-date{ margin-bottom: 3px; padding-bottom: 3px; gap: 2px; }
+    .date-num{ font-size: 0.75rem; }
+    .today-badge{ font-size: 0.42rem; padding: 1px 3px; }
+    /* メンバー：コンパクト */
+    .member{ margin-bottom: 0; }
+    .member-header{ line-height: 1.2; gap: 2px; }
+    .member-name{ font-size: 0.72rem; letter-spacing: 0; line-height: 1.2; }
+    .member-subtotal{ font-size: 0.78rem; line-height: 1.2; }
+    /* 具材行・区切り・個：スマホでは非表示 */
+    .filling-row{ display: none; }
+    .member-sep{ display: none; }
+    .unit{ display: none; }
+    /* TOTAL バー：コンパクト */
+    .cell-total{ padding: 2px 5px; border-radius: 4px; margin-top: 3px; }
+    .total-label{ font-size: 0.5rem; }
+    .total-num{ font-size: 0.78rem; }
+    /* タップヒント：スマホのみ表示 */
+    .tap-hint{ display: block; font-size: 0.4rem; color: #ccc; text-align: right; margin-top: 2px; }
+    /* タップ操作フィードバック */
+    .cell.has-plan{ cursor: pointer; }
+    .cell.has-plan:active{ opacity: 0.8; }
+    /* その他 */
     .month-title{ font-size: 0.95rem; min-width: 100px; }
     .month-nav button{ padding: 5px 13px; font-size: 0.75rem; }
-    .no-plan{ font-size: 0.45rem; margin-top: 4px; }
+    .no-plan{ font-size: 0.5rem; margin-top: 6px; }
   }
 </style>
 </head>
@@ -599,14 +599,21 @@ function buildWeeks(yr, mo){
   return weeks;
 }
 
-// カレンダーセル内のコンパクト表示（名前＋合計のみ）
+// カレンダーセル内表示（PC：名前＋具材＋合計 / スマホ：名前＋合計のみ）
 function memberBlockHtml(m){
-  return `<div class="member">
+  let html = `<div class="member">
     <div class="member-header">
       <span class="member-name">${m.name}</span>
-      <span class="member-subtotal">${m.total}</span>
-    </div>
-  </div>`;
+      <span class="member-subtotal">${m.total}<span class="unit">個</span></span>
+    </div>`;
+  m.items.forEach(it => {
+    html += `<div class="filling-row">
+      <span class="filling-name">・${it.filling}</span>
+      <span class="filling-qty">×${it.qty}</span>
+    </div>`;
+  });
+  html += `</div>`;
+  return html;
 }
 
 // モーダル内の詳細表示（名前＋合計＋具材内訳）
@@ -677,13 +684,13 @@ function renderCalendar(){
         const dispTotal = activeMembers.reduce((s, m) => s + m.total, 0);
         html += `<div class="cell-total">`;
         html += `<span class="total-label">TOTAL</span>`;
-        html += `<span class="total-num">${dispTotal}</span>`;
+        html += `<span class="total-num">${dispTotal}<span class="unit">個</span></span>`;
         html += `</div>`;
         html += `<div class="tap-hint">詳細 ›</div>`;
       } else if(plan){
         html += `<div class="cell-total">`;
         html += `<span class="total-label">TOTAL</span>`;
-        html += `<span class="total-num">0</span>`;
+        html += `<span class="total-num">0<span class="unit">個</span></span>`;
         html += `</div>`;
       } else if(!isPast){
         html += `<div class="no-plan">未確定</div>`;
