@@ -640,6 +640,74 @@
   .confirm-btn{ border: none; border-radius: 10px; padding: 14px; font-size: 1rem; font-weight: bold; cursor: pointer; width: 100%; }
   .confirm-btn.yes{ background: var(--main); color: #fff; }
   .confirm-btn.no{ background: #e2ddd0; color: #555; }
+
+  /* ── 月次支払い計算 ── */
+  .payment-controls{
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 16px;
+    flex-wrap: wrap;
+  }
+  .payment-month-select{
+    font-family: inherit;
+    font-size: 0.9rem;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    padding: 7px 12px;
+    background: #fff;
+    color: var(--ink);
+    cursor: pointer;
+  }
+  .payment-csv-btn{
+    background: var(--main);
+    color: #fff;
+    border: none;
+    border-radius: 100px;
+    padding: 7px 18px;
+    font-size: 0.82rem;
+    font-weight: bold;
+    cursor: pointer;
+    font-family: inherit;
+    white-space: nowrap;
+  }
+  .payment-csv-btn:hover{ background: var(--main-dark); }
+  .payment-table{
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.9rem;
+  }
+  .payment-table th{
+    background: var(--main-light);
+    color: var(--main-dark);
+    padding: 9px 14px;
+    text-align: left;
+    font-size: 0.82rem;
+    border-bottom: 2px solid var(--line);
+    white-space: nowrap;
+  }
+  .payment-table th:nth-child(2),
+  .payment-table th:nth-child(3),
+  .payment-table th:nth-child(4){ text-align: right; }
+  .payment-table td{
+    padding: 10px 14px;
+    border-bottom: 1px solid var(--line);
+    vertical-align: middle;
+  }
+  .payment-table td:nth-child(2),
+  .payment-table td:nth-child(3),
+  .payment-table td:nth-child(4){ text-align: right; }
+  .payment-name{ font-weight: bold; color: var(--main-dark); }
+  .payment-qty{ font-variant-numeric: tabular-nums; }
+  .payment-rate{ color: #888; font-size: 0.85rem; }
+  .payment-amount{ font-weight: bold; color: var(--main-dark); font-variant-numeric: tabular-nums; }
+  .payment-total-row{ background: var(--main-light); }
+  .payment-total-row td{
+    border-bottom: none;
+    font-weight: bold;
+    color: var(--main-dark);
+  }
+  .payment-empty{ color: #999; font-size: 0.88rem; padding: 10px 0; }
 </style>
 </head>
 <body>
@@ -650,6 +718,7 @@
   <nav class="header-nav">
     <a href="index.html">← スタッフ画面</a>
     <a href="shift.html">シフト入力</a>
+    <a href="#paymentSection">月次支払い</a>
   </nav>
 </header>
 
@@ -679,6 +748,15 @@
   <section>
     <h2>生産割り振り<span class="badge">本部分は自動算出</span></h2>
     <div id="productionArea"><p class="loading">データを読み込み中...</p></div>
+  </section>
+
+  <section id="paymentSection">
+    <h2>月次支払い計算<span class="badge">ニギニギ隊</span></h2>
+    <div class="payment-controls">
+      <select class="payment-month-select" id="paymentMonthSelect"><option>読み込み中...</option></select>
+      <button type="button" class="payment-csv-btn" id="paymentCsvBtn">📥 CSVダウンロード</button>
+    </div>
+    <div id="paymentTableArea"><p class="loading">データを読み込み中...</p></div>
   </section>
 
 </main>
@@ -2227,6 +2305,171 @@ async function refreshShiftData(){
   }
 }
 
+/* ---------- 月次支払い計算 ---------- */
+
+const PAYMENT_UNIT_PRICE = 0.80;
+
+function parseNingiBreakdownForPayment(str){
+  const result = {};
+  if(!str) return result;
+  str.split("；").forEach(part => {
+    const ci = part.indexOf(":");
+    if(ci === -1) return;
+    const name = part.slice(0, ci).trim();
+    if(!name) return;
+    let total = 0;
+    (part.slice(ci + 1).match(/×(\d+)/g) || []).forEach(m => { total += Number(m.slice(1)); });
+    if(total > 0) result[name] = (result[name] || 0) + total;
+  });
+  return result;
+}
+
+function inferYearForPayment(mdStr){
+  const [m, d] = mdStr.split("/").map(Number);
+  if(!m || !d) return null;
+  const today = new Date();
+  let yr = today.getFullYear();
+  let cand = new Date(yr, m - 1, d);
+  const diff = (cand - today) / 86400000;
+  if(diff < -180) cand = new Date(yr + 1, m - 1, d);
+  else if(diff > 180) cand = new Date(yr - 1, m - 1, d);
+  return cand;
+}
+
+async function initPaymentSection(){
+  const tableArea = document.getElementById("paymentTableArea");
+  try{
+    const json = await fetchSheetJson("確定プラン", SHIFT_SPREADSHEET_ID);
+    const rows = (json.table && json.table.rows) || [];
+
+    // monthly: { "2026-06": { "YUMI": 450, ... }, ... }
+    const monthly = {};
+
+    rows.filter(r => r.c && r.c[0]).forEach(r => {
+      const c = r.c;
+      const dateStr = String(c[0]?.f || c[0]?.v || "").trim();
+      if(!dateStr || !/^\d{1,2}\/\d{1,2}$/.test(dateStr)) return;
+
+      const dateObj = inferYearForPayment(dateStr);
+      if(!dateObj) return;
+
+      const yr = dateObj.getFullYear();
+      const mo = String(dateObj.getMonth() + 1).padStart(2, "0");
+      const monthKey = `${yr}-${mo}`;
+
+      const memberTotals = parseNingiBreakdownForPayment(String(c[5]?.v || ""));
+      if(!monthly[monthKey]) monthly[monthKey] = {};
+      Object.entries(memberTotals).forEach(([name, qty]) => {
+        monthly[monthKey][name] = (monthly[monthKey][name] || 0) + qty;
+      });
+    });
+
+    const months = Object.keys(monthly).sort().reverse();
+
+    if(months.length === 0){
+      document.getElementById("paymentMonthSelect").innerHTML = "<option>データなし</option>";
+      tableArea.innerHTML = '<p class="payment-empty">確定プランにニギニギ隊のデータがありません。</p>';
+      return;
+    }
+
+    // 月選択を描画
+    const select = document.getElementById("paymentMonthSelect");
+    select.innerHTML = months.map(mk => {
+      const [yr, mo] = mk.split("-");
+      return `<option value="${mk}">${yr}年${Number(mo)}月</option>`;
+    }).join("");
+
+    // テーブルを描画
+    renderPaymentTable(monthly, months[0]);
+
+    select.addEventListener("change", () => renderPaymentTable(monthly, select.value));
+    document.getElementById("paymentCsvBtn").addEventListener("click", () => downloadPaymentCsv(monthly, select.value));
+
+  }catch(e){
+    console.error("月次支払いデータ取得失敗", e);
+    tableArea.innerHTML = '<p class="payment-empty">データの取得に失敗しました。</p>';
+  }
+}
+
+function renderPaymentTable(monthly, monthKey){
+  const data = monthly[monthKey] || {};
+  const members = Object.keys(data).sort();
+  const tableArea = document.getElementById("paymentTableArea");
+
+  if(members.length === 0){
+    tableArea.innerHTML = '<p class="payment-empty">この月のデータはありません。</p>';
+    return;
+  }
+
+  let totalQty = 0;
+  let totalAmount = 0;
+
+  const rows = members.map(name => {
+    const qty = data[name];
+    const amount = qty * PAYMENT_UNIT_PRICE;
+    totalQty += qty;
+    totalAmount += amount;
+    return `<tr>
+      <td class="payment-name">${name}</td>
+      <td class="payment-qty">${qty.toLocaleString()}個</td>
+      <td class="payment-rate">€${PAYMENT_UNIT_PRICE.toFixed(2)}</td>
+      <td class="payment-amount">€${amount.toFixed(2)}</td>
+    </tr>`;
+  }).join("");
+
+  tableArea.innerHTML = `
+    <table class="payment-table">
+      <thead>
+        <tr>
+          <th>メンバー</th>
+          <th>製造個数</th>
+          <th>単価</th>
+          <th>支払い金額</th>
+        </tr>
+      </thead>
+      <tbody>${rows}</tbody>
+      <tfoot>
+        <tr class="payment-total-row">
+          <td>合計</td>
+          <td>${totalQty.toLocaleString()}個</td>
+          <td></td>
+          <td>€${totalAmount.toFixed(2)}</td>
+        </tr>
+      </tfoot>
+    </table>`;
+}
+
+function downloadPaymentCsv(monthly, monthKey){
+  const data = monthly[monthKey] || {};
+  const members = Object.keys(data).sort();
+  const [yr, mo] = monthKey.split("-");
+  const monthLabel = `${yr}年${Number(mo)}月`;
+
+  let totalQty = 0;
+  let totalAmount = 0;
+
+  const csvRows = [["月", "メンバー", "製造個数", "単価（€）", "支払い金額（€）"]];
+  members.forEach(name => {
+    const qty = data[name];
+    const amount = qty * PAYMENT_UNIT_PRICE;
+    totalQty += qty;
+    totalAmount += amount;
+    csvRows.push([monthLabel, name, qty, PAYMENT_UNIT_PRICE.toFixed(2), amount.toFixed(2)]);
+  });
+  csvRows.push([monthLabel, "合計", totalQty, "", totalAmount.toFixed(2)]);
+
+  const csv = csvRows.map(r => r.map(v => `"${v}"`).join(",")).join("\r\n");
+  const blob = new Blob(["﻿" + csv], { type: "text/csv;charset=utf-8;" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `chabon_payment_${monthKey}.csv`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
 /* ---------- 初期化 ---------- */
 
 async function init(){
@@ -2265,6 +2508,7 @@ async function init(){
     renderShiftTable();
     renderProductionSection();
     renderCellStatusTable();
+    initPaymentSection();
 
     const refreshBtn = document.getElementById("refreshShiftBtn");
     if(refreshBtn) refreshBtn.addEventListener("click", refreshShiftData);
