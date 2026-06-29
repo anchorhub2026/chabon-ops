@@ -326,25 +326,140 @@
     font-family: "DM Sans", sans-serif;
   }
 
+  /* ── タップ可能セル ── */
+  .cell.has-plan{
+    cursor: pointer;
+    transition: box-shadow 0.12s, border-color 0.12s;
+  }
+  .cell.has-plan:hover{
+    box-shadow: 0 2px 12px rgba(74,124,89,0.2);
+    border-color: var(--main);
+  }
+  .cell.has-plan:active{ opacity: 0.82; }
+  .tap-hint{
+    font-size: 0.48rem;
+    color: #ccc;
+    text-align: right;
+    margin-top: 3px;
+    letter-spacing: 0.03em;
+  }
+
+  /* ── 詳細モーダル ── */
+  .modal-overlay{
+    display: none;
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,0.52);
+    align-items: center;
+    justify-content: center;
+    padding: 20px;
+    z-index: 1000;
+  }
+  .modal-overlay.show{ display: flex; }
+  .modal-box{
+    background: #fff;
+    border-radius: 18px;
+    width: 100%;
+    max-width: 380px;
+    max-height: 82vh;
+    overflow-y: auto;
+    box-shadow: 0 10px 40px rgba(0,0,0,0.26);
+  }
+  .modal-date-head{
+    background: var(--main);
+    color: #fff;
+    font-family: "DM Sans", sans-serif;
+    font-weight: 700;
+    font-size: 1rem;
+    padding: 14px 18px;
+    border-radius: 18px 18px 0 0;
+    letter-spacing: 0.04em;
+  }
+  .modal-body{ padding: 14px 18px; }
+  .modal-member-row{
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    margin-bottom: 4px;
+  }
+  .modal-member-name{
+    font-size: 0.9rem;
+    font-weight: 700;
+    color: var(--main-dark);
+  }
+  .modal-member-total{
+    font-family: "DM Sans", sans-serif;
+    font-size: 1.05rem;
+    font-weight: 700;
+    color: var(--main);
+  }
+  .modal-filling-row{
+    display: flex;
+    justify-content: space-between;
+    padding: 0 0 2px 14px;
+    font-size: 0.8rem;
+    color: #666;
+  }
+  .modal-sep{
+    border: none;
+    border-top: 1px solid var(--line);
+    margin: 10px 0;
+  }
+  .modal-total-bar{
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    background: var(--main);
+    color: #fff;
+    border-radius: 8px;
+    padding: 8px 12px;
+    margin-top: 14px;
+    font-weight: 700;
+    font-family: "DM Sans", sans-serif;
+  }
+  .modal-total-bar .tl{ font-size: 0.75rem; opacity: 0.88; }
+  .modal-total-bar .tn{ font-size: 1.1rem; }
+  .modal-close-wrap{
+    padding: 12px 18px 16px;
+    border-top: 1px solid var(--line);
+  }
+  .modal-close-btn{
+    width: 100%;
+    background: var(--main-light);
+    color: var(--main-dark);
+    border: none;
+    border-radius: 100px;
+    padding: 12px;
+    font-size: 0.9rem;
+    font-weight: 700;
+    cursor: pointer;
+    font-family: inherit;
+    letter-spacing: 0.03em;
+  }
+  .modal-close-btn:active{ background: var(--line); }
+
   /* ── スマホ対応 ── */
   @media (max-width: 540px){
     header{ padding: 12px 14px; }
     .header-left h1{ font-size: 1.05rem; }
     .header-logo{ height: 80px; }
-    .cal-card{ padding: 8px 6px; }
-    .cal{ min-width: 320px; border-spacing: 3px; }
-    .cal thead th{ font-size: 0.72rem; padding: 5px 2px; }
-    .cell{ padding: 5px 4px 5px; min-height: 64px; border-radius: 8px; }
-    .date-num{ font-size: 0.88rem; }
-    .member-name{ font-size: 0.62rem; }
-    .member-subtotal{ font-size: 0.85rem; }
-    .filling-name, .filling-qty{ font-size: 0.52rem; }
-    .filling-row{ padding-left: 5px; }
-    .cell-total{ padding: 3px 6px; border-radius: 5px; }
-    .total-label{ font-size: 0.56rem; }
-    .total-num{ font-size: 0.82rem; }
+    .cal-card{ padding: 8px 4px; }
+    .cal{ min-width: 0; border-spacing: 2px; }
+    .cal thead th{ font-size: 0.7rem; padding: 5px 1px; border-radius: 5px; }
+    .cell{ padding: 4px 3px 4px; min-height: 52px; border-radius: 6px; }
+    .cell-date{ margin-bottom: 3px; padding-bottom: 3px; gap: 3px; }
+    .date-num{ font-size: 0.82rem; }
+    .today-badge{ font-size: 0.44rem; padding: 1px 4px; }
+    .member-name{ font-size: 0.58rem; }
+    .member-subtotal{ font-size: 0.82rem; }
+    .member{ margin-bottom: 1px; }
+    .cell-total{ padding: 3px 5px; border-radius: 5px; margin-top: 4px; }
+    .total-label{ font-size: 0.52rem; }
+    .total-num{ font-size: 0.8rem; }
+    .tap-hint{ font-size: 0.42rem; margin-top: 2px; }
     .month-title{ font-size: 0.95rem; min-width: 100px; }
     .month-nav button{ padding: 5px 13px; font-size: 0.75rem; }
+    .no-plan{ font-size: 0.5rem; margin-top: 6px; }
   }
 </style>
 </head>
@@ -370,6 +485,16 @@
 <div class="main-wrap">
   <div class="cal-card">
     <div id="calArea"><p class="msg">読み込み中…</p></div>
+  </div>
+</div>
+
+<div class="modal-overlay" id="detailModal">
+  <div class="modal-box">
+    <div class="modal-date-head" id="modalDateHead"></div>
+    <div class="modal-body" id="modalBody"></div>
+    <div class="modal-close-wrap">
+      <button class="modal-close-btn" id="modalCloseBtn">閉じる</button>
+    </div>
   </div>
 </div>
 
@@ -470,21 +595,28 @@ function buildWeeks(yr, mo){
   return weeks;
 }
 
+// カレンダーセル内のコンパクト表示（名前＋合計のみ）
 function memberBlockHtml(m){
-  let html = `<div class="member">`;
-  html += `<div class="member-header">`;
-  html += `<span class="member-name">${m.name}</span>`;
-  html += `<span class="member-subtotal">${m.total}個</span>`;
-  html += `</div>`;
-  if(m.items.length){
-    m.items.forEach(it => {
-      html += `<div class="filling-row">`;
-      html += `<span class="filling-name">・${it.filling}</span>`;
-      html += `<span class="filling-qty">×${it.qty}</span>`;
-      html += `</div>`;
-    });
-  }
-  html += `</div>`;
+  return `<div class="member">
+    <div class="member-header">
+      <span class="member-name">${m.name}</span>
+      <span class="member-subtotal">${m.total}個</span>
+    </div>
+  </div>`;
+}
+
+// モーダル内の詳細表示（名前＋合計＋具材内訳）
+function memberModalHtml(m){
+  let html = `<div class="modal-member-row">
+    <span class="modal-member-name">${m.name}</span>
+    <span class="modal-member-total">${m.total}個</span>
+  </div>`;
+  m.items.forEach(it => {
+    html += `<div class="modal-filling-row">
+      <span>${it.filling}</span>
+      <span>×${it.qty}</span>
+    </div>`;
+  });
   return html;
 }
 
@@ -523,8 +655,10 @@ function renderCalendar(){
       if(isToday) tdCls = "is-today";
       else if(isPast) tdCls = "is-past";
 
+      const activeMembers = plan ? plan.members.filter(m => m.total > 0) : [];
+      const hasPlan = activeMembers.length > 0 || !!plan;
       html += `<td${tdCls ? ` class="${tdCls}"` : ""}>`;
-      html += `<div class="cell">`;
+      html += `<div class="cell${hasPlan ? ' has-plan' : ''}"${hasPlan ? ` data-day-key="${key}"` : ""}>`;
 
       // 日付ヘッダー
       html += `<div class="cell-date${isSun ? " is-sun" : ""}">`;
@@ -532,10 +666,8 @@ function renderCalendar(){
       if(isToday) html += `<span class="today-badge">TODAY</span>`;
       html += `</div>`;
 
-      const activeMembers = plan ? plan.members.filter(m => m.total > 0) : [];
       if(activeMembers.length > 0){
-        activeMembers.forEach((m, i) => {
-          if(i > 0) html += `<hr class="member-sep">`;
+        activeMembers.forEach(m => {
           html += memberBlockHtml(m);
         });
         const dispTotal = activeMembers.reduce((s, m) => s + m.total, 0);
@@ -543,6 +675,7 @@ function renderCalendar(){
         html += `<span class="total-label">TOTAL</span>`;
         html += `<span class="total-num">${dispTotal}個</span>`;
         html += `</div>`;
+        html += `<div class="tap-hint">詳細 ›</div>`;
       } else if(plan){
         html += `<div class="cell-total">`;
         html += `<span class="total-label">TOTAL</span>`;
@@ -559,6 +692,41 @@ function renderCalendar(){
 
   html += `</tbody></table>`;
   document.getElementById("calArea").innerHTML = html;
+
+  document.querySelectorAll(".cell.has-plan").forEach(cell => {
+    cell.addEventListener("click", () => openModal(cell.dataset.dayKey));
+  });
+}
+
+/* ── Modal ── */
+function openModal(key){
+  const plan = allPlans[key];
+  if(!plan) return;
+  const [yr, mo, dy] = key.split("-").map(Number);
+  const dowNames = ["日","月","火","水","木","金","土"];
+  const dow = new Date(yr, mo - 1, dy).getDay();
+  document.getElementById("modalDateHead").textContent = `${mo}月${dy}日（${dowNames[dow]}）`;
+
+  const activeMembers = plan.members.filter(m => m.total > 0);
+  let bodyHtml = "";
+  if(activeMembers.length > 0){
+    activeMembers.forEach((m, i) => {
+      if(i > 0) bodyHtml += `<hr class="modal-sep">`;
+      bodyHtml += memberModalHtml(m);
+    });
+    const total = activeMembers.reduce((s, m) => s + m.total, 0);
+    bodyHtml += `<div class="modal-total-bar"><span class="tl">TOTAL</span><span class="tn">${total}個</span></div>`;
+  } else {
+    bodyHtml = `<p style="color:#999;text-align:center;margin:12px 0;">この日の割り振りはありません</p>`;
+  }
+  document.getElementById("modalBody").innerHTML = bodyHtml;
+  document.getElementById("detailModal").classList.add("show");
+  document.body.style.overflow = "hidden";
+}
+
+function closeModal(){
+  document.getElementById("detailModal").classList.remove("show");
+  document.body.style.overflow = "";
 }
 
 /* ── Init ── */
@@ -576,6 +744,11 @@ async function init(){
     dispMonth++;
     if(dispMonth > 11){ dispMonth = 0; dispYear++; }
     renderCalendar();
+  });
+
+  document.getElementById("modalCloseBtn").addEventListener("click", closeModal);
+  document.getElementById("detailModal").addEventListener("click", e => {
+    if(e.target === document.getElementById("detailModal")) closeModal();
   });
 
   try{
