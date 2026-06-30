@@ -573,7 +573,53 @@
     cursor: pointer;
   }
   .week-collapsed .day-cards,
-  .week-collapsed .prod-cards-wrap{ display: none; }
+  .week-collapsed .prod-cards-wrap,
+  .week-collapsed .day-pairs-wrap{ display: none; }
+
+  /* ── 販売予測 + 生産割り振り 横並びレイアウト ── */
+  .day-pairs-wrap{
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+  }
+  .day-pair{
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    overflow: hidden;
+    position: relative;
+    background: #fdfcf9;
+  }
+  .day-pair-forecast{
+    padding: 14px;
+    border-right: 1px solid var(--line);
+  }
+  .day-pair-prod{
+    padding: 14px;
+  }
+  .day-pair-col-head{
+    font-size: 0.7rem;
+    font-weight: bold;
+    color: var(--main);
+    letter-spacing: 0.07em;
+    text-transform: uppercase;
+    margin-bottom: 8px;
+    padding-bottom: 4px;
+    border-bottom: 1px solid var(--main-light);
+  }
+  /* week色バリアント */
+  .week-this-week .day-pair{ background: #fdf3e6; border-color: #e3c391; }
+  .week-this-week .day-pair-forecast{ border-right-color: #e3c391; }
+  .week-next-next .day-pair{ background: #eef3f5; border-color: #c9d8dd; }
+  .week-next-next .day-pair-forecast{ border-right-color: #c9d8dd; }
+  /* スマホ：縦並び */
+  @media (max-width: 768px){
+    .day-pair{ grid-template-columns: 1fr; }
+    .day-pair-forecast{ border-right: none; border-bottom: 1px solid var(--line); }
+    .week-this-week .day-pair-forecast{ border-bottom-color: #e3c391; }
+    .week-next-next .day-pair-forecast{ border-bottom-color: #c9d8dd; }
+  }
   .prod-heading-row{
     display: flex;
     align-items: center;
@@ -725,8 +771,8 @@
 <main>
 
   <section>
-    <h2>販売予測数・決定数<span class="badge">来週・再来週 月〜木</span></h2>
-    <div id="calendarArea"><p class="loading">データを読み込み中...</p></div>
+    <h2>販売予測数・生産割り振り<span class="badge">来週・再来週 月〜金</span></h2>
+    <div id="combinedArea"><p class="loading">データを読み込み中...</p></div>
   </section>
 
   <section>
@@ -743,11 +789,6 @@
     <div class="cell-status-wrap">
       <div id="cellStatusArea"><p class="loading">生産割り振りデータを読み込み後に表示されます...</p></div>
     </div>
-  </section>
-
-  <section>
-    <h2>生産割り振り<span class="badge">本部分は自動算出</span></h2>
-    <div id="productionArea"><p class="loading">データを読み込み中...</p></div>
   </section>
 
   <section id="paymentSection">
@@ -1326,11 +1367,11 @@ function thisWeekBadge(days){
     : `${fmt(days[0].dateObj)}〜${fmt(days[days.length - 1].dateObj)}`;
 }
 
-function renderCalendar(){
-  const area = document.getElementById("calendarArea");
+function renderCombined(){
+  const area = document.getElementById("combinedArea");
   const weeks = [
-    { title: "今週", weekIndex: 0, days: state.days.filter(d => d.weekIndex === 0), cssClass: "week-this-week" },
-    { title: "来週", weekIndex: 1, days: state.days.filter(d => d.weekIndex === 1), cssClass: "" },
+    { title: "今週",   weekIndex: 0, days: state.days.filter(d => d.weekIndex === 0), cssClass: "week-this-week" },
+    { title: "来週",   weekIndex: 1, days: state.days.filter(d => d.weekIndex === 1), cssClass: "" },
     { title: "再来週", weekIndex: 2, days: state.days.filter(d => d.weekIndex === 2), cssClass: "week-next-next" },
   ].filter(week => week.days.length > 0);
 
@@ -1350,21 +1391,28 @@ function renderCalendar(){
             <span class="week-status-msg" id="weekStatus${week.weekIndex}"></span>
           </div>
         </div>
-        <div class="day-cards">
+        <div class="day-pairs-wrap">
           ${week.days.map((day, di) => `
-            <div class="day-card">
+            <div class="day-pair">
               ${di === 0 ? `<span class="week-pin-label">${week.title}</span>` : ""}
-              <div class="day-card-head">
-                <div class="day-head-main">
-                  <div class="day-head">${day.label}</div>
-                  <div class="day-weather"><span class="weather-icon">${day.weatherIcon}</span><span class="weather-temp">${day.tempLabel}</span></div>
-                  ${day.holidayName ? `<div class="holiday-badge">🎉 祝日：${day.holidayName}</div>` : ""}
-                  ${day.nsDisruptions && day.nsDisruptions.length ? `<div class="ns-badge">🚆 NSストライキ/運休</div>` : ""}
-                  ${(state.confirmedByDate && state.confirmedByDate[mdLabel(day.dateObj)]) ? `<div class="confirmed-badge">✓ 確定済み</div>` : ""}
+              <div class="day-pair-forecast">
+                <div class="day-pair-col-head">販売予測数</div>
+                <div class="day-card-head">
+                  <div class="day-head-main">
+                    <div class="day-head">${day.label}</div>
+                    <div class="day-weather"><span class="weather-icon">${day.weatherIcon}</span><span class="weather-temp">${day.tempLabel}</span></div>
+                    ${day.holidayName ? `<div class="holiday-badge">🎉 祝日：${day.holidayName}</div>` : ""}
+                    ${day.nsDisruptions && day.nsDisruptions.length ? `<div class="ns-badge">🚆 NSストライキ/運休</div>` : ""}
+                    ${(state.confirmedByDate && state.confirmedByDate[mdLabel(day.dateObj)]) ? `<div class="confirmed-badge">✓ 確定済み</div>` : ""}
+                  </div>
+                  ${recommendReasonHtml(day)}
                 </div>
-                ${recommendReasonHtml(day)}
+                <div id="forecastTable-${day.dateKey}">${forecastTableHtml(day)}</div>
               </div>
-              <div id="forecastTable-${day.dateKey}">${forecastTableHtml(day)}</div>
+              <div class="day-pair-prod">
+                <div class="day-pair-col-head">生産割り振り</div>
+                <div id="prodday-${day.dateKey}">${productionDayHtml(day)}</div>
+              </div>
             </div>
           `).join("")}
         </div>
@@ -1372,7 +1420,10 @@ function renderCalendar(){
     `;
   }).join("");
 
-  state.days.forEach(day => bindForecastTableEvents(day));
+  state.days.forEach(day => {
+    bindForecastTableEvents(day);
+    bindProductionDayEvents(day);
+  });
 
   area.querySelectorAll(".confirm-week-btn").forEach(btn => {
     btn.addEventListener("click", () => confirmWeek(+btn.dataset.week));
@@ -1381,6 +1432,9 @@ function renderCalendar(){
     btn.addEventListener("click", () => toggleWeek(+btn.dataset.weekIndex));
   });
 }
+
+// 後方互換のエイリアス（旧呼び出し元から参照される可能性のある箇所）
+function renderCalendar(){ renderCombined(); }
 
 // 「−」［数字入力欄］「＋」の具材個数入力（販売予測数カード用）
 function qtyStepperHtml(day, store, filling, qty, isOpen){
@@ -1567,37 +1621,7 @@ function bindForecastTableEvents(day){
 
 /* ---------- レンダリング：最終生産割り振り（セクション3） ---------- */
 
-function renderProductionSection(){
-  const area = document.getElementById("productionArea");
-  const weeks = [
-    { title: "今週", weekIndex: 0, days: state.days.filter(d => d.weekIndex === 0) },
-    { title: "来週", weekIndex: 1, days: state.days.filter(d => d.weekIndex === 1) },
-    { title: "再来週", weekIndex: 2, days: state.days.filter(d => d.weekIndex === 2) },
-  ].filter(week => week.days.length > 0);
-
-  area.innerHTML = weeks.map(week => {
-    const collapsible = week.weekIndex >= 1;
-    const collapsed = collapsible && weekCollapsed[week.weekIndex];
-    const btnLabel = collapsed ? `${week.title}を表示 ▼` : `${week.title}を折りたたむ ▲`;
-    return `
-      <div class="week-group${collapsed ? " week-collapsed" : ""}">
-        <div class="prod-heading-row">
-          <h3 class="week-heading-simple">${week.title}（${week.weekIndex === 0 ? thisWeekBadge(week.days) : "月〜金"}）</h3>
-          ${collapsible ? `<button class="toggle-week-btn" data-week-index="${week.weekIndex}">${btnLabel}</button>` : ""}
-        </div>
-        <div class="prod-cards-wrap">
-          ${week.days.map(day => `<div class="prod-card" id="prodday-${day.dateKey}">${productionDayHtml(day)}</div>`).join("")}
-        </div>
-      </div>
-    `;
-  }).join("");
-
-  state.days.forEach(day => bindProductionDayEvents(day));
-
-  area.querySelectorAll(".toggle-week-btn").forEach(btn => {
-    btn.addEventListener("click", () => toggleWeek(+btn.dataset.weekIndex));
-  });
-}
+function renderProductionSection(){ renderCombined(); }
 
 // 必要数（ALLOC_FILLINGS順）を「テープ」として、出勤メンバーの設定生産数(cap)で
 // 順番に切り出していく。1人のメンバーが今の具材で使い切れなければ次の具材に進み、
@@ -2009,13 +2033,12 @@ function toggleWeek(weekIndex){
   const btnText = collapsed ? `${weekTitle}を表示 ▼` : `${weekTitle}を折りたたむ ▲`;
 
   // 再描画せず DOM を直接操作する（再描画するとイベント再バインドのタイミング問題が起きる）
-  [document.getElementById("calendarArea"), document.getElementById("productionArea")].forEach(area => {
-    if(!area) return;
-    area.querySelectorAll(`.toggle-week-btn[data-week-index="${weekIndex}"]`).forEach(btn => {
-      btn.textContent = btnText;
-      const weekGroup = btn.closest(".week-group");
-      if(weekGroup) weekGroup.classList.toggle("week-collapsed", collapsed);
-    });
+  const area = document.getElementById("combinedArea");
+  if(!area) return;
+  area.querySelectorAll(`.toggle-week-btn[data-week-index="${weekIndex}"]`).forEach(btn => {
+    btn.textContent = btnText;
+    const weekGroup = btn.closest(".week-group");
+    if(weekGroup) weekGroup.classList.toggle("week-collapsed", collapsed);
   });
 }
 
@@ -2504,9 +2527,8 @@ async function init(){
     state.shiftByDate  = shiftParsed.byDate;
     state.notesByName  = shiftParsed.notesByName;
 
-    renderCalendar();
+    renderCombined();
     renderShiftTable();
-    renderProductionSection();
     renderCellStatusTable();
     initPaymentSection();
 
@@ -2514,9 +2536,8 @@ async function init(){
     if(refreshBtn) refreshBtn.addEventListener("click", refreshShiftData);
   }catch(e){
     console.error(e);
-    document.getElementById("calendarArea").innerHTML = "<p class='off-note'>データの取得に失敗しました。</p>";
+    document.getElementById("combinedArea").innerHTML = "<p class='off-note'>データの取得に失敗しました。</p>";
     document.getElementById("shiftTableArea").innerHTML = "<p class='off-note'>データの取得に失敗しました。</p>";
-    document.getElementById("productionArea").innerHTML = "<p class='off-note'>データの取得に失敗しました。</p>";
   }
 }
 
