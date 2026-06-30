@@ -189,8 +189,9 @@
   .day-block-meta .day-head{
     font-weight: bold;
     color: var(--main-dark);
-    font-size: 0.95rem;
+    font-size: 1.9rem;
     margin-bottom: 6px;
+    line-height: 1.15;
   }
   .day-card .day-weather,
   .day-block-meta .day-weather{
@@ -269,6 +270,7 @@
     line-height: 1.4;
     margin-top: 3px;
     word-break: break-word;
+    min-height: 2.8em;
   }
   /* シフト一覧の備考・必要物品 */
   .shift-note{
@@ -644,17 +646,22 @@
   .day-block-2col-head{
     display: grid;
     grid-template-columns: 1fr 1fr;
+    align-items: stretch;
   }
   .day-col-forecast-head{
     padding: 10px 14px;
     border-right: 3px solid #c8cfd8;
     border-bottom: 1px solid var(--line);
     background: rgba(221,238,228,0.25);
+    display: flex;
+    flex-direction: column;
   }
   .day-col-prod-head{
     padding: 10px 14px;
     border-bottom: 1px solid var(--line);
     background: rgba(221,230,238,0.25);
+    display: flex;
+    flex-direction: column;
   }
   .col-section-title{
     display: inline-block;
@@ -1864,7 +1871,7 @@ function unifiedDayTableHtml(day){
       <thead>
         <tr>
           <th rowspan="2" class="f-name">具材</th>
-          <th colspan="4" class="ut-section-head ut-forecast-head">販売予測数</th>
+          <th colspan="4" class="ut-section-head ut-forecast-head">販売決定数</th>
           <th rowspan="2" class="ut-sep"></th>
           <th colspan="${memberCount + 2}" class="ut-section-head ut-prod-head">生産割り振り</th>
         </tr>
@@ -1928,7 +1935,7 @@ function dayBlockHtml(day){
   return `
     <div class="day-block-2col-head">
       <div class="day-col-forecast-head">
-        <div class="col-section-title ut-forecast-head">販売予測数および決定数</div>
+        <div class="col-section-title ut-forecast-head">販売予測数</div>
         <div class="day-meta">
           <div class="day-head">${day.label}</div>
           <div class="day-weather"><span class="weather-icon">${day.weatherIcon}</span><span class="weather-temp">${day.tempLabel}</span></div>
