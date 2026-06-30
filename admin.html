@@ -585,19 +585,29 @@
   .day-pair{
     display: grid;
     grid-template-columns: 1fr 1fr;
+    align-items: stretch;
     border: 1px solid var(--line);
     border-radius: 12px;
     overflow: hidden;
     position: relative;
     background: #fdfcf9;
+    transition: box-shadow 0.18s;
   }
+  .day-pair:hover{ box-shadow: 0 4px 18px rgba(74,124,89,0.12); }
   .day-pair-forecast{
     padding: 14px;
     border-right: 1px solid var(--line);
+    display: flex;
+    flex-direction: column;
   }
   .day-pair-prod{
     padding: 14px;
+    display: flex;
+    flex-direction: column;
   }
+  /* 最後の子（forecastTable・prodday）を伸ばして高さを揃える */
+  .day-pair-forecast > div:last-child,
+  .day-pair-prod > div:last-child{ flex: 1; }
   .day-pair-col-head{
     font-size: 0.7rem;
     font-weight: bold;
@@ -686,6 +696,116 @@
   .confirm-btn{ border: none; border-radius: 10px; padding: 14px; font-size: 1rem; font-weight: bold; cursor: pointer; width: 100%; }
   .confirm-btn.yes{ background: var(--main); color: #fff; }
   .confirm-btn.no{ background: #e2ddd0; color: #555; }
+  .confirm-btn.yes:hover{ background: var(--main-dark); }
+  .confirm-btn.no:hover{ background: #d5d0c8; }
+
+  /* ════════════════════════════════
+     UI / UX 改善
+     ════════════════════════════════ */
+
+  /* ── トランジション基盤 ── */
+  button{ transition: background 0.14s, color 0.14s, box-shadow 0.14s, border-color 0.14s, opacity 0.14s; }
+
+  /* ── セクション ── */
+  section{ transition: box-shadow 0.18s; }
+
+  /* ── 見出し：フォント強化 ── */
+  section h2{
+    font-size: 1.08rem;
+    font-weight: 700;
+    letter-spacing: 0.02em;
+  }
+  .week-heading h3{ font-size: 1.02rem; font-weight: 700; }
+
+  /* ── 週ヘッダーに薄い区切り ── */
+  .week-heading{
+    padding-bottom: 10px;
+    border-bottom: 1px solid var(--main-light);
+    margin-bottom: 16px;
+  }
+
+  /* ── ナビリンクホバー ── */
+  .header-nav a{ transition: background 0.14s, border-color 0.14s; }
+  .header-nav a:hover{ background: rgba(255,255,255,0.22); border-color: rgba(255,255,255,0.5); }
+
+  /* ── 確定ボタン ── */
+  .confirm-week-btn:hover{ background: var(--main-dark); box-shadow: 0 2px 8px rgba(51,92,62,0.28); }
+
+  /* ── 折りたたみボタン ── */
+  .toggle-week-btn:hover{ background: var(--main-light); border-color: var(--main-dark); }
+
+  /* ── 希望シフト更新ボタン ── */
+  .refresh-shift-btn{ transition: background 0.14s, color 0.14s, border-color 0.14s; }
+  .refresh-shift-btn:not(:disabled):hover{ background: var(--main); color: #fff; border-color: var(--main); }
+
+  /* ── ±ステッパーボタン ── */
+  .qty-step-btn:not(:disabled):hover{
+    background: var(--main-light);
+    border-color: var(--main);
+    color: var(--main-dark);
+  }
+
+  /* ── 営業/休みトグル ── */
+  .store-toggle-btn.on:hover{ background: var(--main-dark); }
+  .store-toggle-btn.off:hover{ background: #c9c0b0; }
+
+  /* ── リセット推奨ボタン ── */
+  .reset-recommend-btn{ transition: background 0.14s, border-color 0.14s; }
+  .reset-recommend-btn:hover{ background: var(--main-light); border-color: var(--main); }
+
+  /* ── 一括割り振りボタン ── */
+  .bulk-btn:not(.active):hover{ background: #e0ddd6; border-color: #bbb; }
+  .bulk-btn.active:hover{ background: var(--main-dark); }
+
+  /* ── 具材渡し済み/調理済みボタン ── */
+  .status-btn{ transition: background 0.14s, color 0.14s, border-color 0.14s, box-shadow 0.14s; }
+  .status-btn:hover{ border-color: var(--main); box-shadow: 0 1px 4px rgba(74,124,89,0.18); }
+
+  /* ── cell-input ── */
+  .cell-input{ transition: border-color 0.14s, background 0.14s, box-shadow 0.14s; }
+  .cell-input:focus{ box-shadow: 0 0 0 2px rgba(74,124,89,0.18); }
+
+  /* ── 店舗ボックス ── */
+  .store-item{ transition: background 0.14s, border-color 0.14s; }
+  .store-item-num{ font-size: 1.15rem; }
+
+  /* ── 日付見出し（day-head）を少し大きく ── */
+  .day-card .day-head{ font-size: 1rem; }
+
+  /* ── day-pair col-head を少し引き締め ── */
+  .day-pair-col-head{
+    font-size: 0.68rem;
+    letter-spacing: 0.1em;
+    color: var(--main-dark);
+    opacity: 0.72;
+    border-bottom-color: rgba(74,124,89,0.15);
+    margin-bottom: 10px;
+  }
+
+  /* ── prod-summary の合計強調 ── */
+  .prod-summary{ border-left: 3px solid var(--main); }
+  .prod-summary strong{ color: var(--main-dark); }
+
+  /* ── 週区切り線を少し洗練 ── */
+  .week-divider{
+    border-top: 2px solid var(--line);
+    margin: 24px 0 20px;
+    position: relative;
+  }
+
+  /* ── CSVボタン ── */
+  .payment-csv-btn{ transition: background 0.14s, box-shadow 0.14s; }
+  .payment-csv-btn:hover{ background: var(--main-dark); box-shadow: 0 2px 8px rgba(51,92,62,0.25); }
+
+  /* ── スマホ調整 ── */
+  @media (max-width: 768px){
+    main{ padding: 12px 10px 60px; }
+    section{ padding: 14px 12px; border-radius: 10px; }
+    .week-heading{ flex-direction: column; align-items: flex-start; }
+    .week-heading > div{ display: flex; flex-wrap: wrap; gap: 6px; }
+    .confirm-week-btn{ font-size: 0.8rem; padding: 7px 14px; }
+    .day-pair-col-head{ font-size: 0.65rem; }
+  }
 
   /* ── 月次支払い計算 ── */
   .payment-controls{
