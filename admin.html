@@ -163,18 +163,30 @@
   .week-this-week .week-pin-label{ background: #c9853f; }
   .week-this-week .day-block .day-head{ color: #9a6520; }
   .week-this-week .week-heading h3{ color: #9a6520; }
+  .day-head-row{
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    margin-bottom: 4px;
+  }
+  .day-badges{
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    margin-bottom: 6px;
+  }
   .day-col-forecast-head .day-head{
     font-weight: bold;
     color: var(--main-dark);
     font-size: 1.4rem;
-    margin-bottom: 6px;
     line-height: 1.15;
   }
   .day-col-forecast-head .day-weather{
     display: flex;
     align-items: center;
-    gap: 6px;
-    margin-bottom: 8px;
+    gap: 4px;
+    flex-shrink: 0;
   }
   .weather-icon{ font-size: 2rem; line-height: 1; }
   .weather-temp{ font-size: 0.82rem; color: #666; }
@@ -617,12 +629,12 @@
   }
   .col-section-title.ut-forecast-head{ background: #ddeee4; color: var(--main-dark); }
   .col-section-title.ut-prod-head{ background: #dde6ee; color: #2c5272; }
-  .day-meta{ margin-bottom: 8px; }
-  .store-stack-with-toggle{ display: flex; flex-direction: column; gap: 5px; }
+  .store-stack-with-toggle{ display: flex; flex-direction: row; gap: 6px; }
+  .store-stack-with-toggle .store-item-with-toggle{ flex: 1; min-width: 0; }
   .store-item-with-toggle{
     display: flex;
     align-items: flex-start;
-    gap: 6px;
+    gap: 5px;
   }
   .store-item-with-toggle .store-toggle-btn{ flex-shrink: 0; }
   .store-item-with-toggle .store-item{ flex: 1; min-width: 0; }
@@ -654,7 +666,8 @@
   }
   table.day-sub-table th, table.day-sub-table td{
     border-bottom: 1px solid var(--line);
-    padding: 5px 5px;
+    padding: 0 5px;
+    height: 44px;
     text-align: center;
     white-space: nowrap;
     vertical-align: middle;
@@ -672,8 +685,6 @@
     font-weight: bold;
     color: var(--main-dark);
     background: rgba(242,247,243,0.8);
-    padding-top: 7px;
-    padding-bottom: 7px;
   }
 
   @media (max-width: 768px){
@@ -1895,13 +1906,11 @@ function dayBlockHtml(day){
       <div class="day-2col-grid">
         <div class="day-col-forecast-head">
           <div class="col-section-title ut-forecast-head">販売予測数</div>
-          <div class="day-meta">
+          <div class="day-head-row">
             <div class="day-head">${day.label}</div>
             <div class="day-weather"><span class="weather-icon">${day.weatherIcon}</span><span class="weather-temp">${day.tempLabel}</span></div>
-            ${day.holidayName ? `<div class="holiday-badge">🎉 祝日：${day.holidayName}</div>` : ""}
-            ${day.nsDisruptions && day.nsDisruptions.length ? `<div class="ns-badge">🚆 NSストライキ/運休</div>` : ""}
-            ${isConfirmed ? `<div class="confirmed-badge">✓ 確定済み</div>` : ""}
           </div>
+          ${(day.holidayName || (day.nsDisruptions && day.nsDisruptions.length) || isConfirmed) ? `<div class="day-badges">${day.holidayName ? `<span class="holiday-badge">🎉 祝日：${day.holidayName}</span>` : ""}${day.nsDisruptions && day.nsDisruptions.length ? `<span class="ns-badge">🚆 NSストライキ/運休</span>` : ""}${isConfirmed ? `<span class="confirmed-badge">✓ 確定済み</span>` : ""}</div>` : ""}
           <div class="store-stack-with-toggle">
             ${storeBoxWithToggleHtml(day, "zuid", "Zuid", day.zuid, isConfirmed)}
             ${showUva ? storeBoxWithToggleHtml(day, "uva", "UvA", day.uva, isConfirmed) : ""}
