@@ -577,22 +577,12 @@
   /* ── 日付ブロック：2カラムヘッダー ── */
   .day-block-2col-head{
     display: grid;
-    grid-template-columns: 1fr 1fr;
+    grid-template-columns: 1fr 2px 1fr;
     align-items: stretch;
-    position: relative;
   }
-  /* true-center divider: left:50% で数学的中央に固定し border-box の影響を受けない */
-  .day-block-2col-head::after{
-    content: '';
-    position: absolute;
-    left: 50%;
-    top: 0;
-    bottom: 0;
-    width: 3px;
-    transform: translateX(-50%);
+  .col-divider{
     background: #c8cfd8;
-    pointer-events: none;
-    z-index: 1;
+    border-bottom: 1px solid var(--line);
   }
   .day-col-forecast-head{
     padding: 10px 14px;
@@ -632,8 +622,7 @@
 
   @media (max-width: 768px){
     .day-block-2col-head{ grid-template-columns: 1fr; }
-    .day-block-2col-head::after{ display: none; }
-    .day-col-forecast-head{ border-bottom: 1px solid var(--line); }
+    .col-divider{ display: none; }
   }
 
   /* ── 統合テーブル ── */
@@ -1891,6 +1880,7 @@ function dayBlockHtml(day){
           ${showUva ? storeBoxWithToggleHtml(day, "uva", "UvA", day.uva, isConfirmed) : ""}
         </div>
       </div>
+      <div class="col-divider"></div>
       <div class="day-col-prod-head">
         <div class="col-section-title ut-prod-head">生産割り振り</div>
         <div class="day-block-bulk">
