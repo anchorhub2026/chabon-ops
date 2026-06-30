@@ -140,18 +140,6 @@
     margin-left: 6px;
   }
 
-  .day-cards{
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(400px, 1fr));
-    gap: 12px;
-  }
-  .day-card{
-    position: relative;
-    border: 1px solid var(--line);
-    border-radius: 12px;
-    padding: 12px;
-    background: #fdfcf9;
-  }
   .week-pin-label{
     position: absolute;
     top: -9px;
@@ -169,32 +157,20 @@
     border-top: 3px solid var(--main-dark);
     margin: 28px 0 24px;
   }
-  .week-next-next .day-card{
-    background: #eef3f5;
-    border-color: #c9d8dd;
-  }
-  .week-next-next .day-card .day-head,
   .week-next-next .day-block .day-head{ color: #3c6577; }
   .week-next-next .week-heading h3{ color: #3c6577; }
 
   .week-this-week .week-pin-label{ background: #c9853f; }
-  .week-this-week .day-card{
-    background: #fdf3e6;
-    border-color: #e3c391;
-  }
-  .week-this-week .day-card .day-head,
   .week-this-week .day-block .day-head{ color: #9a6520; }
   .week-this-week .week-heading h3{ color: #9a6520; }
-  .day-card .day-head,
-  .day-block-meta .day-head{
+  .day-col-forecast-head .day-head{
     font-weight: bold;
     color: var(--main-dark);
     font-size: 1.9rem;
     margin-bottom: 6px;
     line-height: 1.15;
   }
-  .day-card .day-weather,
-  .day-block-meta .day-weather{
+  .day-col-forecast-head .day-weather{
     display: flex;
     align-items: center;
     gap: 6px;
@@ -202,15 +178,6 @@
   }
   .weather-icon{ font-size: 2rem; line-height: 1; }
   .weather-temp{ font-size: 0.82rem; color: #666; }
-  .day-card-head{
-    display: flex;
-    align-items: flex-start;
-    flex-wrap: nowrap;
-    gap: 8px;
-    margin-bottom: 8px;
-    overflow: visible;
-  }
-  .day-head-main{ flex: 0 0 auto; }
   .holiday-badge, .ns-badge{
     display: inline-block;
     margin-top: 4px;
@@ -223,14 +190,6 @@
     border-radius: 100px;
     border: 1px solid #f3b6ae;
     white-space: nowrap;
-  }
-  /* 推奨数：縦積みレイアウト（Zuid→UvAの順） */
-  .store-stack{
-    flex: 1;
-    min-width: 0;
-    display: flex;
-    flex-direction: column;
-    gap: 5px;
   }
   .store-item{
     background: #fff;
@@ -431,19 +390,6 @@
     color: var(--main-dark);
     margin: 0 0 12px;
   }
-  .prod-card{
-    border: 1px solid var(--line);
-    border-radius: 12px;
-    padding: 12px;
-    background: #fdfcf9;
-    margin-bottom: 14px;
-  }
-  .prod-card .fd-head{
-    font-weight: bold;
-    color: var(--main-dark);
-    margin-bottom: 8px;
-    font-size: 0.9rem;
-  }
   .undo-btn{
     margin-left: auto;
   }
@@ -596,20 +542,6 @@
   .week-this-week .day-block{ background: #fdf3e6; border-color: #e3c391; }
   .week-next-next .day-block{ background: #eef3f5; border-color: #c9d8dd; }
 
-  /* 日付ブロック：ヘッダー帯 */
-  .day-block-header{
-    display: flex;
-    align-items: flex-start;
-    gap: 12px;
-    padding: 10px 14px;
-    border-bottom: 1px solid var(--line);
-    flex-wrap: wrap;
-    background: rgba(255,255,255,0.45);
-  }
-  .week-this-week .day-block-header{ border-bottom-color: #e3c391; background: rgba(253,247,237,0.7); }
-  .week-next-next .day-block-header{ border-bottom-color: #c9d8dd; background: rgba(238,243,245,0.7); }
-  .day-block-meta{ flex: 0 0 auto; min-width: 120px; }
-  .day-block-tools{ flex: 1; min-width: 0; }
   .day-block-bulk{ display: flex; gap: 5px; flex-wrap: wrap; margin-bottom: 6px; }
 
   /* 日付ブロック：フッター帯 */
@@ -871,9 +803,6 @@
   /* ── 店舗ボックス ── */
   .store-item{ transition: background 0.14s, border-color 0.14s; }
   .store-item-num{ font-size: 1.15rem; }
-
-  /* ── 日付見出し（day-head）を少し大きく ── */
-  .day-card .day-head{ font-size: 1rem; }
 
   /* .day-pair-col-head は unified-table に統合済み */
 
