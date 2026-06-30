@@ -173,7 +173,8 @@
     background: #eef3f5;
     border-color: #c9d8dd;
   }
-  .week-next-next .day-card .day-head{ color: #3c6577; }
+  .week-next-next .day-card .day-head,
+  .week-next-next .day-block .day-head{ color: #3c6577; }
   .week-next-next .week-heading h3{ color: #3c6577; }
 
   .week-this-week .week-pin-label{ background: #c9853f; }
@@ -181,15 +182,18 @@
     background: #fdf3e6;
     border-color: #e3c391;
   }
-  .week-this-week .day-card .day-head{ color: #9a6520; }
+  .week-this-week .day-card .day-head,
+  .week-this-week .day-block .day-head{ color: #9a6520; }
   .week-this-week .week-heading h3{ color: #9a6520; }
-  .day-card .day-head{
+  .day-card .day-head,
+  .day-block-meta .day-head{
     font-weight: bold;
     color: var(--main-dark);
     font-size: 0.95rem;
     margin-bottom: 6px;
   }
-  .day-card .day-weather{
+  .day-card .day-weather,
+  .day-block-meta .day-weather{
     display: flex;
     align-items: center;
     gap: 6px;
@@ -576,60 +580,152 @@
   .week-collapsed .prod-cards-wrap,
   .week-collapsed .day-pairs-wrap{ display: none; }
 
-  /* ── 販売予測 + 生産割り振り 横並びレイアウト ── */
-  .day-pairs-wrap{
-    display: flex;
-    flex-direction: column;
-    gap: 14px;
-  }
-  .day-pair{
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    align-items: stretch;
+  /* ── 日付ブロック（統合レイアウト） ── */
+  .day-pairs-wrap{ display: flex; flex-direction: column; gap: 12px; }
+  .day-block{
+    position: relative;
     border: 1px solid var(--line);
     border-radius: 12px;
     overflow: hidden;
-    position: relative;
     background: #fdfcf9;
     transition: box-shadow 0.18s;
   }
-  .day-pair:hover{ box-shadow: 0 4px 18px rgba(74,124,89,0.12); }
-  .day-pair-forecast{
-    padding: 14px;
-    border-right: 1px solid var(--line);
+  .day-block:hover{ box-shadow: 0 4px 18px rgba(74,124,89,0.1); }
+  .week-this-week .day-block{ background: #fdf3e6; border-color: #e3c391; }
+  .week-next-next .day-block{ background: #eef3f5; border-color: #c9d8dd; }
+
+  /* 日付ブロック：ヘッダー帯 */
+  .day-block-header{
     display: flex;
-    flex-direction: column;
+    align-items: flex-start;
+    gap: 12px;
+    padding: 10px 14px;
+    border-bottom: 1px solid var(--line);
+    flex-wrap: wrap;
+    background: rgba(255,255,255,0.45);
   }
-  .day-pair-prod{
-    padding: 14px;
+  .week-this-week .day-block-header{ border-bottom-color: #e3c391; background: rgba(253,247,237,0.7); }
+  .week-next-next .day-block-header{ border-bottom-color: #c9d8dd; background: rgba(238,243,245,0.7); }
+  .day-block-meta{ flex: 0 0 auto; min-width: 120px; }
+  .day-block-tools{ flex: 1; min-width: 0; }
+  .day-block-bulk{ display: flex; gap: 5px; flex-wrap: wrap; margin-bottom: 6px; }
+
+  /* 日付ブロック：フッター帯 */
+  .day-block-footer{
+    padding: 6px 14px;
+    border-top: 1px solid var(--line);
     display: flex;
-    flex-direction: column;
+    justify-content: flex-end;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+    background: rgba(255,255,255,0.3);
+    font-size: 0.78rem;
   }
-  /* 最後の子（forecastTable・prodday）を伸ばして高さを揃える */
-  .day-pair-forecast > div:last-child,
-  .day-pair-prod > div:last-child{ flex: 1; }
-  .day-pair-col-head{
-    font-size: 0.7rem;
+  .week-this-week .day-block-footer{ border-top-color: #e3c391; }
+  .week-next-next .day-block-footer{ border-top-color: #c9d8dd; }
+
+  /* ── 週タイトルバッジ ── */
+  .week-title-badge{
+    display: inline-block;
+    background: var(--main);
+    color: #fff;
+    font-size: 0.72rem;
     font-weight: bold;
-    color: var(--main);
-    letter-spacing: 0.07em;
-    text-transform: uppercase;
+    padding: 3px 10px;
+    border-radius: 100px;
+    margin-right: 5px;
+    vertical-align: middle;
+  }
+  .week-this-week .week-title-badge{ background: #c9853f; }
+  .week-next-next .week-title-badge{ background: #4f7a8c; }
+
+  /* ── 日付ブロック：2カラムヘッダー ── */
+  .day-block-2col-head{
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+  }
+  .day-col-forecast-head{
+    padding: 10px 14px;
+    border-right: 3px solid #c8cfd8;
+    border-bottom: 1px solid var(--line);
+    background: rgba(221,238,228,0.25);
+  }
+  .day-col-prod-head{
+    padding: 10px 14px;
+    border-bottom: 1px solid var(--line);
+    background: rgba(221,230,238,0.25);
+  }
+  .col-section-title{
+    display: inline-block;
+    font-size: 0.69rem;
+    font-weight: bold;
+    letter-spacing: 0.05em;
+    padding: 2px 9px;
+    border-radius: 4px;
     margin-bottom: 8px;
-    padding-bottom: 4px;
-    border-bottom: 1px solid var(--main-light);
   }
-  /* week色バリアント */
-  .week-this-week .day-pair{ background: #fdf3e6; border-color: #e3c391; }
-  .week-this-week .day-pair-forecast{ border-right-color: #e3c391; }
-  .week-next-next .day-pair{ background: #eef3f5; border-color: #c9d8dd; }
-  .week-next-next .day-pair-forecast{ border-right-color: #c9d8dd; }
-  /* スマホ：縦並び */
+  .col-section-title.ut-forecast-head{ background: #ddeee4; color: var(--main-dark); }
+  .col-section-title.ut-prod-head{ background: #dde6ee; color: #2c5272; }
+  .day-meta{ margin-bottom: 8px; }
+  .store-stack-with-toggle{ display: flex; flex-direction: column; gap: 5px; }
+  .store-item-with-toggle{
+    display: flex;
+    align-items: flex-start;
+    gap: 6px;
+  }
+  .store-item-with-toggle .store-toggle-btn{ flex-shrink: 0; }
+  .store-item-with-toggle .store-item{ flex: 1; min-width: 0; }
+  .store-item-with-toggle .reset-recommend-btn{ flex-shrink: 0; font-size: 0.65rem; }
+
   @media (max-width: 768px){
-    .day-pair{ grid-template-columns: 1fr; }
-    .day-pair-forecast{ border-right: none; border-bottom: 1px solid var(--line); }
-    .week-this-week .day-pair-forecast{ border-bottom-color: #e3c391; }
-    .week-next-next .day-pair-forecast{ border-bottom-color: #c9d8dd; }
+    .day-block-2col-head{ grid-template-columns: 1fr; }
+    .day-col-forecast-head{ border-right: none; }
   }
+
+  /* ── 統合テーブル ── */
+  .unified-table-wrap{
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+  table.unified-table{
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.78rem;
+  }
+  table.unified-table th, table.unified-table td{
+    border-bottom: 1px solid var(--line);
+    padding: 5px 5px;
+    text-align: center;
+    white-space: nowrap;
+    vertical-align: middle;
+  }
+  table.unified-table th{ color: var(--main-dark); font-weight: bold; background: var(--main-light); }
+  table.unified-table td.f-name{ text-align: left; padding-left: 10px; min-width: 90px; }
+  table.unified-table th.ut-filling-head{ text-align: left; padding-left: 10px; }
+  table.unified-table th.ut-section-head{ font-size: 0.72rem; letter-spacing: 0.05em; }
+  table.unified-table th.ut-forecast-head{ background: #ddeee4; color: var(--main-dark); }
+  table.unified-table th.ut-prod-head{ background: #dde6ee; color: #2c5272; }
+  /* 区切り列 */
+  table.unified-table td.ut-sep,
+  table.unified-table th.ut-sep{
+    width: 3px;
+    padding: 0;
+    background: #c8cfd8 !important;
+    border: none;
+  }
+  table.unified-table td.cell-readonly{ color: #666; }
+  table.unified-table td.cell-row-total{ font-weight: bold; color: var(--main-dark); }
+  table.unified-table tfoot td{
+    border-bottom: none;
+    border-top: 2px solid var(--main-light);
+    font-weight: bold;
+    color: var(--main-dark);
+    background: #f2f7f3;
+    padding-top: 7px;
+    padding-bottom: 7px;
+  }
+  table.unified-table tfoot td.ut-sep{ background: #c8cfd8 !important; border-top: 2px solid #b4bec8; }
   .prod-heading-row{
     display: flex;
     align-items: center;
@@ -772,15 +868,7 @@
   /* ── 日付見出し（day-head）を少し大きく ── */
   .day-card .day-head{ font-size: 1rem; }
 
-  /* ── day-pair col-head を少し引き締め ── */
-  .day-pair-col-head{
-    font-size: 0.68rem;
-    letter-spacing: 0.1em;
-    color: var(--main-dark);
-    opacity: 0.72;
-    border-bottom-color: rgba(74,124,89,0.15);
-    margin-bottom: 10px;
-  }
+  /* .day-pair-col-head は unified-table に統合済み */
 
   /* ── prod-summary の合計強調 ── */
   .prod-summary{ border-left: 3px solid var(--main); }
@@ -804,7 +892,6 @@
     .week-heading{ flex-direction: column; align-items: flex-start; }
     .week-heading > div{ display: flex; flex-wrap: wrap; gap: 6px; }
     .confirm-week-btn{ font-size: 0.8rem; padding: 7px 14px; }
-    .day-pair-col-head{ font-size: 0.65rem; }
   }
 
   /* ── 月次支払い計算 ── */
@@ -1503,7 +1590,7 @@ function renderCombined(){
       ${idx > 0 ? `<div class="week-divider"></div>` : ""}
       <div class="week-group ${week.cssClass}${collapsed ? " week-collapsed" : ""}">
         <div class="week-heading">
-          <h3>${week.title}（${week.weekIndex === 0 ? thisWeekBadge(week.days) : "月〜金"}）</h3>
+          <h3><span class="week-title-badge">${week.title}</span>（${thisWeekBadge(week.days)}）</h3>
           <div>
             ${collapsible ? `<button class="toggle-week-btn" data-week-index="${week.weekIndex}">${btnLabel}</button>` : ""}
             <button class="confirm-week-btn" data-week="${week.weekIndex}">この週を確定・公開する</button>
@@ -1513,26 +1600,8 @@ function renderCombined(){
         </div>
         <div class="day-pairs-wrap">
           ${week.days.map((day, di) => `
-            <div class="day-pair">
-              ${di === 0 ? `<span class="week-pin-label">${week.title}</span>` : ""}
-              <div class="day-pair-forecast">
-                <div class="day-pair-col-head">販売予測数</div>
-                <div class="day-card-head">
-                  <div class="day-head-main">
-                    <div class="day-head">${day.label}</div>
-                    <div class="day-weather"><span class="weather-icon">${day.weatherIcon}</span><span class="weather-temp">${day.tempLabel}</span></div>
-                    ${day.holidayName ? `<div class="holiday-badge">🎉 祝日：${day.holidayName}</div>` : ""}
-                    ${day.nsDisruptions && day.nsDisruptions.length ? `<div class="ns-badge">🚆 NSストライキ/運休</div>` : ""}
-                    ${(state.confirmedByDate && state.confirmedByDate[mdLabel(day.dateObj)]) ? `<div class="confirmed-badge">✓ 確定済み</div>` : ""}
-                  </div>
-                  ${recommendReasonHtml(day)}
-                </div>
-                <div id="forecastTable-${day.dateKey}">${forecastTableHtml(day)}</div>
-              </div>
-              <div class="day-pair-prod">
-                <div class="day-pair-col-head">生産割り振り</div>
-                <div id="prodday-${day.dateKey}">${productionDayHtml(day)}</div>
-              </div>
+            <div class="day-block" id="dayblock-${day.dateKey}">
+              ${dayBlockHtml(day)}
             </div>
           `).join("")}
         </div>
@@ -1634,23 +1703,18 @@ function forecastTableHtml(day){
   `;
 }
 
-function renderForecastTable(day){
-  const container = document.getElementById(`forecastTable-${day.dateKey}`);
-  if(!container) return;
-  container.innerHTML = forecastTableHtml(day);
-  bindForecastTableEvents(day);
-}
+function renderForecastTable(day){ renderDayBlock(day); }
 
 
 function bindForecastTableEvents(day){
-  const container = document.getElementById(`forecastTable-${day.dateKey}`);
+  const container = document.getElementById(`dayblock-${day.dateKey}`);
   if(!container) return;
 
-  container.querySelectorAll(".qty-step-btn").forEach(btn => {
+  container.querySelectorAll(".qty-step-btn:not(.prod-qty-step-btn)").forEach(btn => {
     btn.addEventListener("click", () => {
       if(btn.disabled) return;
       const wrapper = btn.closest(".qty-stepper");
-      const input = wrapper && wrapper.querySelector(".cell-input");
+      const input = wrapper && wrapper.querySelector(".cell-input:not(.prod-cell-input)");
       if(!input || input.disabled) return;
       const delta = btn.dataset.action === "inc" ? 1 : -1;
       input.value = Math.max(0, (parseInt(input.value, 10) || 0) + delta);
@@ -1658,7 +1722,7 @@ function bindForecastTableEvents(day){
     });
   });
 
-  container.querySelectorAll(".cell-input").forEach(input => {
+  container.querySelectorAll(".cell-input:not(.prod-cell-input)").forEach(input => {
     input.addEventListener("input", () => {
       const store = input.dataset.store;
       const filling = input.dataset.filling;
@@ -1699,7 +1763,7 @@ function bindForecastTableEvents(day){
         day.uvaFillingQty = buildFillingDefaults(day.uva.total);
       }
       saveForecast(day);
-      renderForecastTable(day);
+      renderDayBlock(day);
       refreshProductionCellDerived(day);
     });
   });
@@ -1723,16 +1787,14 @@ function bindForecastTableEvents(day){
       }
 
       saveForecast(day);
-      // 営業/休みの切り替えは具材の必要数が丸ごと変わる構造的な変更なので表は再生成する
-      renderForecastTable(day);
-      refreshProductionCellDerived(day);
+      renderDayBlock(day);
     });
   });
 
   // この日の全データをリセット（forecast + production 両方）
-  container.querySelectorAll(".reset-day-btn").forEach(btn => {
+  container.querySelectorAll(".reset-day-btn:not(.reset-prod-btn)").forEach(btn => {
     btn.addEventListener("click", () => {
-      showConfirm(`${day.label}の販売予測数・生産割り振りを推奨値にリセットしますか？`, () => {
+      showConfirm(`${day.label}の販売予測数・生産割り振りを全てリセットしますか？`, () => {
         resetDayData(day);
       });
     });
@@ -1742,6 +1804,174 @@ function bindForecastTableEvents(day){
 /* ---------- レンダリング：最終生産割り振り（セクション3） ---------- */
 
 function renderProductionSection(){ renderCombined(); }
+
+/* ---------- 統合テーブル：1日分を1つの<table>で描画 ---------- */
+
+function unifiedDayTableHtml(day){
+  const snap = computeDaySnapshot(day);
+  const { working, memberCaps, hqBreakdown, hqQty, memberTotals, ningiTotal } = snap;
+  const showUva = [1, 2, 4].includes(day.dow);
+  const chise = state.chiseByDate[mdLabel(day.dateObj)];
+  const chiseBreakdown = chise ? chise.breakdown : {};
+  const chiseQty = chise ? chise.subtotal : 0;
+
+  const memberHeaderCells = working.map((name, i) =>
+    `<th>${name}<br><small class="wish-hint">希望:${memberCaps[i]}個</small></th>`
+  ).join("");
+
+  const rows = FILLINGS.map(f => {
+    const zuidQty = day.zuidFillingQty[f] || 0;
+    const uvaQty = showUva ? (day.uvaFillingQty[f] || 0) : 0;
+    const chiseQtyForFilling = chiseBreakdown[f] || 0;
+    const forecastRowTotal = zuidQty + uvaQty + chiseQtyForFilling;
+
+    const isFixedHq = ALWAYS_HQ_FILLINGS.includes(f);
+    const memberCells = working.map(name => {
+      const qty = (day.memberFillingQty[name] && day.memberFillingQty[name][f]) || 0;
+      return isFixedHq
+        ? `<td class="cell-readonly">—</td>`
+        : `<td>${prodCellStepperHtml(day, name, f, qty)}</td>`;
+    }).join("");
+    const hqVal = hqBreakdown[f] || 0;
+    const prodRowTotal = working.reduce((s, name) => s + ((day.memberFillingQty[name] && day.memberFillingQty[name][f]) || 0), 0) + hqVal;
+    const hqDisplay = hqVal < 0
+      ? `<span class="hq-negative">${hqVal}<span class="hq-over-badge">⚠️超過</span></span>`
+      : `${hqVal}`;
+
+    return `<tr>
+        <td class="f-name">${f}</td>
+        <td>${qtyStepperHtml(day, "zuid", f, zuidQty, day.zuidOpen)}</td>
+        <td>${showUva ? qtyStepperHtml(day, "uva", f, uvaQty, day.uvaOpen) : "—"}</td>
+        <td class="cell-readonly">${chiseQtyForFilling}</td>
+        <td class="cell-readonly cell-row-total" id="rowTotal-${day.dateKey}-${f}">${forecastRowTotal}</td>
+        <td class="ut-sep"></td>
+        ${memberCells}
+        <td class="cell-readonly" id="prodHq-${day.dateKey}-${f}">${hqDisplay}</td>
+        <td class="cell-readonly cell-row-total" id="prodRowTotal-${day.dateKey}-${f}">${prodRowTotal}</td>
+      </tr>`;
+  }).join("");
+
+  const zuidTotal = sumQtyMap(day.zuidFillingQty);
+  const uvaTotal = showUva ? sumQtyMap(day.uvaFillingQty) : 0;
+  const forecastGrandTotal = zuidTotal + uvaTotal + chiseQty;
+  const colTotalCells = working.map((name, i) =>
+    `<td class="cell-readonly cell-row-total" id="prodColTotal-${day.dateKey}-${name}">${memberTotals[i]}</td>`
+  ).join("");
+  const prodGrandTotal = ningiTotal + hqQty;
+  const memberCount = working.length;
+
+  return `<table class="unified-table">
+      <thead>
+        <tr>
+          <th rowspan="2" class="f-name">具材</th>
+          <th colspan="4" class="ut-section-head ut-forecast-head">販売予測数</th>
+          <th rowspan="2" class="ut-sep"></th>
+          <th colspan="${memberCount + 2}" class="ut-section-head ut-prod-head">生産割り振り</th>
+        </tr>
+        <tr>
+          <th>Zuid</th>
+          <th>UvA</th>
+          <th>チセ</th>
+          <th>販売計</th>
+          ${memberHeaderCells}
+          <th>本部</th>
+          <th>生産計</th>
+        </tr>
+      </thead>
+      <tbody>${rows}</tbody>
+      <tfoot>
+        <tr>
+          <td>合計</td>
+          <td id="storeTotal-zuid-${day.dateKey}">${zuidTotal}</td>
+          <td id="storeTotal-uva-${day.dateKey}">${uvaTotal}</td>
+          <td>${chiseQty}</td>
+          <td class="cell-row-total" id="forecastGrandTotal-${day.dateKey}">${forecastGrandTotal}</td>
+          <td class="ut-sep"></td>
+          ${colTotalCells}
+          <td class="cell-readonly" id="prodHqTotal-${day.dateKey}">${hqQty < 0 ? `<span class="hq-negative">${hqQty}<span class="hq-over-badge">⚠️超過</span></span>` : hqQty}</td>
+          <td class="cell-readonly cell-row-total" id="prodGrandTotal-${day.dateKey}">${prodGrandTotal}</td>
+        </tr>
+      </tfoot>
+    </table>`;
+}
+
+function storeBoxWithToggleHtml(day, store, label, result, isConfirmed){
+  const isOpen = store === "zuid" ? day.zuidOpen : day.uvaOpen;
+  const toggleBtn = `<button class="store-toggle-btn ${isOpen ? "on" : "off"}" data-key="${day.dateKey}" data-store="${store}">${isOpen ? "営業" : "休み"}</button>`;
+  const resetBtn = result
+    ? `<button type="button" class="reset-recommend-btn" data-key="${day.dateKey}" data-store="${store}" title="推奨に戻す">↺</button>` : "";
+  const confirmCls = isConfirmed ? " confirmed" : "";
+  const itemHtml = result
+    ? `<div class="store-item${confirmCls}">
+        <div class="store-item-header">
+          <span class="store-item-name">${label}</span>
+          <span class="store-item-num">${result.total}個</span>
+        </div>
+        ${result.reasons.map(r => compactReason(r)).join(" / ") ? `<div class="store-item-reasons">${result.reasons.map(r => compactReason(r)).join(" / ")}</div>` : ""}
+      </div>`
+    : `<div class="store-item closed${confirmCls}">
+        <div class="store-item-header">
+          <span class="store-item-name">${label}</span>
+          <span class="store-item-num">—</span>
+        </div>
+      </div>`;
+  return `<div class="store-item-with-toggle">${toggleBtn}${itemHtml}${resetBtn}</div>`;
+}
+
+function dayBlockHtml(day){
+  const snap = computeDaySnapshot(day);
+  const showUva = [1, 2, 4].includes(day.dow);
+  const isConfirmed = !!(state.confirmedByDate && state.confirmedByDate[mdLabel(day.dateObj)]);
+  const hasSavedForecast = !!localStorage.getItem(`chabon_forecast_${mdLabel(day.dateObj)}`);
+  const hasSavedProd = !!localStorage.getItem(`chabon_prod_${mdLabel(day.dateObj)}`);
+
+  return `
+    <div class="day-block-2col-head">
+      <div class="day-col-forecast-head">
+        <div class="col-section-title ut-forecast-head">販売予測数および決定数</div>
+        <div class="day-meta">
+          <div class="day-head">${day.label}</div>
+          <div class="day-weather"><span class="weather-icon">${day.weatherIcon}</span><span class="weather-temp">${day.tempLabel}</span></div>
+          ${day.holidayName ? `<div class="holiday-badge">🎉 祝日：${day.holidayName}</div>` : ""}
+          ${day.nsDisruptions && day.nsDisruptions.length ? `<div class="ns-badge">🚆 NSストライキ/運休</div>` : ""}
+          ${isConfirmed ? `<div class="confirmed-badge">✓ 確定済み</div>` : ""}
+        </div>
+        <div class="store-stack-with-toggle">
+          ${storeBoxWithToggleHtml(day, "zuid", "Zuid", day.zuid, isConfirmed)}
+          ${showUva ? storeBoxWithToggleHtml(day, "uva", "UvA", day.uva, isConfirmed) : ""}
+        </div>
+      </div>
+      <div class="day-col-prod-head">
+        <div class="col-section-title ut-prod-head">生産割り振り</div>
+        <div class="day-block-bulk">
+          <button type="button" class="bulk-btn ${day.bulkValue === 24 ? "active" : ""}" data-key="${day.dateKey}" data-val="24">全員24個</button>
+          <button type="button" class="bulk-btn ${day.bulkValue === 27 ? "active" : ""}" data-key="${day.dateKey}" data-val="27">全員27個</button>
+          <button type="button" class="bulk-btn ${day.bulkValue === 30 ? "active" : ""}" data-key="${day.dateKey}" data-val="30">全員30個</button>
+          <button type="button" class="bulk-btn ${day.bulkValue === 45 ? "active" : ""}" data-key="${day.dateKey}" data-val="45">全員45個</button>
+          <button type="button" class="bulk-btn undo-btn" data-key="${day.dateKey}" ${day.undoSnapshot ? "" : "disabled"}>↺ 元に戻す</button>
+        </div>
+        <div class="prod-summary" id="summaryBlock-${day.dateKey}">${summaryHtmlFor(snap)}</div>
+      </div>
+    </div>
+    <div class="unified-table-wrap" id="unifiedTableArea-${day.dateKey}">
+      ${snap.working.length ? unifiedDayTableHtml(day) : `<p class="off-note">出勤予定のメンバーがいません。</p>`}
+    </div>
+    <div class="day-block-footer">
+      ${hasSavedForecast ? `<span class="saved-indicator">💾 予測保存済み</span>` : ""}
+      ${hasSavedProd ? `<span class="saved-indicator">💾 割り振り保存済み</span>` : ""}
+      <button type="button" class="reset-day-btn" data-key="${day.dateKey}">🗑 全リセット</button>
+      <button type="button" class="reset-prod-btn" data-key="${day.dateKey}">🗑 割り振りリセット</button>
+    </div>
+  `;
+}
+
+function renderDayBlock(day){
+  const container = document.getElementById(`dayblock-${day.dateKey}`);
+  if(!container) return;
+  container.innerHTML = dayBlockHtml(day);
+  bindForecastTableEvents(day);
+  bindProductionDayEvents(day);
+}
 
 // 必要数（ALLOC_FILLINGS順）を「テープ」として、出勤メンバーの設定生産数(cap)で
 // 順番に切り出していく。1人のメンバーが今の具材で使い切れなければ次の具材に進み、
@@ -2015,15 +2245,10 @@ function refreshProductionCellDerived(day){
   if(grandTotalEl) grandTotalEl.textContent = snap.ningiTotal + snap.hqQty;
 }
 
-function refreshProductionDay(day){
-  const container = document.getElementById(`prodday-${day.dateKey}`);
-  if(!container) return;
-  container.innerHTML = productionDayHtml(day);
-  bindProductionDayEvents(day);
-}
+function refreshProductionDay(day){ renderDayBlock(day); }
 
 function bindProductionDayEvents(day){
-  const container = document.getElementById(`prodday-${day.dateKey}`);
+  const container = document.getElementById(`dayblock-${day.dateKey}`);
   if(!container) return;
 
   container.querySelectorAll(".prod-cell-input").forEach(input => {
@@ -2049,16 +2274,17 @@ function bindProductionDayEvents(day){
     });
   });
 
-  container.querySelectorAll(".bulk-btn:not(.undo-btn):not(.reset-prod-btn)").forEach(btn => {
+  container.querySelectorAll(".bulk-btn:not(.undo-btn)").forEach(btn => {
     btn.addEventListener("click", () => {
       const val = parseInt(btn.dataset.val, 10);
+      if(!val) return;
       const working = MEMBERS.filter(name => getManualQty(day, name) > 0);
       if(working.length === 0) return;
 
       day.undoSnapshot = { memberFillingQty: snapshotMemberFillingQty(day), bulkValue: day.bulkValue };
       applyBulkValue(day, val);
       saveProdAlloc(day);
-      refreshProductionDay(day);
+      renderDayBlock(day);
     });
   });
 
@@ -2069,7 +2295,7 @@ function bindProductionDayEvents(day){
       day.bulkValue = day.undoSnapshot.bulkValue;
       day.undoSnapshot = null;
       saveProdAlloc(day);
-      refreshProductionDay(day);
+      renderDayBlock(day);
     });
   });
 
@@ -2082,7 +2308,7 @@ function bindProductionDayEvents(day){
         day.bulkValue = null;
         day.undoSnapshot = null;
         day.memberFillingQty = {};
-        refreshProductionDay(day);
+        renderDayBlock(day);
         renderCellStatusTable();
       });
     });
@@ -2139,8 +2365,7 @@ function resetDayData(day){
   day.bulkValue = null;
   day.undoSnapshot = null;
   day.memberFillingQty = {};
-  renderForecastTable(day);
-  refreshProductionDay(day);
+  renderDayBlock(day);
   renderCellStatusTable();
 }
 
