@@ -574,30 +574,38 @@
   .week-this-week .week-title-badge{ background: #c9853f; }
   .week-next-next .week-title-badge{ background: #4f7a8c; }
 
-  /* ── 日付ブロック：2カラムヘッダー ── */
-  .day-block-2col-head{
-    display: grid;
-    grid-template-columns: 1fr 2px 1fr;
-    align-items: stretch;
+  /* ── 日付ブロック：カードレイアウト ── */
+  .day-block-body{
+    padding: 10px 10px 4px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
   }
-  .col-divider{
-    background: #c8cfd8;
-    border-bottom: 1px solid var(--line);
+  .day-2col-grid{
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
   }
   .day-col-forecast-head{
     padding: 10px 14px;
-    border-bottom: 1px solid var(--line);
-    background: rgba(221,238,228,0.25);
+    background: #fdfaf3;
+    border-radius: 8px;
+    border: 1px solid #e8e0c8;
     display: flex;
     flex-direction: column;
   }
   .day-col-prod-head{
     padding: 10px 14px;
-    border-bottom: 1px solid var(--line);
-    background: rgba(221,230,238,0.25);
+    background: #f0f3f7;
+    border-radius: 8px;
+    border: 1px solid #c9d8dd;
     display: flex;
     flex-direction: column;
   }
+  .week-this-week .day-col-forecast-head{ background: #fdf5e4; border-color: #e3c391; }
+  .week-this-week .day-col-prod-head{ background: #ecf1f5; border-color: #bfcdd8; }
+  .week-next-next .day-col-forecast-head{ background: #f5f8f5; border-color: #c9d5c9; }
+  .week-next-next .day-col-prod-head{ background: #eaf1f5; border-color: #b8cdd6; }
   .col-section-title{
     display: inline-block;
     font-size: 0.69rem;
@@ -620,54 +628,58 @@
   .store-item-with-toggle .store-item{ flex: 1; min-width: 0; }
   .store-item-with-toggle .reset-recommend-btn{ flex-shrink: 0; font-size: 0.65rem; }
 
-  @media (max-width: 768px){
-    .day-block-2col-head{ grid-template-columns: 1fr; }
-    .col-divider{ display: none; }
-  }
-
-  /* ── 統合テーブル ── */
-  .unified-table-wrap{
+  /* ── 2カラムテーブル ── */
+  .day-table-forecast{
     overflow-x: auto;
     -webkit-overflow-scrolling: touch;
+    background: #fdfaf3;
+    border-radius: 8px;
+    border: 1px solid #e8e0c8;
   }
-  table.unified-table{
+  .day-table-prod{
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    background: #f0f3f7;
+    border-radius: 8px;
+    border: 1px solid #c9d8dd;
+  }
+  .week-this-week .day-table-forecast{ background: #fdf5e4; border-color: #e3c391; }
+  .week-this-week .day-table-prod{ background: #ecf1f5; border-color: #bfcdd8; }
+  .week-next-next .day-table-forecast{ background: #f5f8f5; border-color: #c9d5c9; }
+  .week-next-next .day-table-prod{ background: #eaf1f5; border-color: #b8cdd6; }
+  table.day-sub-table{
     width: 100%;
     border-collapse: collapse;
     font-size: 0.78rem;
   }
-  table.unified-table th, table.unified-table td{
+  table.day-sub-table th, table.day-sub-table td{
     border-bottom: 1px solid var(--line);
     padding: 5px 5px;
     text-align: center;
     white-space: nowrap;
     vertical-align: middle;
   }
-  table.unified-table th{ color: var(--main-dark); font-weight: bold; background: var(--main-light); }
-  table.unified-table td.f-name{ text-align: left; padding-left: 10px; min-width: 90px; }
-  table.unified-table th.ut-filling-head{ text-align: left; padding-left: 10px; }
-  table.unified-table th.ut-section-head{ font-size: 0.72rem; letter-spacing: 0.05em; }
-  table.unified-table th.ut-forecast-head{ background: #ddeee4; color: var(--main-dark); }
-  table.unified-table th.ut-prod-head{ background: #dde6ee; color: #2c5272; }
-  /* 区切り列 */
-  table.unified-table td.ut-sep,
-  table.unified-table th.ut-sep{
-    width: 3px;
-    padding: 0;
-    background: #c8cfd8 !important;
-    border: none;
-  }
-  table.unified-table td.cell-readonly{ color: #666; }
-  table.unified-table td.cell-row-total{ font-weight: bold; color: var(--main-dark); }
-  table.unified-table tfoot td{
+  table.day-sub-table th{ color: var(--main-dark); font-weight: bold; background: var(--main-light); }
+  table.day-sub-table td.f-name{ text-align: left; padding-left: 10px; min-width: 90px; }
+  table.day-sub-table th.f-name{ text-align: left; padding-left: 10px; }
+  table.day-sub-table th.sub-forecast-head{ background: #ddeee4; color: var(--main-dark); }
+  table.day-sub-table th.sub-prod-head{ background: #dde6ee; color: #2c5272; }
+  table.day-sub-table td.cell-readonly{ color: #666; }
+  table.day-sub-table td.cell-row-total{ font-weight: bold; color: var(--main-dark); }
+  table.day-sub-table tfoot td{
     border-bottom: none;
     border-top: 2px solid var(--main-light);
     font-weight: bold;
     color: var(--main-dark);
-    background: #f2f7f3;
+    background: rgba(242,247,243,0.8);
     padding-top: 7px;
     padding-bottom: 7px;
   }
-  table.unified-table tfoot td.ut-sep{ background: #c8cfd8 !important; border-top: 2px solid #b4bec8; }
+
+  @media (max-width: 768px){
+    .day-2col-grid{ grid-template-columns: 1fr; }
+  }
+
   .prod-heading-row{
     display: flex;
     align-items: center;
@@ -1746,24 +1758,62 @@ function renderProductionSection(){ renderCombined(); }
 
 /* ---------- 統合テーブル：1日分を1つの<table>で描画 ---------- */
 
-function unifiedDayTableHtml(day){
-  const snap = computeDaySnapshot(day);
-  const { working, memberCaps, hqBreakdown, hqQty, memberTotals, ningiTotal } = snap;
+function splitForecastTableHtml(day){
   const showUva = [1, 2, 4].includes(day.dow);
   const chise = state.chiseByDate[mdLabel(day.dateObj)];
   const chiseBreakdown = chise ? chise.breakdown : {};
   const chiseQty = chise ? chise.subtotal : 0;
-
-  const memberHeaderCells = working.map((name, i) =>
-    `<th>${name}<br><small class="wish-hint">希望:${memberCaps[i]}個</small></th>`
-  ).join("");
 
   const rows = FILLINGS.map(f => {
     const zuidQty = day.zuidFillingQty[f] || 0;
     const uvaQty = showUva ? (day.uvaFillingQty[f] || 0) : 0;
     const chiseQtyForFilling = chiseBreakdown[f] || 0;
     const forecastRowTotal = zuidQty + uvaQty + chiseQtyForFilling;
+    return `<tr>
+        <td class="f-name">${f}</td>
+        <td>${qtyStepperHtml(day, "zuid", f, zuidQty, day.zuidOpen)}</td>
+        <td>${showUva ? qtyStepperHtml(day, "uva", f, uvaQty, day.uvaOpen) : "—"}</td>
+        <td class="cell-readonly">${chiseQtyForFilling}</td>
+        <td class="cell-readonly cell-row-total" id="rowTotal-${day.dateKey}-${f}">${forecastRowTotal}</td>
+      </tr>`;
+  }).join("");
 
+  const zuidTotal = sumQtyMap(day.zuidFillingQty);
+  const uvaTotal = showUva ? sumQtyMap(day.uvaFillingQty) : 0;
+  const forecastGrandTotal = zuidTotal + uvaTotal + chiseQty;
+
+  return `<table class="day-sub-table">
+      <thead>
+        <tr>
+          <th class="f-name">具材</th>
+          <th class="sub-forecast-head">Zuid</th>
+          <th class="sub-forecast-head">UvA</th>
+          <th class="sub-forecast-head">チセ</th>
+          <th class="sub-forecast-head">販売計</th>
+        </tr>
+      </thead>
+      <tbody>${rows}</tbody>
+      <tfoot>
+        <tr>
+          <td>合計</td>
+          <td id="storeTotal-zuid-${day.dateKey}">${zuidTotal}</td>
+          <td id="storeTotal-uva-${day.dateKey}">${uvaTotal}</td>
+          <td>${chiseQty}</td>
+          <td class="cell-row-total" id="forecastGrandTotal-${day.dateKey}">${forecastGrandTotal}</td>
+        </tr>
+      </tfoot>
+    </table>`;
+}
+
+function splitProdTableHtml(day){
+  const snap = computeDaySnapshot(day);
+  const { working, memberCaps, hqBreakdown, hqQty, memberTotals, ningiTotal } = snap;
+
+  const memberHeaderCells = working.map((name, i) =>
+    `<th class="sub-prod-head">${name}<br><small class="wish-hint">希望:${memberCaps[i]}個</small></th>`
+  ).join("");
+
+  const rows = FILLINGS.map(f => {
     const isFixedHq = ALWAYS_HQ_FILLINGS.includes(f);
     const memberCells = working.map(name => {
       const qty = (day.memberFillingQty[name] && day.memberFillingQty[name][f]) || 0;
@@ -1776,56 +1826,32 @@ function unifiedDayTableHtml(day){
     const hqDisplay = hqVal < 0
       ? `<span class="hq-negative">${hqVal}<span class="hq-over-badge">⚠️超過</span></span>`
       : `${hqVal}`;
-
     return `<tr>
         <td class="f-name">${f}</td>
-        <td>${qtyStepperHtml(day, "zuid", f, zuidQty, day.zuidOpen)}</td>
-        <td>${showUva ? qtyStepperHtml(day, "uva", f, uvaQty, day.uvaOpen) : "—"}</td>
-        <td class="cell-readonly">${chiseQtyForFilling}</td>
-        <td class="cell-readonly cell-row-total" id="rowTotal-${day.dateKey}-${f}">${forecastRowTotal}</td>
-        <td class="ut-sep"></td>
         ${memberCells}
         <td class="cell-readonly" id="prodHq-${day.dateKey}-${f}">${hqDisplay}</td>
         <td class="cell-readonly cell-row-total" id="prodRowTotal-${day.dateKey}-${f}">${prodRowTotal}</td>
       </tr>`;
   }).join("");
 
-  const zuidTotal = sumQtyMap(day.zuidFillingQty);
-  const uvaTotal = showUva ? sumQtyMap(day.uvaFillingQty) : 0;
-  const forecastGrandTotal = zuidTotal + uvaTotal + chiseQty;
   const colTotalCells = working.map((name, i) =>
     `<td class="cell-readonly cell-row-total" id="prodColTotal-${day.dateKey}-${name}">${memberTotals[i]}</td>`
   ).join("");
   const prodGrandTotal = ningiTotal + hqQty;
-  const memberCount = working.length;
 
-  return `<table class="unified-table">
+  return `<table class="day-sub-table">
       <thead>
         <tr>
-          <th rowspan="2" class="f-name">具材</th>
-          <th colspan="4" class="ut-section-head ut-forecast-head">販売決定数</th>
-          <th rowspan="2" class="ut-sep"></th>
-          <th colspan="${memberCount + 2}" class="ut-section-head ut-prod-head">生産割り振り</th>
-        </tr>
-        <tr>
-          <th>Zuid</th>
-          <th>UvA</th>
-          <th>チセ</th>
-          <th>販売計</th>
+          <th class="f-name">具材</th>
           ${memberHeaderCells}
-          <th>本部</th>
-          <th>生産計</th>
+          <th class="sub-prod-head">本部</th>
+          <th class="sub-prod-head">生産計</th>
         </tr>
       </thead>
       <tbody>${rows}</tbody>
       <tfoot>
         <tr>
           <td>合計</td>
-          <td id="storeTotal-zuid-${day.dateKey}">${zuidTotal}</td>
-          <td id="storeTotal-uva-${day.dateKey}">${uvaTotal}</td>
-          <td>${chiseQty}</td>
-          <td class="cell-row-total" id="forecastGrandTotal-${day.dateKey}">${forecastGrandTotal}</td>
-          <td class="ut-sep"></td>
           ${colTotalCells}
           <td class="cell-readonly" id="prodHqTotal-${day.dateKey}">${hqQty < 0 ? `<span class="hq-negative">${hqQty}<span class="hq-over-badge">⚠️超過</span></span>` : hqQty}</td>
           <td class="cell-readonly cell-row-total" id="prodGrandTotal-${day.dateKey}">${prodGrandTotal}</td>
@@ -1865,36 +1891,42 @@ function dayBlockHtml(day){
   const hasSavedProd = !!localStorage.getItem(`chabon_prod_${mdLabel(day.dateObj)}`);
 
   return `
-    <div class="day-block-2col-head">
-      <div class="day-col-forecast-head">
-        <div class="col-section-title ut-forecast-head">販売予測数</div>
-        <div class="day-meta">
-          <div class="day-head">${day.label}</div>
-          <div class="day-weather"><span class="weather-icon">${day.weatherIcon}</span><span class="weather-temp">${day.tempLabel}</span></div>
-          ${day.holidayName ? `<div class="holiday-badge">🎉 祝日：${day.holidayName}</div>` : ""}
-          ${day.nsDisruptions && day.nsDisruptions.length ? `<div class="ns-badge">🚆 NSストライキ/運休</div>` : ""}
-          ${isConfirmed ? `<div class="confirmed-badge">✓ 確定済み</div>` : ""}
+    <div class="day-block-body">
+      <div class="day-2col-grid">
+        <div class="day-col-forecast-head">
+          <div class="col-section-title ut-forecast-head">販売予測数</div>
+          <div class="day-meta">
+            <div class="day-head">${day.label}</div>
+            <div class="day-weather"><span class="weather-icon">${day.weatherIcon}</span><span class="weather-temp">${day.tempLabel}</span></div>
+            ${day.holidayName ? `<div class="holiday-badge">🎉 祝日：${day.holidayName}</div>` : ""}
+            ${day.nsDisruptions && day.nsDisruptions.length ? `<div class="ns-badge">🚆 NSストライキ/運休</div>` : ""}
+            ${isConfirmed ? `<div class="confirmed-badge">✓ 確定済み</div>` : ""}
+          </div>
+          <div class="store-stack-with-toggle">
+            ${storeBoxWithToggleHtml(day, "zuid", "Zuid", day.zuid, isConfirmed)}
+            ${showUva ? storeBoxWithToggleHtml(day, "uva", "UvA", day.uva, isConfirmed) : ""}
+          </div>
         </div>
-        <div class="store-stack-with-toggle">
-          ${storeBoxWithToggleHtml(day, "zuid", "Zuid", day.zuid, isConfirmed)}
-          ${showUva ? storeBoxWithToggleHtml(day, "uva", "UvA", day.uva, isConfirmed) : ""}
+        <div class="day-col-prod-head">
+          <div class="col-section-title ut-prod-head">生産割り振り</div>
+          <div class="day-block-bulk">
+            <button type="button" class="bulk-btn ${day.bulkValue === 24 ? "active" : ""}" data-key="${day.dateKey}" data-val="24">全員24個</button>
+            <button type="button" class="bulk-btn ${day.bulkValue === 27 ? "active" : ""}" data-key="${day.dateKey}" data-val="27">全員27個</button>
+            <button type="button" class="bulk-btn ${day.bulkValue === 30 ? "active" : ""}" data-key="${day.dateKey}" data-val="30">全員30個</button>
+            <button type="button" class="bulk-btn ${day.bulkValue === 45 ? "active" : ""}" data-key="${day.dateKey}" data-val="45">全員45個</button>
+            <button type="button" class="bulk-btn undo-btn" data-key="${day.dateKey}" ${day.undoSnapshot ? "" : "disabled"}>↺ 元に戻す</button>
+          </div>
+          <div class="prod-summary" id="summaryBlock-${day.dateKey}">${summaryHtmlFor(snap)}</div>
         </div>
       </div>
-      <div class="col-divider"></div>
-      <div class="day-col-prod-head">
-        <div class="col-section-title ut-prod-head">生産割り振り</div>
-        <div class="day-block-bulk">
-          <button type="button" class="bulk-btn ${day.bulkValue === 24 ? "active" : ""}" data-key="${day.dateKey}" data-val="24">全員24個</button>
-          <button type="button" class="bulk-btn ${day.bulkValue === 27 ? "active" : ""}" data-key="${day.dateKey}" data-val="27">全員27個</button>
-          <button type="button" class="bulk-btn ${day.bulkValue === 30 ? "active" : ""}" data-key="${day.dateKey}" data-val="30">全員30個</button>
-          <button type="button" class="bulk-btn ${day.bulkValue === 45 ? "active" : ""}" data-key="${day.dateKey}" data-val="45">全員45個</button>
-          <button type="button" class="bulk-btn undo-btn" data-key="${day.dateKey}" ${day.undoSnapshot ? "" : "disabled"}>↺ 元に戻す</button>
+      <div class="day-2col-grid">
+        <div class="day-table-forecast">
+          ${splitForecastTableHtml(day)}
         </div>
-        <div class="prod-summary" id="summaryBlock-${day.dateKey}">${summaryHtmlFor(snap)}</div>
+        <div class="day-table-prod">
+          ${snap.working.length ? splitProdTableHtml(day) : `<p class="off-note">出勤予定のメンバーがいません。</p>`}
+        </div>
       </div>
-    </div>
-    <div class="unified-table-wrap" id="unifiedTableArea-${day.dateKey}">
-      ${snap.working.length ? unifiedDayTableHtml(day) : `<p class="off-note">出勤予定のメンバーがいません。</p>`}
     </div>
     <div class="day-block-footer">
       ${hasSavedForecast ? `<span class="saved-indicator">💾 予測保存済み</span>` : ""}
