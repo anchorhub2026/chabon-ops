@@ -166,7 +166,7 @@
   .day-col-forecast-head .day-head{
     font-weight: bold;
     color: var(--main-dark);
-    font-size: 1.9rem;
+    font-size: 1.4rem;
     margin-bottom: 6px;
     line-height: 1.15;
   }
@@ -579,10 +579,23 @@
     display: grid;
     grid-template-columns: 1fr 1fr;
     align-items: stretch;
+    position: relative;
+  }
+  /* true-center divider: left:50% で数学的中央に固定し border-box の影響を受けない */
+  .day-block-2col-head::after{
+    content: '';
+    position: absolute;
+    left: 50%;
+    top: 0;
+    bottom: 0;
+    width: 3px;
+    transform: translateX(-50%);
+    background: #c8cfd8;
+    pointer-events: none;
+    z-index: 1;
   }
   .day-col-forecast-head{
     padding: 10px 14px;
-    border-right: 3px solid #c8cfd8;
     border-bottom: 1px solid var(--line);
     background: rgba(221,238,228,0.25);
     display: flex;
@@ -619,7 +632,8 @@
 
   @media (max-width: 768px){
     .day-block-2col-head{ grid-template-columns: 1fr; }
-    .day-col-forecast-head{ border-right: none; }
+    .day-block-2col-head::after{ display: none; }
+    .day-col-forecast-head{ border-bottom: 1px solid var(--line); }
   }
 
   /* ── 統合テーブル ── */
