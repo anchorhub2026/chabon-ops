@@ -13,6 +13,8 @@ function doPost(e) {
     handleSaveDraft(ss, data);
   } else if (data.type === "saveStatus") {
     handleSaveStatus(ss, data);
+  } else if (data.type === "saveActual") {
+    handleSaveActual(ss, data);
   } else {
     // type が無い場合（旧バージョンのshift.html等）もシフト回答として扱う
     handleShiftSubmit(ss, data);
@@ -157,6 +159,31 @@ function handleSaveStatus(ss, data) {
   } else {
     sheet.appendRow(row);
   }
+}
+
+function handleSaveActual(ss, data) {
+  var sheet = ss.getSheetByName("販売実績");
+  if (!sheet) {
+    sheet = ss.insertSheet("販売実績");
+    sheet.appendRow(["日付", "具材", "確定数", "完売時刻", "残り個数", "記録日時"]);
+  }
+  var values = sheet.getDataRange().getValues();
+  var ts = new Date();
+  (data.items || []).forEach(function(item) {
+    var foundRow = -1;
+    for (var r = 1; r < values.length; r++) {
+      if (normalizeDateCell(values[r][0]) === String(data.date) && String(values[r][1]) === String(item.filling)) {
+        foundRow = r + 1;
+        break;
+      }
+    }
+    var row = [data.date, item.filling, item.total, item.soldOutTime || "", item.remaining || 0, ts];
+    if (foundRow > 0) {
+      sheet.getRange(foundRow, 1, 1, 6).setValues([row]);
+    } else {
+      sheet.appendRow(row);
+    }
+  });
 }
 
 function handleGetStatus(ss) {

@@ -2507,8 +2507,8 @@ async function saveStatusToSheet(isoDateStr, member, handed, cooked){
 function renderCellStatusTable(){
   const area = document.getElementById("cellStatusArea");
 
-  // 出勤メンバーがいる日のみ表示
-  const activeDays = state.days.filter(d => MEMBERS.some(name => getManualQty(d, name) > 0));
+  // 具材割り振りが1件以上ある日のみ表示（希望個数ではなく実際の割り振りで判定）
+  const activeDays = state.days.filter(d => MEMBERS.some(name => FILLINGS.some(f => (d.memberFillingQty[name] && d.memberFillingQty[name][f] || 0) > 0)));
 
   if(activeDays.length === 0){
     area.innerHTML = `<p class="off-note">生産割り振りにデータがありません。</p>`;
@@ -2522,14 +2522,13 @@ function renderCellStatusTable(){
   const bodyRows = MEMBERS.map(name => {
     let anyDay = false;
     const cells = activeDays.map(day => {
-      const qty = getManualQty(day, name);
-      if(qty <= 0) return `<td class="no-plan">—</td>`;
+      const fillings = FILLINGS.filter(f => (day.memberFillingQty[name] && day.memberFillingQty[name][f] || 0) > 0);
+      if(fillings.length === 0) return `<td class="no-plan">—</td>`;
       anyDay = true;
       const key = mdLabel(day.dateObj);
       ensureCellStatus(key, name);
       const st = state.cellStatus[key][name];
-      const fillings = FILLINGS.filter(f => (day.memberFillingQty[name] && day.memberFillingQty[name][f] || 0) > 0);
-      const fillingText = fillings.map(f => `${f}×${day.memberFillingQty[name][f]}`).join(" ") || `${qty}個`;
+      const fillingText = fillings.map(f => `${f}×${day.memberFillingQty[name][f]}`).join(" ");
       return `
         <td>
           <div class="cell-fillings">${fillingText}</div>

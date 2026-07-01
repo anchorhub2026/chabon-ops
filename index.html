@@ -393,6 +393,18 @@
   }
   .confirm-btn.yes{ background: var(--main); color: #fff; }
   .confirm-btn.no{ background: #e2ddd0; color: #555; }
+  /* 販売実績 */
+  #actualSalesArea table{ width: 100%; border-collapse: collapse; font-size: 0.9rem; }
+  #actualSalesArea th, #actualSalesArea td{ padding: 6px 8px; border-bottom: 1px solid #e0dbd0; text-align: left; }
+  #actualSalesArea th{ background: var(--main-light); color: var(--main-dark); font-weight: bold; }
+  #actualSalesArea input[type="text"], #actualSalesArea input[type="number"]{
+    border: 1px solid #ccc; border-radius: 4px; padding: 4px 6px; font-size: 0.88rem; width: 80px;
+  }
+  .record-btn{
+    margin-top: 12px; padding: 10px 28px; background: var(--main); color: #fff;
+    border: none; border-radius: 6px; font-size: 1rem; font-weight: bold; cursor: pointer;
+  }
+  .record-btn:disabled{ background: #aaa; cursor: default; }
 </style>
 </head>
 <body>
@@ -438,6 +450,11 @@
   <section>
     <h2>具材割り振り表</h2>
     <div id="fillingArea"></div>
+  </section>
+
+  <section>
+    <h2>今日の販売実績</h2>
+    <div id="actualSalesArea"><p class="off-note">読み込み中...</p></div>
   </section>
 
   <section>
@@ -1064,6 +1081,80 @@ function renderWeeklyView(){
   }).join("");
 }
 
+function getTodayFillingTotals(plan){
+  const totals = {};
+  parseNingiBreakdown(plan.ningiBreakdown).forEach(m => {
+    m.items.forEach(it => {
+      if(it.qty > 0) totals[it.filling] = (totals[it.filling] || 0) + it.qty;
+    });
+  });
+  parseFillingString(plan.hqBreakdown).forEach(it => {
+    if(it.qty > 0) totals[it.filling] = (totals[it.filling] || 0) + it.qty;
+  });
+  return totals;
+}
+
+function renderActualSales(){
+  const area = document.getElementById("actualSalesArea");
+  if(!state.dailyResults.length){ area.innerHTML = `<p class="off-note">読み込み中...</p>`; return; }
+
+  const todayKey = mdLabel(state.dailyResults[0].dateStr);
+  const plan = state.confirmedPlanByDate[todayKey];
+  if(!plan){ area.innerHTML = `<p class="off-note">確定プランがまだありません。</p>`; return; }
+
+  const totals = getTodayFillingTotals(plan);
+  const fillings = FILLINGS.filter(f => (totals[f] || 0) > 0);
+
+  if(fillings.length === 0){ area.innerHTML = `<p class="off-note">具材の割り振りがありません。</p>`; return; }
+
+  const rows = fillings.map(f => `
+    <tr>
+      <td>${f}</td>
+      <td>${totals[f]}個</td>
+      <td><input type="text" class="actual-time-input" data-filling="${f}" placeholder="15:30" maxlength="5"></td>
+      <td><input type="number" class="actual-remaining-input" data-filling="${f}" placeholder="0" min="0" max="${totals[f]}" value="0"></td>
+    </tr>
+  `).join("");
+
+  area.innerHTML = `
+    <table>
+      <thead><tr><th>具材</th><th>確定数</th><th>完売時刻</th><th>残り個数</th></tr></thead>
+      <tbody>${rows}</tbody>
+    </table>
+    <button class="record-btn" id="saveActualBtn">記録する</button>
+  `;
+
+  document.getElementById("saveActualBtn").addEventListener("click", saveActual);
+}
+
+async function saveActual(){
+  const todayKey = mdLabel(state.dailyResults[0].dateStr);
+  const plan = state.confirmedPlanByDate[todayKey];
+  if(!plan) return;
+
+  const totals = getTodayFillingTotals(plan);
+  const items = FILLINGS.filter(f => (totals[f] || 0) > 0).map(f => ({
+    filling: f,
+    total: totals[f],
+    soldOutTime: (document.querySelector(`.actual-time-input[data-filling="${f}"]`) || {}).value || "",
+    remaining: parseInt((document.querySelector(`.actual-remaining-input[data-filling="${f}"]`) || {}).value, 10) || 0,
+  }));
+
+  const btn = document.getElementById("saveActualBtn");
+  btn.disabled = true;
+  btn.textContent = "送信中...";
+
+  try{
+    await fetch(SCRIPT_URL, { method: "POST", mode: "no-cors", body: JSON.stringify({ type: "saveActual", date: state.dailyResults[0].dateStr, items }) });
+    btn.textContent = "✓ 記録しました";
+    setTimeout(() => { btn.textContent = "記録する"; btn.disabled = false; }, 3000);
+  }catch(e){
+    console.error("実績記録失敗:", e);
+    btn.textContent = "記録する";
+    btn.disabled = false;
+  }
+}
+
 function renderFillings(){
   const area = document.getElementById("fillingArea");
 
@@ -1169,11 +1260,12 @@ function renderWeeklyStatusTable(){
       }
 
       const items = map[m.name];
-      if(!items){
+      const allocatedItems = items ? items.filter(it => it.qty > 0) : null;
+      if(!allocatedItems || allocatedItems.length === 0){
         return `<td>—</td>`;
       }
 
-      const fillingText = items.filter(it => it.qty > 0).map(it => `${it.filling}×${it.qty}`).join(" ") || "—";
+      const fillingText = allocatedItems.map(it => `${it.filling}×${it.qty}`).join(" ");
       const st = state.cellStatus[key][m.name];
 
       return `
@@ -1261,6 +1353,7 @@ async function loadWeather(){
     renderRecommendation();
     renderWeeklyView();
     renderFillings();
+    renderActualSales();
     await fetchStatusFromSheet();
     renderWeeklyStatusTable();
   }catch(e){
