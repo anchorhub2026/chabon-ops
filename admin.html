@@ -37,6 +37,23 @@
   header h1{ margin: 0; font-size: 1.3rem; letter-spacing: 0.05em; }
   header p{ margin: 6px 0 0; font-size: 0.82rem; opacity: 0.85; }
   .header-nav{ margin-top: 12px; }
+  .header-refresh-btn{
+    display: inline-block;
+    margin-top: 14px;
+    background: rgba(255,255,255,0.15);
+    color: #fff;
+    border: 2px solid rgba(255,255,255,0.45);
+    border-radius: 100px;
+    padding: 10px 26px;
+    font-size: 0.95rem;
+    font-weight: bold;
+    cursor: pointer;
+    min-width: 170px;
+    transition: background 0.14s, border-color 0.14s;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .header-refresh-btn:active{ background: rgba(255,255,255,0.28); border-color: rgba(255,255,255,0.7); }
+  .header-refresh-btn:disabled{ opacity: 0.55; cursor: default; }
   .header-nav a{
     display: inline-block;
     background: rgba(255,255,255,0.12);
@@ -939,6 +956,7 @@
     <a href="shift.html">シフト入力</a>
     <a href="#paymentSection">月次支払い</a>
   </nav>
+  <div><button type="button" class="header-refresh-btn" id="headerRefreshBtn">🔄 データを更新</button></div>
 </header>
 
 <main>
@@ -2626,6 +2644,56 @@ function renderShiftTable(){
 
 /* ---------- シフト希望の再読み込み ---------- */
 
+async function refreshAllData(){
+  const btn = document.getElementById("headerRefreshBtn");
+  if(btn){ btn.disabled = true; btn.textContent = "更新中..."; }
+
+  try{
+    const weatherUrl = `https://api.open-meteo.com/v1/forecast?latitude=${LAT}&longitude=${LON}` +
+      `&daily=temperature_2m_max,temperature_2m_min,weathercode` +
+      `&hourly=temperature_2m,precipitation,weathercode` +
+      `&forecast_days=16&timezone=Europe%2FAmsterdam`;
+
+    const thisYear = new Date().getFullYear();
+    const [weatherRes, chiseJson, shiftJson, holidaysByIso, nsDisruptionsByDate] = await Promise.all([
+      fetch(weatherUrl).then(r => r.json()),
+      fetchSheetJson(null).catch(e => { console.error("チセさんシート取得失敗", e); return null; }),
+      fetchSheetJson("シフト回答", SHIFT_SPREADSHEET_ID).catch(e => { console.error("シフト回答シート取得失敗", e); return null; }),
+      fetchDutchHolidays([thisYear, thisYear + 1]),
+      fetchNsDisruptions(),
+    ]);
+
+    state.holidaysByIso = holidaysByIso;
+    state.nsDisruptionsByDate = nsDisruptionsByDate;
+    state.confirmedByDate = loadConfirmedFromStorage();
+    state.cellStatus = loadCellStatusFromStorage();
+
+    const hourlyByDate = buildHourlyByDate(weatherRes.hourly);
+    state.days = buildDays(weatherRes.daily, hourlyByDate);
+    state.days.forEach(day => {
+      loadForecastData(day);
+      loadProdAllocData(day);
+    });
+    state.chiseByDate = chiseJson ? parseChiseSheet(chiseJson) : {};
+    const shiftParsed = shiftJson ? parseShiftSheet(shiftJson) : { byDate: {}, notesByName: {} };
+    state.shiftByDate  = shiftParsed.byDate;
+    state.notesByName  = shiftParsed.notesByName;
+
+    renderCombined();
+    renderShiftTable();
+    renderCellStatusTable();
+
+    if(btn){ btn.textContent = "✓ 更新しました"; }
+  }catch(e){
+    console.error("データ更新失敗", e);
+    if(btn){ btn.textContent = "✕ 失敗しました"; }
+  }finally{
+    setTimeout(() => {
+      if(btn){ btn.disabled = false; btn.textContent = "🔄 データを更新"; }
+    }, 2000);
+  }
+}
+
 async function refreshShiftData(){
   const btn = document.getElementById("refreshShiftBtn");
   if(!btn) return;
@@ -2864,6 +2932,9 @@ async function init(){
 
     const refreshBtn = document.getElementById("refreshShiftBtn");
     if(refreshBtn) refreshBtn.addEventListener("click", refreshShiftData);
+
+    const headerRefreshBtn = document.getElementById("headerRefreshBtn");
+    if(headerRefreshBtn) headerRefreshBtn.addEventListener("click", refreshAllData);
   }catch(e){
     console.error(e);
     document.getElementById("combinedArea").innerHTML = "<p class='off-note'>データの取得に失敗しました。</p>";
