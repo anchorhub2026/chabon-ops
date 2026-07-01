@@ -393,13 +393,18 @@
   }
   .confirm-btn.yes{ background: var(--main); color: #fff; }
   .confirm-btn.no{ background: #e2ddd0; color: #555; }
-  /* 販売実績 */
-  #actualSalesArea table{ width: 100%; border-collapse: collapse; font-size: 0.9rem; }
-  #actualSalesArea th, #actualSalesArea td{ padding: 6px 8px; border-bottom: 1px solid #e0dbd0; text-align: left; }
-  #actualSalesArea th{ background: var(--main-light); color: var(--main-dark); font-weight: bold; }
-  #actualSalesArea input[type="text"], #actualSalesArea input[type="number"]{
-    border: 1px solid #ccc; border-radius: 4px; padding: 4px 6px; font-size: 0.88rem; width: 80px;
+  /* 時間帯別実績 */
+  #actualSalesArea{ overflow-x: auto; }
+  .hourly-table{ border-collapse: collapse; font-size: 0.82rem; min-width: 580px; }
+  .hourly-table th, .hourly-table td{ padding: 5px 6px; border-bottom: 1px solid #e0dbd0; text-align: center; white-space: nowrap; }
+  .hourly-table th{ background: var(--main-light); color: var(--main-dark); font-weight: bold; }
+  .hourly-table .col-name{ text-align: left; font-weight: bold; }
+  .hourly-table input[type="number"]{
+    width: 52px; border: 1px solid #ccc; border-radius: 4px;
+    padding: 3px 4px; font-size: 0.82rem; text-align: center;
   }
+  .sold-display{ font-size: 0.7rem; color: #888; margin-top: 2px; min-height: 14px; }
+  .sold-neg{ color: #e53; }
   .record-btn{
     margin-top: 12px; padding: 10px 28px; background: var(--main); color: #fff;
     border: none; border-radius: 6px; font-size: 1rem; font-weight: bold; cursor: pointer;
@@ -651,6 +656,7 @@ const FILLINGS = ["ツナマヨ","スパイシーツナマヨ","テリヤキチ�
 const DAY_NAMES = ["日","月","火","水","木","金","土"];
 
 const OPERATING_DAYS = [1, 2, 3, 4]; // 月火水木
+const HOURLY_SLOTS = [12, 13, 14, 15, 16, 17];
 
 const state = {
   members: [
@@ -1098,54 +1104,94 @@ function renderActualSales(){
   const area = document.getElementById("actualSalesArea");
   if(!state.dailyResults.length){ area.innerHTML = `<p class="off-note">読み込み中...</p>`; return; }
 
-  const todayKey = mdLabel(state.dailyResults[0].dateStr);
-  const plan = state.confirmedPlanByDate[todayKey];
+  const today = state.dailyResults[0];
+  const plan = state.confirmedPlanByDate[mdLabel(today.dateStr)];
   if(!plan){ area.innerHTML = `<p class="off-note">確定プランがまだありません。</p>`; return; }
 
   const totals = getTodayFillingTotals(plan);
   const fillings = FILLINGS.filter(f => (totals[f] || 0) > 0);
-
   if(fillings.length === 0){ area.innerHTML = `<p class="off-note">具材の割り振りがありません。</p>`; return; }
 
-  const rows = fillings.map(f => `
-    <tr>
-      <td>${f}</td>
-      <td>${totals[f]}個</td>
-      <td><input type="text" class="actual-time-input" data-filling="${f}" placeholder="15:30" maxlength="5"></td>
-      <td><input type="number" class="actual-remaining-input" data-filling="${f}" placeholder="0" min="0" max="${totals[f]}" value="0"></td>
-    </tr>
-  `).join("");
+  const slotHeaders = HOURLY_SLOTS.map(h => `<th>${h}時残り</th>`).join("");
+
+  const rows = fillings.map(f => {
+    const slotCells = HOURLY_SLOTS.map((h, i) => `
+      <td>
+        <input type="number" class="hourly-input" data-filling="${f}" data-slot="${i}"
+               min="0" max="${totals[f]}" placeholder="—">
+        <div class="sold-display" id="sold-${f.replace(/\s/g,"_")}-${i}"></div>
+      </td>`).join("");
+    return `<tr><td class="col-name">${f}</td><td>${totals[f]}</td>${slotCells}</tr>`;
+  }).join("");
 
   area.innerHTML = `
-    <table>
-      <thead><tr><th>具材</th><th>確定数</th><th>完売時刻</th><th>残り個数</th></tr></thead>
+    <table class="hourly-table">
+      <thead><tr><th class="col-name">具材</th><th>作った数</th>${slotHeaders}</tr></thead>
       <tbody>${rows}</tbody>
     </table>
     <button class="record-btn" id="saveActualBtn">記録する</button>
   `;
 
+  area.querySelectorAll(".hourly-input").forEach(inp =>
+    inp.addEventListener("input", () => updateSoldDisplay(totals, fillings))
+  );
   document.getElementById("saveActualBtn").addEventListener("click", saveActual);
 }
 
+function updateSoldDisplay(totals, fillings){
+  fillings.forEach(f => {
+    const key = f.replace(/\s/g, "_");
+    const vals = HOURLY_SLOTS.map((h, i) => {
+      const el = document.querySelector(`.hourly-input[data-filling="${f}"][data-slot="${i}"]`);
+      return (el && el.value !== "") ? parseInt(el.value, 10) : null;
+    });
+    HOURLY_SLOTS.forEach((h, i) => {
+      const el = document.getElementById(`sold-${key}-${i}`);
+      if(!el) return;
+      const curr = vals[i];
+      if(curr === null){ el.textContent = ""; return; }
+      const prev = i === 0 ? totals[f] : vals[i - 1];
+      if(prev === null){ el.textContent = ""; return; }
+      const sold = prev - curr;
+      el.textContent = `売:${sold}`;
+      el.className = sold < 0 ? "sold-display sold-neg" : "sold-display";
+    });
+  });
+}
+
 async function saveActual(){
-  const todayKey = mdLabel(state.dailyResults[0].dateStr);
-  const plan = state.confirmedPlanByDate[todayKey];
+  const today = state.dailyResults[0];
+  const plan = state.confirmedPlanByDate[mdLabel(today.dateStr)];
   if(!plan) return;
 
   const totals = getTodayFillingTotals(plan);
-  const items = FILLINGS.filter(f => (totals[f] || 0) > 0).map(f => ({
-    filling: f,
-    total: totals[f],
-    soldOutTime: (document.querySelector(`.actual-time-input[data-filling="${f}"]`) || {}).value || "",
-    remaining: parseInt((document.querySelector(`.actual-remaining-input[data-filling="${f}"]`) || {}).value, 10) || 0,
-  }));
+  const fillings = FILLINGS.filter(f => (totals[f] || 0) > 0);
+  const w = weatherInfo(today.code);
+
+  const items = fillings.map(f => {
+    const slotVals = HOURLY_SLOTS.map((h, i) => {
+      const el = document.querySelector(`.hourly-input[data-filling="${f}"][data-slot="${i}"]`);
+      return (el && el.value !== "") ? parseInt(el.value, 10) : "";
+    });
+    return { filling: f, total: totals[f],
+      r12: slotVals[0], r13: slotVals[1], r14: slotVals[2],
+      r15: slotVals[3], r16: slotVals[4], r17: slotVals[5] };
+  });
+
+  const payload = {
+    type: "saveHourly",
+    date: today.dateStr,
+    weekday: DAY_NAMES[today.dow] + "曜",
+    weather: w.text,
+    temp: Math.round(today.maxTemp),
+    items,
+  };
 
   const btn = document.getElementById("saveActualBtn");
   btn.disabled = true;
   btn.textContent = "送信中...";
-
   try{
-    await fetch(SCRIPT_URL, { method: "POST", mode: "no-cors", body: JSON.stringify({ type: "saveActual", date: state.dailyResults[0].dateStr, items }) });
+    await fetch(SCRIPT_URL, { method: "POST", mode: "no-cors", body: JSON.stringify(payload) });
     btn.textContent = "✓ 記録しました";
     setTimeout(() => { btn.textContent = "記録する"; btn.disabled = false; }, 3000);
   }catch(e){

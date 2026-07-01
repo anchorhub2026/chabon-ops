@@ -15,6 +15,8 @@ function doPost(e) {
     handleSaveStatus(ss, data);
   } else if (data.type === "saveActual") {
     handleSaveActual(ss, data);
+  } else if (data.type === "saveHourly") {
+    handleSaveHourly(ss, data);
   } else {
     // type が無い場合（旧バージョンのshift.html等）もシフト回答として扱う
     handleShiftSubmit(ss, data);
@@ -180,6 +182,40 @@ function handleSaveActual(ss, data) {
     var row = [data.date, item.filling, item.total, item.soldOutTime || "", item.remaining || 0, ts];
     if (foundRow > 0) {
       sheet.getRange(foundRow, 1, 1, 6).setValues([row]);
+    } else {
+      sheet.appendRow(row);
+    }
+  });
+}
+
+function handleSaveHourly(ss, data) {
+  var sheet = ss.getSheetByName("時間帯別実績");
+  if (!sheet) {
+    sheet = ss.insertSheet("時間帯別実績");
+    sheet.appendRow(["日付", "曜日", "天気", "気温", "具材名", "作った数",
+                     "12時残り", "13時残り", "14時残り", "15時残り", "16時残り", "17時残り"]);
+  }
+  var values = sheet.getDataRange().getValues();
+  (data.items || []).forEach(function(item) {
+    var foundRow = -1;
+    for (var r = 1; r < values.length; r++) {
+      if (normalizeDateCell(values[r][0]) === String(data.date) && String(values[r][4]) === String(item.filling)) {
+        foundRow = r + 1;
+        break;
+      }
+    }
+    var row = [
+      data.date, data.weekday, data.weather, data.temp,
+      item.filling, item.total,
+      item.r12 === "" ? "" : item.r12,
+      item.r13 === "" ? "" : item.r13,
+      item.r14 === "" ? "" : item.r14,
+      item.r15 === "" ? "" : item.r15,
+      item.r16 === "" ? "" : item.r16,
+      item.r17 === "" ? "" : item.r17
+    ];
+    if (foundRow > 0) {
+      sheet.getRange(foundRow, 1, 1, row.length).setValues([row]);
     } else {
       sheet.appendRow(row);
     }
