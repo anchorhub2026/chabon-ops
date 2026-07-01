@@ -552,6 +552,21 @@ async function fetchConfirmedPlan(){
   }
 }
 
+// 作業中プランシートから本日の forecast（zuidFillingQty / uvaFillingQty）を取得
+async function fetchTodayDraft(){
+  try{
+    const res = await fetch(`${SCRIPT_URL}?type=draft`, { cache: "no-store" });
+    if(!res.ok) return null;
+    const json = await res.json();
+    const todayIso = state.dailyResults[0].dateStr;
+    const entry = (json.drafts || []).find(d => d.date === todayIso);
+    return entry ? (entry.forecast || null) : null;
+  }catch(e){
+    console.warn("ドラフト取得失敗:", e);
+    return null;
+  }
+}
+
 // シフト回答シート（送信日時,名前,日付,曜日,個数,備考,必要物品）から、メンバーごとの最新の必要物品を取得
 async function fetchMemberNeededItems(){
   try{
@@ -678,6 +693,7 @@ const state = {
   memberNeededItems: {}, // { [memberName]: "お米×2、手袋×1" }
   shiftByDate: {}, // { [dateKey "M/D"]: { [memberName]: { qty, raw } } }
   confirmedPlanByDate: {}, // { [dateKey "M/D"]: { zuid, uva, chise, ningiBreakdown, hqQty, hqBreakdown } }
+  todayDraft: null, // forecast from "作業中プラン" for today: { zuidFillingQty, uvaFillingQty, ... } | null
 };
 
 const FILLING_RATIOS = {
@@ -1105,6 +1121,30 @@ function getTodayFillingTotals(plan){
   return totals;
 }
 
+// ドラフトの zuidFillingQty / uvaFillingQty がある場合はそれを使い、
+// ない場合は全具材合計を zuidTotal:uvaTotal の比率で按分して返す
+function getStoreTotals(plan, draftForecast){
+  if(draftForecast && draftForecast.zuidFillingQty && draftForecast.uvaFillingQty){
+    const z = {}, u = {};
+    FILLINGS.forEach(f => {
+      z[f] = Number(draftForecast.zuidFillingQty[f] || 0);
+      u[f] = Number(draftForecast.uvaFillingQty[f] || 0);
+    });
+    return { zuidTotals: z, uvaTotals: u };
+  }
+  // フォールバック：全具材合計を店舗合計比率で按分
+  const all = getTodayFillingTotals(plan);
+  const grand = (plan.zuidTotal || 0) + (plan.uvaTotal || 0);
+  const ratio = grand > 0 ? (plan.zuidTotal || 0) / grand : 0.5;
+  const z = {}, u = {};
+  FILLINGS.forEach(f => {
+    const t = all[f] || 0;
+    z[f] = Math.round(t * ratio);
+    u[f] = t - z[f];
+  });
+  return { zuidTotals: z, uvaTotals: u };
+}
+
 function buildStoreTable(storeKey, fillings, totals){
   const slotHeaders = HOURLY_SLOTS.map(h => `<th>${h}時残り</th>`).join("");
   const rows = fillings.map((f, fi) => {
@@ -1137,36 +1177,36 @@ function renderActualSales(){
   const plan = state.confirmedPlanByDate[mdLabel(today.dateStr)];
   if(!plan){ area.innerHTML = `<p class="off-note">確定プランがまだありません。</p>`; return; }
 
-  const totals = getTodayFillingTotals(plan);
-  const fillings = FILLINGS.filter(f => (totals[f] || 0) > 0);
+  const { zuidTotals, uvaTotals } = getStoreTotals(plan, state.todayDraft);
+  const fillings = FILLINGS.filter(f => (zuidTotals[f] || 0) > 0 || (uvaTotals[f] || 0) > 0);
   if(fillings.length === 0){ area.innerHTML = `<p class="off-note">具材の割り振りがありません。</p>`; return; }
 
   area.innerHTML = `
     <div class="store-section">
       <div class="store-heading">🏪 Zuid</div>
-      ${buildStoreTable("Zuid", fillings, totals)}
+      ${buildStoreTable("Zuid", fillings, zuidTotals)}
     </div>
     <div class="store-section">
       <div class="store-heading">🏪 UvA</div>
       <div class="location-input-row">
         販売場所：<input type="text" id="uvaLocationInput" value="UvA" placeholder="UvA" maxlength="20">
       </div>
-      ${buildStoreTable("UvA", fillings, totals)}
+      ${buildStoreTable("UvA", fillings, uvaTotals)}
     </div>
     <button class="record-btn" id="saveActualBtn">記録する</button>
   `;
 
   area.querySelectorAll(".hourly-input, .made-input").forEach(inp =>
-    inp.addEventListener("input", () => updateSoldDisplay(totals, fillings))
+    inp.addEventListener("input", () => updateSoldDisplay(fillings))
   );
   document.getElementById("saveActualBtn").addEventListener("click", saveActual);
 }
 
-function updateSoldDisplay(totals, fillings){
+function updateSoldDisplay(fillings){
   ["Zuid", "UvA"].forEach(storeKey => {
     fillings.forEach((f, fi) => {
       const madeEl = document.querySelector(`.made-input[data-store="${storeKey}"][data-filling="${f}"]`);
-      const made = madeEl ? (parseInt(madeEl.value, 10) || 0) : (totals[f] || 0);
+      const made = madeEl ? (parseInt(madeEl.value, 10) || 0) : 0;
       const vals = HOURLY_SLOTS.map((h, si) => {
         const el = document.querySelector(`.hourly-input[data-store="${storeKey}"][data-filling="${f}"][data-slot="${si}"]`);
         return (el && el.value !== "") ? parseInt(el.value, 10) : null;
@@ -1410,6 +1450,7 @@ async function loadWeather(){
     state.dailyResults = buildDailyResults(data.daily, state.hourlyByDate, state.holidaysByIso, state.nsDisruptionsByDate);
     const confirmedMap = await fetchConfirmedPlan();
     state.confirmedPlanByDate = confirmedMap;
+    state.todayDraft = await fetchTodayDraft();
     // 上書き前の「元の推奨」を本日分だけ保存しておく（確定数との比較表示に使う）
     state.todayOriginalRecommendation = {
       zuid: state.dailyResults[0].zuid,
