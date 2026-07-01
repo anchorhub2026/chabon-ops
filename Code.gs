@@ -11,6 +11,8 @@ function doPost(e) {
     handleConfirmPlan(ss, data);
   } else if (data.type === "saveDraft") {
     handleSaveDraft(ss, data);
+  } else if (data.type === "saveStatus") {
+    handleSaveStatus(ss, data);
   } else {
     // type が無い場合（旧バージョンのshift.html等）もシフト回答として扱う
     handleShiftSubmit(ss, data);
@@ -135,6 +137,49 @@ function handleGetDraft(ss) {
     .setMimeType(ContentService.MimeType.JSON);
 }
 
+function handleSaveStatus(ss, data) {
+  var sheet = ss.getSheetByName("具材ステータス");
+  if (!sheet) {
+    sheet = ss.insertSheet("具材ステータス");
+    sheet.appendRow(["日付", "メンバー", "具材渡し済み", "調理済み", "更新日時"]);
+  }
+  var values = sheet.getDataRange().getValues();
+  var foundRow = -1;
+  for (var r = 1; r < values.length; r++) {
+    if (normalizeDateCell(values[r][0]) === String(data.date) && String(values[r][1]) === String(data.member)) {
+      foundRow = r + 1;
+      break;
+    }
+  }
+  var row = [data.date, data.member, !!data.handed, !!data.cooked, new Date()];
+  if (foundRow > 0) {
+    sheet.getRange(foundRow, 1, 1, 5).setValues([row]);
+  } else {
+    sheet.appendRow(row);
+  }
+}
+
+function handleGetStatus(ss) {
+  var sheet = ss.getSheetByName("具材ステータス");
+  if (!sheet) {
+    return ContentService.createTextOutput(JSON.stringify({ statuses: [] }))
+      .setMimeType(ContentService.MimeType.JSON);
+  }
+  var rows = sheet.getDataRange().getValues();
+  var statuses = [];
+  for (var i = 1; i < rows.length; i++) {
+    if (!rows[i][0]) continue;
+    statuses.push({
+      date: normalizeDateCell(rows[i][0]),
+      member: String(rows[i][1]),
+      handed: rows[i][2] === true,
+      cooked: rows[i][3] === true,
+    });
+  }
+  return ContentService.createTextOutput(JSON.stringify({ statuses: statuses }))
+    .setMimeType(ContentService.MimeType.JSON);
+}
+
 function doGet(e) {
   if (e.parameter && e.parameter.type === "disruptions") {
     return handleDisruptions();
@@ -144,6 +189,10 @@ function doGet(e) {
 
   if (e.parameter && e.parameter.type === "draft") {
     return handleGetDraft(ss);
+  }
+
+  if (e.parameter && e.parameter.type === "status") {
+    return handleGetStatus(ss);
   }
   var sheet = ss.getSheetByName("シフト回答");
   if (!sheet) {

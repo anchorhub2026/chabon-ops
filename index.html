@@ -598,6 +598,38 @@ function applyConfirmedOverrides(results, confirmedMap){
     }
   });
 }
+
+function isoToMdLabel(isoStr){
+  const parts = String(isoStr || "").split("-");
+  if(parts.length < 3) return "";
+  return `${parseInt(parts[1], 10)}/${parseInt(parts[2], 10)}`;
+}
+
+async function fetchStatusFromSheet(){
+  try{
+    const res = await fetch(`${SCRIPT_URL}?type=status`, { cache: "no-store" });
+    if(!res.ok) return;
+    const json = await res.json();
+    (json.statuses || []).forEach(s => {
+      const key = isoToMdLabel(s.date);
+      if(!key) return;
+      if(!state.cellStatus[key]) state.cellStatus[key] = {};
+      state.cellStatus[key][s.member] = { handed: !!s.handed, cooked: !!s.cooked };
+    });
+  }catch(e){
+    console.warn("ステータス読み込み失敗:", e);
+  }
+}
+
+async function saveStatusToSheet(isoDate, member, handed, cooked){
+  const payload = { type: "saveStatus", date: isoDate, member, handed, cooked };
+  try{
+    await fetch(SCRIPT_URL, { method: "POST", mode: "no-cors", body: JSON.stringify(payload) });
+  }catch(e){
+    console.warn("ステータス保存失敗:", e);
+  }
+}
+
 const FILLINGS = ["ツナマヨ","スパイシーツナマヨ","テリヤキチキン","サーモン","スパイシー味噌","枝豆","梅"];
 const DAY_NAMES = ["日","月","火","水","木","金","土"];
 
@@ -1055,7 +1087,7 @@ function renderFillings(){
     ? members.map(m => `
         <tr>
           <td>${m.name}</td>
-          <td>${m.items.map(it => `<span class="pill">${it.filling}×${it.qty}</span>`).join("") || "—"}</td>
+          <td>${m.items.filter(it => it.qty > 0).map(it => `<span class="pill">${it.filling}×${it.qty}</span>`).join("") || "—"}</td>
           <td>${m.total}個</td>
         </tr>
       `).join("")
@@ -1141,15 +1173,15 @@ function renderWeeklyStatusTable(){
         return `<td>—</td>`;
       }
 
-      const fillingText = items.map(it => `${it.filling}×${it.qty}`).join(" ") || "—";
+      const fillingText = items.filter(it => it.qty > 0).map(it => `${it.filling}×${it.qty}`).join(" ") || "—";
       const st = state.cellStatus[key][m.name];
 
       return `
         <td>
           <div class="cell-fillings">${fillingText}</div>
           <div class="cell-status">
-            <button class="status-btn handed ${st.handed ? "active" : ""}" data-key="${key}" data-member="${m.name}" data-kind="handed">具材渡し済み✓</button>
-            <button class="status-btn cooked ${st.cooked ? "active" : ""}" data-key="${key}" data-member="${m.name}" data-kind="cooked">調理済み❄️</button>
+            <button class="status-btn handed ${st.handed ? "active" : ""}" data-key="${key}" data-iso="${d.dateStr}" data-member="${m.name}" data-kind="handed">具材渡し済み✓</button>
+            <button class="status-btn cooked ${st.cooked ? "active" : ""}" data-key="${key}" data-iso="${d.dateStr}" data-member="${m.name}" data-kind="cooked">調理済み❄️</button>
           </div>
         </td>
       `;
@@ -1179,6 +1211,7 @@ function renderWeeklyStatusTable(){
 
       showConfirm(`${name}さんの${key}の具材を『${actionLabel}』にしますか？`, () => {
         state.cellStatus[key][name][kind] = nextState;
+        saveStatusToSheet(btn.dataset.iso, name, state.cellStatus[key][name].handed, state.cellStatus[key][name].cooked);
         renderWeeklyStatusTable();
       });
     });
@@ -1228,6 +1261,7 @@ async function loadWeather(){
     renderRecommendation();
     renderWeeklyView();
     renderFillings();
+    await fetchStatusFromSheet();
     renderWeeklyStatusTable();
   }catch(e){
     document.getElementById("weatherList").innerHTML = "天気情報の取得に失敗しました。";
