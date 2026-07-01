@@ -193,7 +193,7 @@ function handleSaveHourly(ss, data) {
   if (!sheet) {
     sheet = ss.insertSheet("時間帯別実績");
     sheet.appendRow(["日付", "曜日", "天気", "気温", "店舗", "場所名", "具材名", "作った数",
-                     "12時残り", "13時残り", "14時残り", "15時残り", "16時残り", "17時残り"]);
+                     "12時残り", "13時残り", "14時残り", "15時残り", "16時残り", "17時残り", "18時残り", "備考"]);
   }
   var values = sheet.getDataRange().getValues();
   (data.stores || []).forEach(function(storeData) {
@@ -216,7 +216,9 @@ function handleSaveHourly(ss, data) {
         item.r14 === "" ? "" : item.r14,
         item.r15 === "" ? "" : item.r15,
         item.r16 === "" ? "" : item.r16,
-        item.r17 === "" ? "" : item.r17
+        item.r17 === "" ? "" : item.r17,
+        item.r18 === "" ? "" : item.r18,
+        storeData.note || ""
       ];
       if (foundRow > 0) {
         sheet.getRange(foundRow, 1, 1, row.length).setValues([row]);

@@ -410,6 +410,11 @@
   .location-input-row{ margin-bottom: 6px; font-size: 0.88rem; }
   .location-input-row input{ border: 1px solid #ccc; border-radius: 4px; padding: 3px 6px; font-size: 0.88rem; width: 140px; margin-left: 4px; }
   .made-input{ width: 52px !important; }
+  .total-row td{ background: #f5f2ec; font-weight: bold; font-size: 0.8rem; color: #555; border-top: 2px solid #d0c8b8; }
+  .total-cell{ min-width: 52px; }
+  .notes-area{ margin-top: 8px; }
+  .notes-label{ font-size: 0.82rem; color: #666; display: block; margin-bottom: 3px; }
+  .notes-area textarea{ width: 100%; max-width: 600px; border: 1px solid #ccc; border-radius: 6px; padding: 6px 8px; font-size: 0.84rem; resize: vertical; box-sizing: border-box; }
   .record-btn{
     margin-top: 12px; padding: 10px 28px; background: var(--main); color: #fff;
     border: none; border-radius: 6px; font-size: 1rem; font-weight: bold; cursor: pointer;
@@ -676,7 +681,7 @@ const FILLINGS = ["ツナマヨ","スパイシーツナマヨ","テリヤキチ�
 const DAY_NAMES = ["日","月","火","水","木","金","土"];
 
 const OPERATING_DAYS = [1, 2, 3, 4]; // 月火水木
-const HOURLY_SLOTS = [12, 13, 14, 15, 16, 17];
+const HOURLY_SLOTS = [12, 13, 14, 15, 16, 17, 18];
 
 const state = {
   members: [
@@ -1163,9 +1168,17 @@ function buildStoreTable(storeKey, fillings, totals){
       ${slotCells}
     </tr>`;
   }).join("");
+  const remainCells = HOURLY_SLOTS.map((h, si) =>
+    `<td class="total-cell"><span id="total-remain-${storeKey}-${si}"></span></td>`).join("");
+  const soldCells = HOURLY_SLOTS.map((h, si) =>
+    `<td class="total-cell"><span id="total-sold-${storeKey}-${si}"></span></td>`).join("");
   return `<table class="hourly-table">
     <thead><tr><th class="col-name">具材</th><th>作った数</th>${slotHeaders}</tr></thead>
-    <tbody>${rows}</tbody>
+    <tbody>
+      ${rows}
+      <tr class="total-row"><td class="col-name">残り合計</td><td>—</td>${remainCells}</tr>
+      <tr class="total-row"><td class="col-name">売った合計</td><td>—</td>${soldCells}</tr>
+    </tbody>
   </table>`;
 }
 
@@ -1185,6 +1198,10 @@ function renderActualSales(){
     <div class="store-section">
       <div class="store-heading">🏪 Zuid</div>
       ${buildStoreTable("Zuid", fillings, zuidTotals)}
+      <div class="notes-area">
+        <span class="notes-label">今日の販売メモ</span>
+        <textarea id="notes-Zuid" rows="2" placeholder="天気の様子・特記事項など"></textarea>
+      </div>
     </div>
     <div class="store-section">
       <div class="store-heading">🏪 UvA</div>
@@ -1192,6 +1209,10 @@ function renderActualSales(){
         販売場所：<input type="text" id="uvaLocationInput" value="UvA" placeholder="UvA" maxlength="20">
       </div>
       ${buildStoreTable("UvA", fillings, uvaTotals)}
+      <div class="notes-area">
+        <span class="notes-label">今日の販売メモ</span>
+        <textarea id="notes-UvA" rows="2" placeholder="天気の様子・特記事項など"></textarea>
+      </div>
     </div>
     <button class="record-btn" id="saveActualBtn">記録する</button>
   `;
@@ -1204,24 +1225,56 @@ function renderActualSales(){
 
 function updateSoldDisplay(fillings){
   ["Zuid", "UvA"].forEach(storeKey => {
+    const nSlots = HOURLY_SLOTS.length;
+    const remainTotals = new Array(nSlots).fill(0);
+    const soldTotals = new Array(nSlots).fill(0);
+    const remainCount = new Array(nSlots).fill(0);
+    const soldCount = new Array(nSlots).fill(0);
+
     fillings.forEach((f, fi) => {
       const madeEl = document.querySelector(`.made-input[data-store="${storeKey}"][data-filling="${f}"]`);
       const made = madeEl ? (parseInt(madeEl.value, 10) || 0) : 0;
+
+      // 完売後の自動ゼロ入力：残数が0になったら以降の空欄に0を入力
+      let hitZero = false;
+      HOURLY_SLOTS.forEach((h, si) => {
+        const el = document.querySelector(`.hourly-input[data-store="${storeKey}"][data-filling="${f}"][data-slot="${si}"]`);
+        if(!el) return;
+        if(hitZero && el.value === "") el.value = "0";
+        if(el.value !== "" && parseInt(el.value, 10) === 0) hitZero = true;
+      });
+
       const vals = HOURLY_SLOTS.map((h, si) => {
         const el = document.querySelector(`.hourly-input[data-store="${storeKey}"][data-filling="${f}"][data-slot="${si}"]`);
         return (el && el.value !== "") ? parseInt(el.value, 10) : null;
       });
+
       HOURLY_SLOTS.forEach((h, si) => {
-        const el = document.getElementById(`sold-${storeKey}-${fi}-${si}`);
-        if(!el) return;
+        const soldEl = document.getElementById(`sold-${storeKey}-${fi}-${si}`);
         const curr = vals[si];
-        if(curr === null){ el.textContent = ""; return; }
+        if(curr !== null){
+          remainTotals[si] += curr;
+          remainCount[si]++;
+        }
+        if(curr === null){ if(soldEl) soldEl.textContent = ""; return; }
         const prev = si === 0 ? made : vals[si - 1];
-        if(prev === null){ el.textContent = ""; return; }
+        if(prev === null){ if(soldEl) soldEl.textContent = ""; return; }
         const sold = prev - curr;
-        el.textContent = `売:${sold}`;
-        el.className = sold < 0 ? "sold-display sold-neg" : "sold-display";
+        if(soldEl){
+          soldEl.textContent = `売:${sold}`;
+          soldEl.className = sold < 0 ? "sold-display sold-neg" : "sold-display";
+        }
+        soldTotals[si] += sold;
+        soldCount[si]++;
       });
+    });
+
+    // 合計行を更新
+    HOURLY_SLOTS.forEach((h, si) => {
+      const rEl = document.getElementById(`total-remain-${storeKey}-${si}`);
+      const sEl = document.getElementById(`total-sold-${storeKey}-${si}`);
+      if(rEl) rEl.textContent = remainCount[si] > 0 ? String(remainTotals[si]) : "";
+      if(sEl) sEl.textContent = soldCount[si] > 0 ? String(soldTotals[si]) : "";
     });
   });
 }
@@ -1231,24 +1284,26 @@ async function saveActual(){
   const plan = state.confirmedPlanByDate[mdLabel(today.dateStr)];
   if(!plan) return;
 
-  const totals = getTodayFillingTotals(plan);
-  const fillings = FILLINGS.filter(f => (totals[f] || 0) > 0);
+  const { zuidTotals, uvaTotals } = getStoreTotals(plan, state.todayDraft);
+  const fillings = FILLINGS.filter(f => (zuidTotals[f] || 0) > 0 || (uvaTotals[f] || 0) > 0);
   const w = weatherInfo(today.code);
 
   function collectItems(storeKey){
     return fillings.map(f => {
       const madeEl = document.querySelector(`.made-input[data-store="${storeKey}"][data-filling="${f}"]`);
-      const made = madeEl ? (parseInt(madeEl.value, 10) || 0) : (totals[f] || 0);
+      const made = madeEl ? (parseInt(madeEl.value, 10) || 0) : 0;
       const sv = HOURLY_SLOTS.map((h, si) => {
         const el = document.querySelector(`.hourly-input[data-store="${storeKey}"][data-filling="${f}"][data-slot="${si}"]`);
         return (el && el.value !== "") ? parseInt(el.value, 10) : "";
       });
       return { filling: f, total: made,
-        r12: sv[0], r13: sv[1], r14: sv[2], r15: sv[3], r16: sv[4], r17: sv[5] };
+        r12: sv[0], r13: sv[1], r14: sv[2], r15: sv[3], r16: sv[4], r17: sv[5], r18: sv[6] };
     });
   }
 
   const uvaLocation = (document.getElementById("uvaLocationInput") || {value:"UvA"}).value.trim() || "UvA";
+  const zuidNote = (document.getElementById("notes-Zuid") || {value:""}).value.trim();
+  const uvaNote = (document.getElementById("notes-UvA") || {value:""}).value.trim();
 
   const payload = {
     type: "saveHourly",
@@ -1257,8 +1312,8 @@ async function saveActual(){
     weather: w.text,
     temp: Math.round(today.maxTemp),
     stores: [
-      { store: "Zuid", location: "Zuid", items: collectItems("Zuid") },
-      { store: "UvA",  location: uvaLocation, items: collectItems("UvA") },
+      { store: "Zuid", location: "Zuid", items: collectItems("Zuid"), note: zuidNote },
+      { store: "UvA",  location: uvaLocation, items: collectItems("UvA"), note: uvaNote },
     ],
   };
 
