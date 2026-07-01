@@ -9,6 +9,8 @@ function doPost(e) {
 
   if (data.type === "confirmPlan") {
     handleConfirmPlan(ss, data);
+  } else if (data.type === "saveDraft") {
+    handleSaveDraft(ss, data);
   } else {
     // type が無い場合（旧バージョンのshift.html等）もシフト回答として扱う
     handleShiftSubmit(ss, data);
@@ -73,12 +75,65 @@ function handleConfirmPlan(ss, data) {
   }
 }
 
+function handleSaveDraft(ss, data) {
+  var sheet = ss.getSheetByName("作業中プラン");
+  if (!sheet) {
+    sheet = ss.insertSheet("作業中プラン");
+    sheet.appendRow(["日付", "forecast", "prod", "更新日時"]);
+  }
+  var values = sheet.getDataRange().getValues();
+  var foundRow = -1;
+  for (var r = 1; r < values.length; r++) {
+    if (String(values[r][0]) === String(data.date)) {
+      foundRow = r + 1;
+      break;
+    }
+  }
+  var row = [
+    data.date,
+    JSON.stringify(data.forecast || {}),
+    JSON.stringify(data.prod || {}),
+    new Date()
+  ];
+  if (foundRow > 0) {
+    sheet.getRange(foundRow, 1, 1, 4).setValues([row]);
+  } else {
+    sheet.appendRow(row);
+  }
+}
+
+function handleGetDraft(ss) {
+  var sheet = ss.getSheetByName("作業中プラン");
+  if (!sheet) {
+    return ContentService.createTextOutput(JSON.stringify({ drafts: [] }))
+      .setMimeType(ContentService.MimeType.JSON);
+  }
+  var rows = sheet.getDataRange().getValues();
+  var drafts = [];
+  for (var i = 1; i < rows.length; i++) {
+    if (!rows[i][0]) continue;
+    try {
+      drafts.push({
+        date: String(rows[i][0]),
+        forecast: JSON.parse(rows[i][1] || "{}"),
+        prod: JSON.parse(rows[i][2] || "{}"),
+      });
+    } catch (err) {}
+  }
+  return ContentService.createTextOutput(JSON.stringify({ drafts: drafts }))
+    .setMimeType(ContentService.MimeType.JSON);
+}
+
 function doGet(e) {
   if (e.parameter && e.parameter.type === "disruptions") {
     return handleDisruptions();
   }
 
   var ss = SpreadsheetApp.openById(SHEET_ID);
+
+  if (e.parameter && e.parameter.type === "draft") {
+    return handleGetDraft(ss);
+  }
   var sheet = ss.getSheetByName("シフト回答");
   if (!sheet) {
     return ContentService.createTextOutput("[]").setMimeType(ContentService.MimeType.JSON);

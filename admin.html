@@ -2319,7 +2319,58 @@ function bindProductionDayEvents(day){
 }
 
 // メンバー1人分の具材割り振りを文字列化（例："ツナマヨ×15 スパイシーツナマヨ×9"）
-/* ---------- localStorage: 販売予測数・生産割り振り ---------- */
+/* ---------- スプレッドシート作業中プラン保存 ---------- */
+
+const draftSaveTimers = {};
+
+function scheduleDraftSave(day){
+  const key = day.dateKey;
+  if(draftSaveTimers[key]) clearTimeout(draftSaveTimers[key]);
+  draftSaveTimers[key] = setTimeout(() => {
+    saveDraftToSheet(day);
+    delete draftSaveTimers[key];
+  }, 800);
+}
+
+async function saveDraftToSheet(day){
+  const payload = {
+    type: "saveDraft",
+    date: mdLabel(day.dateObj),
+    forecast: {
+      zuidFillingQty: { ...day.zuidFillingQty },
+      uvaFillingQty:  { ...day.uvaFillingQty },
+      zuidOpen: day.zuidOpen,
+      uvaOpen:  day.uvaOpen,
+    },
+    prod: day.memberFillingQty || {},
+  };
+  try{
+    await fetch(SCRIPT_URL, { method: "POST", mode: "no-cors", body: JSON.stringify(payload) });
+  }catch(e){ console.warn("ドラフト保存失敗:", e); }
+}
+
+async function fetchDraftData(){
+  try{
+    const res = await fetch(`${SCRIPT_URL}?type=draft`);
+    if(!res.ok) return null;
+    const json = await res.json();
+    return json.drafts || [];
+  }catch(e){
+    console.warn("ドラフト読み込み失敗:", e);
+    return null;
+  }
+}
+
+function applyDraftToDay(day, draft){
+  const fc = draft.forecast || {};
+  if(fc.zuidFillingQty) day.zuidFillingQty = { ...buildFillingDefaults(0), ...fc.zuidFillingQty };
+  if(fc.uvaFillingQty)  day.uvaFillingQty  = { ...buildFillingDefaults(0), ...fc.uvaFillingQty };
+  if(fc.zuidOpen !== undefined) day.zuidOpen = fc.zuidOpen;
+  if(fc.uvaOpen  !== undefined) day.uvaOpen  = fc.uvaOpen;
+  if(draft.prod && Object.keys(draft.prod).length > 0) day.memberFillingQty = { ...draft.prod };
+}
+
+/* ---------- localStorage: 販売予測数・生産割り振り（オフライン時フォールバック） ---------- */
 
 function saveForecast(day){
   const data = {
@@ -2329,6 +2380,7 @@ function saveForecast(day){
     uvaOpen:  day.uvaOpen,
   };
   try{ localStorage.setItem(`chabon_forecast_${mdLabel(day.dateObj)}`, JSON.stringify(data)); }catch(e){}
+  scheduleDraftSave(day);
 }
 
 function loadForecastData(day){
@@ -2346,6 +2398,7 @@ function loadForecastData(day){
 
 function saveProdAlloc(day){
   try{ localStorage.setItem(`chabon_prod_${mdLabel(day.dateObj)}`, JSON.stringify(day.memberFillingQty || {})); }catch(e){}
+  scheduleDraftSave(day);
 }
 
 function loadProdAllocData(day){
@@ -2368,6 +2421,7 @@ function resetDayData(day){
   day.bulkValue = null;
   day.undoSnapshot = null;
   day.memberFillingQty = {};
+  saveDraftToSheet(day);  // シートのドラフトもリセット状態で上書き
   renderDayBlock(day);
   renderCellStatusTable();
 }
@@ -2655,12 +2709,13 @@ async function refreshAllData(){
       `&forecast_days=16&timezone=Europe%2FAmsterdam`;
 
     const thisYear = new Date().getFullYear();
-    const [weatherRes, chiseJson, shiftJson, holidaysByIso, nsDisruptionsByDate] = await Promise.all([
+    const [weatherRes, chiseJson, shiftJson, holidaysByIso, nsDisruptionsByDate, draftData] = await Promise.all([
       fetch(weatherUrl).then(r => r.json()),
       fetchSheetJson(null).catch(e => { console.error("チセさんシート取得失敗", e); return null; }),
       fetchSheetJson("シフト回答", SHIFT_SPREADSHEET_ID).catch(e => { console.error("シフト回答シート取得失敗", e); return null; }),
       fetchDutchHolidays([thisYear, thisYear + 1]),
       fetchNsDisruptions(),
+      fetchDraftData(),
     ]);
 
     state.holidaysByIso = holidaysByIso;
@@ -2674,6 +2729,12 @@ async function refreshAllData(){
       loadForecastData(day);
       loadProdAllocData(day);
     });
+    if(draftData){
+      state.days.forEach(day => {
+        const draft = draftData.find(d => d.date === mdLabel(day.dateObj));
+        if(draft) applyDraftToDay(day, draft);
+      });
+    }
     state.chiseByDate = chiseJson ? parseChiseSheet(chiseJson) : {};
     const shiftParsed = shiftJson ? parseShiftSheet(shiftJson) : { byDate: {}, notesByName: {} };
     state.shiftByDate  = shiftParsed.byDate;
@@ -2901,12 +2962,13 @@ async function init(){
       `&forecast_days=16&timezone=Europe%2FAmsterdam`;
 
     const thisYear = new Date().getFullYear();
-    const [weatherRes, chiseJson, shiftJson, holidaysByIso, nsDisruptionsByDate] = await Promise.all([
+    const [weatherRes, chiseJson, shiftJson, holidaysByIso, nsDisruptionsByDate, draftData] = await Promise.all([
       fetch(weatherUrl).then(r => r.json()),
       fetchSheetJson(null).catch(e => { console.error("チセさんシート取得失敗", e); return null; }),
       fetchSheetJson("シフト回答", SHIFT_SPREADSHEET_ID).catch(e => { console.error("シフト回答シート取得失敗", e); return null; }),
       fetchDutchHolidays([thisYear, thisYear + 1]),
       fetchNsDisruptions(),
+      fetchDraftData(),
     ]);
 
     state.holidaysByIso = holidaysByIso;
@@ -2915,11 +2977,17 @@ async function init(){
     state.cellStatus = loadCellStatusFromStorage();
     const hourlyByDate = buildHourlyByDate(weatherRes.hourly);
     state.days = buildDays(weatherRes.daily, hourlyByDate);
-    // localStorageから保存済みの販売予測数・生産割り振りを復元
+    // localStorageから復元（オフライン時フォールバック）→ シートのドラフトで上書き
     state.days.forEach(day => {
       loadForecastData(day);
       loadProdAllocData(day);
     });
+    if(draftData){
+      state.days.forEach(day => {
+        const draft = draftData.find(d => d.date === mdLabel(day.dateObj));
+        if(draft) applyDraftToDay(day, draft);
+      });
+    }
     state.chiseByDate = chiseJson ? parseChiseSheet(chiseJson) : {};
     const shiftParsed = shiftJson ? parseShiftSheet(shiftJson) : { byDate: {}, notesByName: {} };
     state.shiftByDate  = shiftParsed.byDate;
