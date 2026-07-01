@@ -75,6 +75,15 @@ function handleConfirmPlan(ss, data) {
   }
 }
 
+// Date オブジェクト（スプレッドシートが自動変換した場合）をISO形式(yyyy-MM-dd)に正規化
+// スクリプトのタイムゾーンを使うことで "2026-07-01" → Date → "2026-07-01" と正しく往復できる
+function normalizeDateCell(val) {
+  if (Object.prototype.toString.call(val) === '[object Date]') {
+    return Utilities.formatDate(val, Session.getScriptTimeZone(), "yyyy-MM-dd");
+  }
+  return String(val);
+}
+
 function handleSaveDraft(ss, data) {
   var sheet = ss.getSheetByName("作業中プラン");
   if (!sheet) {
@@ -83,8 +92,10 @@ function handleSaveDraft(ss, data) {
   }
   var values = sheet.getDataRange().getValues();
   var foundRow = -1;
+  var normalizedTarget = String(data.date);
   for (var r = 1; r < values.length; r++) {
-    if (String(values[r][0]) === String(data.date)) {
+    var cellStr = normalizeDateCell(values[r][0]);
+    if (cellStr === normalizedTarget) {
       foundRow = r + 1;
       break;
     }
@@ -114,7 +125,7 @@ function handleGetDraft(ss) {
     if (!rows[i][0]) continue;
     try {
       drafts.push({
-        date: String(rows[i][0]),
+        date: normalizeDateCell(rows[i][0]),
         forecast: JSON.parse(rows[i][1] || "{}"),
         prod: JSON.parse(rows[i][2] || "{}"),
       });

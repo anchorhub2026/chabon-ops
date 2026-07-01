@@ -2335,7 +2335,7 @@ function scheduleDraftSave(day){
 async function saveDraftToSheet(day){
   const payload = {
     type: "saveDraft",
-    date: mdLabel(day.dateObj),
+    date: day.iso,
     forecast: {
       zuidFillingQty: { ...day.zuidFillingQty },
       uvaFillingQty:  { ...day.uvaFillingQty },
@@ -2735,7 +2735,9 @@ async function refreshAllData(){
     console.log("取得したドラフト:", draftData);
     if(draftData){
       state.days.forEach(day => {
-        const draft = draftData.find(d => d.date === mdLabel(day.dateObj));
+        // ISO形式を優先し、旧M/D形式（後方互換）も照合する
+        const draft = draftData.find(d => d.date === day.iso)
+                   || draftData.find(d => d.date === mdLabel(day.dateObj));
         if(draft){
           applyDraftToDay(day, draft);
           const zuidValue = (draft.forecast && draft.forecast.zuidFillingQty)
@@ -2996,7 +2998,8 @@ async function init(){
     });
     if(draftData){
       state.days.forEach(day => {
-        const draft = draftData.find(d => d.date === mdLabel(day.dateObj));
+        const draft = draftData.find(d => d.date === day.iso)
+                   || draftData.find(d => d.date === mdLabel(day.dateObj));
         if(draft) applyDraftToDay(day, draft);
       });
     }
