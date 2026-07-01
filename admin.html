@@ -2351,9 +2351,12 @@ async function saveDraftToSheet(day){
 
 async function fetchDraftData(){
   try{
+    console.log("ドラフト取得開始:", `${SCRIPT_URL}?type=draft`);
     const res = await fetch(`${SCRIPT_URL}?type=draft`);
+    console.log("ドラフトGETレスポンス status:", res.status, res.ok);
     if(!res.ok) return null;
     const json = await res.json();
+    console.log("ドラフトGETレスポンス body:", json);
     return json.drafts || [];
   }catch(e){
     console.warn("ドラフト読み込み失敗:", e);
@@ -2729,11 +2732,20 @@ async function refreshAllData(){
       loadForecastData(day);
       loadProdAllocData(day);
     });
+    console.log("取得したドラフト:", draftData);
     if(draftData){
       state.days.forEach(day => {
         const draft = draftData.find(d => d.date === mdLabel(day.dateObj));
-        if(draft) applyDraftToDay(day, draft);
+        if(draft){
+          applyDraftToDay(day, draft);
+          const zuidValue = (draft.forecast && draft.forecast.zuidFillingQty)
+            ? JSON.stringify(draft.forecast.zuidFillingQty) : "(なし)";
+          console.log(`${draft.date} のZuid値:`, zuidValue);
+          console.log(`${draft.date} のprod:`, JSON.stringify(draft.prod));
+        }
       });
+    } else {
+      console.warn("ドラフトデータが取得できませんでした（null）");
     }
     state.chiseByDate = chiseJson ? parseChiseSheet(chiseJson) : {};
     const shiftParsed = shiftJson ? parseShiftSheet(shiftJson) : { byDate: {}, notesByName: {} };
