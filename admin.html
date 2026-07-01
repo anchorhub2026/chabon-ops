@@ -2478,23 +2478,30 @@ function ensureCellStatus(dateKey, name){
   if(!state.cellStatus[dateKey][name]) state.cellStatus[dateKey][name] = { handed: false, cooked: false };
 }
 
-function loadCellStatusFromStorage(){
-  const result = {};
+async function fetchStatusFromSheet(){
   try{
-    for(let i = 0; i < localStorage.length; i++){
-      const k = localStorage.key(i);
-      if(k && k.startsWith("chabon_cell_")){
-        result[k.replace("chabon_cell_", "")] = JSON.parse(localStorage.getItem(k));
-      }
-    }
-  }catch(e){}
-  return result;
+    const res = await fetch(`${SCRIPT_URL}?type=status`, { cache: "no-store" });
+    if(!res.ok) return;
+    const json = await res.json();
+    (json.statuses || []).forEach(s => {
+      const parts = String(s.date || "").split("-");
+      if(parts.length < 3) return;
+      const key = `${parseInt(parts[1], 10)}/${parseInt(parts[2], 10)}`;
+      if(!state.cellStatus[key]) state.cellStatus[key] = {};
+      state.cellStatus[key][s.member] = { handed: !!s.handed, cooked: !!s.cooked };
+    });
+  }catch(e){
+    console.warn("ステータス読み込み失敗:", e);
+  }
 }
 
-function saveCellStatus(dateKey){
+async function saveStatusToSheet(isoDateStr, member, handed, cooked){
+  const payload = { type: "saveStatus", date: isoDateStr, member, handed, cooked };
   try{
-    localStorage.setItem(`chabon_cell_${dateKey}`, JSON.stringify(state.cellStatus[dateKey] || {}));
-  }catch(e){}
+    await fetch(SCRIPT_URL, { method: "POST", mode: "no-cors", body: JSON.stringify(payload) });
+  }catch(e){
+    console.warn("ステータス保存失敗:", e);
+  }
 }
 
 function renderCellStatusTable(){
@@ -2527,8 +2534,8 @@ function renderCellStatusTable(){
         <td>
           <div class="cell-fillings">${fillingText}</div>
           <div class="cell-status">
-            <button class="status-btn handed ${st.handed ? "active" : ""}" data-key="${key}" data-member="${name}" data-kind="handed">具材渡し済み✓</button>
-            <button class="status-btn cooked ${st.cooked ? "active" : ""}" data-key="${key}" data-member="${name}" data-kind="cooked">調理済み❄️</button>
+            <button class="status-btn handed ${st.handed ? "active" : ""}" data-key="${key}" data-iso="${isoDate(day.dateObj)}" data-member="${name}" data-kind="handed">具材渡し済み✓</button>
+            <button class="status-btn cooked ${st.cooked ? "active" : ""}" data-key="${key}" data-iso="${isoDate(day.dateObj)}" data-member="${name}" data-kind="cooked">調理済み❄️</button>
           </div>
         </td>
       `;
@@ -2554,7 +2561,7 @@ function renderCellStatusTable(){
       const actionLabel = nextVal ? label : `未${label}`;
       showConfirm(`${name}さんの${key}の具材を『${actionLabel}』にしますか？`, () => {
         state.cellStatus[key][name][kind] = nextVal;
-        saveCellStatus(key);
+        saveStatusToSheet(btn.dataset.iso, name, state.cellStatus[key][name].handed, state.cellStatus[key][name].cooked);
         renderCellStatusTable();
       });
     });
@@ -2724,7 +2731,8 @@ async function refreshAllData(){
     state.holidaysByIso = holidaysByIso;
     state.nsDisruptionsByDate = nsDisruptionsByDate;
     state.confirmedByDate = loadConfirmedFromStorage();
-    state.cellStatus = loadCellStatusFromStorage();
+    state.cellStatus = {};
+    await fetchStatusFromSheet();
 
     const hourlyByDate = buildHourlyByDate(weatherRes.hourly);
     state.days = buildDays(weatherRes.daily, hourlyByDate);
@@ -2988,7 +2996,8 @@ async function init(){
     state.holidaysByIso = holidaysByIso;
     state.nsDisruptionsByDate = nsDisruptionsByDate;
     state.confirmedByDate = loadConfirmedFromStorage();
-    state.cellStatus = loadCellStatusFromStorage();
+    state.cellStatus = {};
+    await fetchStatusFromSheet();
     const hourlyByDate = buildHourlyByDate(weatherRes.hourly);
     state.days = buildDays(weatherRes.daily, hourlyByDate);
     // localStorageから復元（オフライン時フォールバック）→ シートのドラフトで上書き
