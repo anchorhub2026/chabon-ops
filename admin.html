@@ -1271,7 +1271,7 @@ const NS_PENALTY = 50;
 
 async function fetchNsDisruptions(){
   try{
-    const res = await fetch(`${SCRIPT_URL}?type=disruptions`);
+    const res = await fetch(`${SCRIPT_URL}?type=disruptions`, { cache: "no-store" });
     const json = await res.json();
     if(json.error) console.warn("NS運休・スト情報の取得で警告:", json.error);
     return json.disruptionsByDate || {};
@@ -1294,7 +1294,7 @@ async function fetchSheetJson(sheetName, spreadsheetId){
   const id = spreadsheetId || SPREADSHEET_ID;
   const url = `https://docs.google.com/spreadsheets/d/${id}/gviz/tq?tqx=out:json` +
     (sheetName ? `&sheet=${encodeURIComponent(sheetName)}` : "");
-  const res = await fetch(url);
+  const res = await fetch(url, { cache: "no-store" });
   const text = await res.text();
   const match = text.match(/setResponse\(([\s\S]*)\);\s*$/);
   if(!match) throw new Error("シートの解析に失敗しました: " + sheetName);
@@ -2352,7 +2352,7 @@ async function saveDraftToSheet(day){
 async function fetchDraftData(){
   try{
     console.log("ドラフト取得開始:", `${SCRIPT_URL}?type=draft`);
-    const res = await fetch(`${SCRIPT_URL}?type=draft`);
+    const res = await fetch(`${SCRIPT_URL}?type=draft`, { cache: "no-store" });
     console.log("ドラフトGETレスポンス status:", res.status, res.ok);
     if(!res.ok) return null;
     const json = await res.json();
