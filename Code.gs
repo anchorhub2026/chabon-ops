@@ -192,33 +192,38 @@ function handleSaveHourly(ss, data) {
   var sheet = ss.getSheetByName("時間帯別実績");
   if (!sheet) {
     sheet = ss.insertSheet("時間帯別実績");
-    sheet.appendRow(["日付", "曜日", "天気", "気温", "具材名", "作った数",
+    sheet.appendRow(["日付", "曜日", "天気", "気温", "店舗", "場所名", "具材名", "作った数",
                      "12時残り", "13時残り", "14時残り", "15時残り", "16時残り", "17時残り"]);
   }
   var values = sheet.getDataRange().getValues();
-  (data.items || []).forEach(function(item) {
-    var foundRow = -1;
-    for (var r = 1; r < values.length; r++) {
-      if (normalizeDateCell(values[r][0]) === String(data.date) && String(values[r][4]) === String(item.filling)) {
-        foundRow = r + 1;
-        break;
+  (data.stores || []).forEach(function(storeData) {
+    (storeData.items || []).forEach(function(item) {
+      var foundRow = -1;
+      for (var r = 1; r < values.length; r++) {
+        if (normalizeDateCell(values[r][0]) === String(data.date) &&
+            String(values[r][4]) === String(storeData.store) &&
+            String(values[r][6]) === String(item.filling)) {
+          foundRow = r + 1;
+          break;
+        }
       }
-    }
-    var row = [
-      data.date, data.weekday, data.weather, data.temp,
-      item.filling, item.total,
-      item.r12 === "" ? "" : item.r12,
-      item.r13 === "" ? "" : item.r13,
-      item.r14 === "" ? "" : item.r14,
-      item.r15 === "" ? "" : item.r15,
-      item.r16 === "" ? "" : item.r16,
-      item.r17 === "" ? "" : item.r17
-    ];
-    if (foundRow > 0) {
-      sheet.getRange(foundRow, 1, 1, row.length).setValues([row]);
-    } else {
-      sheet.appendRow(row);
-    }
+      var row = [
+        data.date, data.weekday, data.weather, data.temp,
+        storeData.store, storeData.location,
+        item.filling, item.total,
+        item.r12 === "" ? "" : item.r12,
+        item.r13 === "" ? "" : item.r13,
+        item.r14 === "" ? "" : item.r14,
+        item.r15 === "" ? "" : item.r15,
+        item.r16 === "" ? "" : item.r16,
+        item.r17 === "" ? "" : item.r17
+      ];
+      if (foundRow > 0) {
+        sheet.getRange(foundRow, 1, 1, row.length).setValues([row]);
+      } else {
+        sheet.appendRow(row);
+      }
+    });
   });
 }
 
