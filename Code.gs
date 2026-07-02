@@ -229,6 +229,35 @@ function handleSaveHourly(ss, data) {
   });
 }
 
+// 「時間帯別実績」シートから指定日の店舗別データを取得し、
+// index.html側で入力欄の復元に使えるよう店舗名をキーにまとめて返す
+function handleGetHourly(ss, date) {
+  var sheet = ss.getSheetByName("時間帯別実績");
+  if (!sheet) {
+    return ContentService.createTextOutput(JSON.stringify({ stores: {} }))
+      .setMimeType(ContentService.MimeType.JSON);
+  }
+  var rows = sheet.getDataRange().getValues();
+  var stores = {};
+  for (var i = 1; i < rows.length; i++) {
+    var row = rows[i];
+    if (!row[0]) continue;
+    if (normalizeDateCell(row[0]) !== String(date)) continue;
+    var storeName = String(row[4]);
+    if (!stores[storeName]) {
+      stores[storeName] = { location: String(row[5] || ""), note: "", items: [] };
+    }
+    stores[storeName].items.push({
+      filling: String(row[6]),
+      total: row[7],
+      r12: row[8], r13: row[9], r14: row[10], r15: row[11], r16: row[12], r17: row[13], r18: row[14]
+    });
+    if (row[15]) stores[storeName].note = String(row[15]);
+  }
+  return ContentService.createTextOutput(JSON.stringify({ stores: stores }))
+    .setMimeType(ContentService.MimeType.JSON);
+}
+
 function handleGetStatus(ss) {
   var sheet = ss.getSheetByName("具材ステータス");
   if (!sheet) {
@@ -263,6 +292,10 @@ function doGet(e) {
 
   if (e.parameter && e.parameter.type === "status") {
     return handleGetStatus(ss);
+  }
+
+  if (e.parameter && e.parameter.type === "hourly") {
+    return handleGetHourly(ss, e.parameter.date);
   }
   var sheet = ss.getSheetByName("シフト回答");
   if (!sheet) {

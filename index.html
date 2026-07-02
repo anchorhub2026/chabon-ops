@@ -668,6 +668,19 @@ async function fetchStatusFromSheet(){
   }
 }
 
+// 「時間帯別実績」シートから指定日の保存済みデータを取得する（ページ読込・再読込時の復元用）
+async function fetchHourlyRecords(dateStr){
+  try{
+    const res = await fetch(`${SCRIPT_URL}?type=hourly&date=${dateStr}`, { cache: "no-store" });
+    if(!res.ok) return {};
+    const json = await res.json();
+    return json.stores || {};
+  }catch(e){
+    console.warn("時間帯別実績の取得に失敗しました:", e);
+    return {};
+  }
+}
+
 async function saveStatusToSheet(isoDate, member, handed, cooked){
   const payload = { type: "saveStatus", date: isoDate, member, handed, cooked };
   try{
@@ -697,6 +710,7 @@ const state = {
   cellStatus: {},  // { [dateKey "M/D"]: { [memberName]: { handed: bool, cooked: bool } } }
   memberNeededItems: {}, // { [memberName]: "お米×2、手袋×1" }
   shiftByDate: {}, // { [dateKey "M/D"]: { [memberName]: { qty, raw } } }
+  hourlyRecords: {}, // { [store]: { location, note, items: [{filling, total, r12..r18}] } } 今日の保存済み実績
   confirmedPlanByDate: {}, // { [dateKey "M/D"]: { zuid, uva, chise, ningiBreakdown, hqQty, hqBreakdown } }
   todayDraft: null, // forecast from "作業中プラン" for today: { zuidFillingQty, uvaFillingQty, ... } | null
 };
@@ -1150,21 +1164,38 @@ function getStoreTotals(plan, draftForecast){
   return { zuidTotals: z, uvaTotals: u };
 }
 
-function buildStoreTable(storeKey, fillings, totals){
+function escapeHtml(str){
+  return String(str)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+function buildStoreTable(storeKey, fillings, totals, savedItems){
+  const saved = {};
+  (savedItems || []).forEach(it => { saved[it.filling] = it; });
   const slotHeaders = HOURLY_SLOTS.map(h => `<th>${h}時残り</th>`).join("");
   const rows = fillings.map((f, fi) => {
-    const slotCells = HOURLY_SLOTS.map((h, si) => `
+    const savedItem = saved[f];
+    const madeVal = (savedItem && savedItem.total !== "" && savedItem.total != null) ? savedItem.total : totals[f];
+    const slotCells = HOURLY_SLOTS.map((h, si) => {
+      const raw = savedItem ? savedItem["r" + h] : "";
+      const v = (raw !== "" && raw != null) ? raw : "";
+      return `
       <td>
         <input type="number" class="hourly-input"
                data-store="${storeKey}" data-filling="${f}" data-slot="${si}"
-               min="0" placeholder="—">
+               min="0" placeholder="—" value="${v}">
         <div class="sold-display" id="sold-${storeKey}-${fi}-${si}"></div>
-      </td>`).join("");
+      </td>`;
+    }).join("");
     return `<tr>
       <td class="col-name">${f}</td>
       <td><input type="number" class="made-input"
                  data-store="${storeKey}" data-filling="${f}"
-                 value="${totals[f]}" min="0"></td>
+                 value="${madeVal}" min="0"></td>
       ${slotCells}
     </tr>`;
   }).join("");
@@ -1194,33 +1225,42 @@ function renderActualSales(){
   const fillings = FILLINGS.filter(f => (zuidTotals[f] || 0) > 0 || (uvaTotals[f] || 0) > 0);
   if(fillings.length === 0){ area.innerHTML = `<p class="off-note">具材の割り振りがありません。</p>`; return; }
 
+  const zuidSaved = state.hourlyRecords["Zuid"] || {};
+  const uvaSaved = state.hourlyRecords["UvA"] || {};
+  const zuidNoteVal = escapeHtml(zuidSaved.note || "");
+  const uvaNoteVal = escapeHtml(uvaSaved.note || "");
+  const uvaLocationVal = escapeHtml(uvaSaved.location || "UvA");
+
   area.innerHTML = `
     <div class="store-section">
       <div class="store-heading">🏪 Zuid</div>
-      ${buildStoreTable("Zuid", fillings, zuidTotals)}
+      ${buildStoreTable("Zuid", fillings, zuidTotals, zuidSaved.items)}
       <div class="notes-area">
         <span class="notes-label">今日の販売メモ</span>
-        <textarea id="notes-Zuid" rows="2" placeholder="天気の様子・特記事項など"></textarea>
+        <textarea id="notes-Zuid" rows="2" placeholder="天気の様子・特記事項など">${zuidNoteVal}</textarea>
       </div>
+      <button class="record-btn" id="saveActualBtn-Zuid" data-store="Zuid">Zuidの実績を記録する</button>
     </div>
     <div class="store-section">
       <div class="store-heading">🏪 UvA</div>
       <div class="location-input-row">
-        販売場所：<input type="text" id="uvaLocationInput" value="UvA" placeholder="UvA" maxlength="20">
+        販売場所：<input type="text" id="uvaLocationInput" value="${uvaLocationVal}" placeholder="UvA" maxlength="20">
       </div>
-      ${buildStoreTable("UvA", fillings, uvaTotals)}
+      ${buildStoreTable("UvA", fillings, uvaTotals, uvaSaved.items)}
       <div class="notes-area">
         <span class="notes-label">今日の販売メモ</span>
-        <textarea id="notes-UvA" rows="2" placeholder="天気の様子・特記事項など"></textarea>
+        <textarea id="notes-UvA" rows="2" placeholder="天気の様子・特記事項など">${uvaNoteVal}</textarea>
       </div>
+      <button class="record-btn" id="saveActualBtn-UvA" data-store="UvA">UvAの実績を記録する</button>
     </div>
-    <button class="record-btn" id="saveActualBtn">記録する</button>
   `;
 
   area.querySelectorAll(".hourly-input, .made-input").forEach(inp =>
     inp.addEventListener("input", () => updateSoldDisplay(fillings))
   );
-  document.getElementById("saveActualBtn").addEventListener("click", saveActual);
+  document.getElementById("saveActualBtn-Zuid").addEventListener("click", () => saveActual("Zuid"));
+  document.getElementById("saveActualBtn-UvA").addEventListener("click", () => saveActual("UvA"));
+  updateSoldDisplay(fillings);
 }
 
 function updateSoldDisplay(fillings){
@@ -1279,7 +1319,7 @@ function updateSoldDisplay(fillings){
   });
 }
 
-async function saveActual(){
+async function saveActual(storeKey){
   const today = state.dailyResults[0];
   const plan = state.confirmedPlanByDate[mdLabel(today.dateStr)];
   if(!plan) return;
@@ -1288,12 +1328,12 @@ async function saveActual(){
   const fillings = FILLINGS.filter(f => (zuidTotals[f] || 0) > 0 || (uvaTotals[f] || 0) > 0);
   const w = weatherInfo(today.code);
 
-  function collectItems(storeKey){
+  function collectItems(sk){
     return fillings.map(f => {
-      const madeEl = document.querySelector(`.made-input[data-store="${storeKey}"][data-filling="${f}"]`);
+      const madeEl = document.querySelector(`.made-input[data-store="${sk}"][data-filling="${f}"]`);
       const made = madeEl ? (parseInt(madeEl.value, 10) || 0) : 0;
       const sv = HOURLY_SLOTS.map((h, si) => {
-        const el = document.querySelector(`.hourly-input[data-store="${storeKey}"][data-filling="${f}"][data-slot="${si}"]`);
+        const el = document.querySelector(`.hourly-input[data-store="${sk}"][data-filling="${f}"][data-slot="${si}"]`);
         return (el && el.value !== "") ? parseInt(el.value, 10) : "";
       });
       return { filling: f, total: made,
@@ -1301,9 +1341,13 @@ async function saveActual(){
     });
   }
 
-  const uvaLocation = (document.getElementById("uvaLocationInput") || {value:"UvA"}).value.trim() || "UvA";
-  const zuidNote = (document.getElementById("notes-Zuid") || {value:""}).value.trim();
-  const uvaNote = (document.getElementById("notes-UvA") || {value:""}).value.trim();
+  const storeData = storeKey === "Zuid"
+    ? { store: "Zuid", location: "Zuid", items: collectItems("Zuid"),
+        note: (document.getElementById("notes-Zuid") || {value:""}).value.trim() }
+    : { store: "UvA",
+        location: (document.getElementById("uvaLocationInput") || {value:"UvA"}).value.trim() || "UvA",
+        items: collectItems("UvA"),
+        note: (document.getElementById("notes-UvA") || {value:""}).value.trim() };
 
   const payload = {
     type: "saveHourly",
@@ -1311,22 +1355,20 @@ async function saveActual(){
     weekday: DAY_NAMES[today.dow] + "曜",
     weather: w.text,
     temp: Math.round(today.maxTemp),
-    stores: [
-      { store: "Zuid", location: "Zuid", items: collectItems("Zuid"), note: zuidNote },
-      { store: "UvA",  location: uvaLocation, items: collectItems("UvA"), note: uvaNote },
-    ],
+    stores: [storeData],
   };
 
-  const btn = document.getElementById("saveActualBtn");
+  const btn = document.getElementById(`saveActualBtn-${storeKey}`);
+  const originalLabel = btn.textContent;
   btn.disabled = true;
   btn.textContent = "送信中...";
   try{
     await fetch(SCRIPT_URL, { method: "POST", mode: "no-cors", body: JSON.stringify(payload) });
     btn.textContent = "✓ 記録しました";
-    setTimeout(() => { btn.textContent = "記録する"; btn.disabled = false; }, 3000);
+    setTimeout(() => { btn.textContent = originalLabel; btn.disabled = false; }, 3000);
   }catch(e){
     console.error("実績記録失敗:", e);
-    btn.textContent = "記録する";
+    btn.textContent = originalLabel;
     btn.disabled = false;
   }
 }
@@ -1524,6 +1566,9 @@ async function loadWeather(){
       const submitted = todayShift[m.name];
       m.on = !!(submitted && submitted.qty > 0);
     });
+
+    // 今日の日付・店舗で既に記録済みの時間帯別実績があれば読み込み、入力欄の復元に使う
+    state.hourlyRecords = await fetchHourlyRecords(state.dailyResults[0].dateStr);
 
     renderWeather(data.daily);
     renderSalesTimeSlots();
