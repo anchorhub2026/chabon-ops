@@ -1202,6 +1202,7 @@ function renderActualSales(){
         <span class="notes-label">今日の販売メモ</span>
         <textarea id="notes-Zuid" rows="2" placeholder="天気の様子・特記事項など"></textarea>
       </div>
+      <button class="record-btn" id="saveZuidBtn">Zuidの実績を記録する</button>
     </div>
     <div class="store-section">
       <div class="store-heading">🏪 UvA</div>
@@ -1213,14 +1214,21 @@ function renderActualSales(){
         <span class="notes-label">今日の販売メモ</span>
         <textarea id="notes-UvA" rows="2" placeholder="天気の様子・特記事項など"></textarea>
       </div>
+      <button class="record-btn" id="saveUvABtn">UvAの実績を記録する</button>
     </div>
-    <button class="record-btn" id="saveActualBtn">記録する</button>
   `;
 
   area.querySelectorAll(".hourly-input, .made-input").forEach(inp =>
     inp.addEventListener("input", () => updateSoldDisplay(fillings))
   );
-  document.getElementById("saveActualBtn").addEventListener("click", saveActual);
+  document.getElementById("saveZuidBtn").addEventListener("click", () => saveStoreActual("Zuid"));
+  document.getElementById("saveUvABtn").addEventListener("click", () => saveStoreActual("UvA"));
+
+  // 保存済みデータを読み込んで入力欄を復元する
+  fetchHourlyData().then(rows => {
+    restoreHourlyInputs(rows, today.dateStr);
+    updateSoldDisplay(fillings);
+  });
 }
 
 function updateSoldDisplay(fillings){
@@ -1279,7 +1287,50 @@ function updateSoldDisplay(fillings){
   });
 }
 
-async function saveActual(){
+async function fetchHourlyData(){
+  try{
+    const res = await fetch(`${SCRIPT_URL}?type=hourly`, { cache: "no-store" });
+    const json = await res.json();
+    return json.rows || [];
+  }catch(e){
+    console.warn("時間帯別実績の取得失敗:", e);
+    return [];
+  }
+}
+
+function restoreHourlyInputs(rows, todayIso){
+  const slotKeys = ["r12","r13","r14","r15","r16","r17","r18"];
+  const noteRestored = {};
+  rows.filter(r => r.date === todayIso).forEach(row => {
+    const sk = row.store;
+    const f  = row.filling;
+    // 作った数を復元
+    const madeEl = document.querySelector(`.made-input[data-store="${sk}"][data-filling="${f}"]`);
+    if(madeEl && row.total !== "" && row.total !== null && row.total !== undefined)
+      madeEl.value = row.total;
+    // 時間帯残数を復元
+    slotKeys.forEach((key, si) => {
+      const v = row[key];
+      if(v !== "" && v !== null && v !== undefined){
+        const el = document.querySelector(`.hourly-input[data-store="${sk}"][data-filling="${f}"][data-slot="${si}"]`);
+        if(el) el.value = String(v);
+      }
+    });
+    // 備考を復元（店舗ごとに1回）
+    if(!noteRestored[sk] && row.note){
+      const noteEl = document.getElementById(`notes-${sk}`);
+      if(noteEl) noteEl.value = row.note;
+      noteRestored[sk] = true;
+    }
+    // UvA 販売場所名を復元
+    if(sk === "UvA" && row.location && row.location !== "UvA"){
+      const locEl = document.getElementById("uvaLocationInput");
+      if(locEl) locEl.value = row.location;
+    }
+  });
+}
+
+async function saveStoreActual(storeKey){
   const today = state.dailyResults[0];
   const plan = state.confirmedPlanByDate[mdLabel(today.dateStr)];
   if(!plan) return;
@@ -1288,22 +1339,20 @@ async function saveActual(){
   const fillings = FILLINGS.filter(f => (zuidTotals[f] || 0) > 0 || (uvaTotals[f] || 0) > 0);
   const w = weatherInfo(today.code);
 
-  function collectItems(storeKey){
-    return fillings.map(f => {
-      const madeEl = document.querySelector(`.made-input[data-store="${storeKey}"][data-filling="${f}"]`);
-      const made = madeEl ? (parseInt(madeEl.value, 10) || 0) : 0;
-      const sv = HOURLY_SLOTS.map((h, si) => {
-        const el = document.querySelector(`.hourly-input[data-store="${storeKey}"][data-filling="${f}"][data-slot="${si}"]`);
-        return (el && el.value !== "") ? parseInt(el.value, 10) : "";
-      });
-      return { filling: f, total: made,
-        r12: sv[0], r13: sv[1], r14: sv[2], r15: sv[3], r16: sv[4], r17: sv[5], r18: sv[6] };
-    });
-  }
-
   const uvaLocation = (document.getElementById("uvaLocationInput") || {value:"UvA"}).value.trim() || "UvA";
-  const zuidNote = (document.getElementById("notes-Zuid") || {value:""}).value.trim();
-  const uvaNote = (document.getElementById("notes-UvA") || {value:""}).value.trim();
+  const location = storeKey === "UvA" ? uvaLocation : storeKey;
+  const note = (document.getElementById(`notes-${storeKey}`) || {value:""}).value.trim();
+
+  const items = fillings.map(f => {
+    const madeEl = document.querySelector(`.made-input[data-store="${storeKey}"][data-filling="${f}"]`);
+    const made = madeEl ? (parseInt(madeEl.value, 10) || 0) : 0;
+    const sv = HOURLY_SLOTS.map((h, si) => {
+      const el = document.querySelector(`.hourly-input[data-store="${storeKey}"][data-filling="${f}"][data-slot="${si}"]`);
+      return (el && el.value !== "") ? parseInt(el.value, 10) : "";
+    });
+    return { filling: f, total: made,
+      r12: sv[0], r13: sv[1], r14: sv[2], r15: sv[3], r16: sv[4], r17: sv[5], r18: sv[6] };
+  });
 
   const payload = {
     type: "saveHourly",
@@ -1311,23 +1360,21 @@ async function saveActual(){
     weekday: DAY_NAMES[today.dow] + "曜",
     weather: w.text,
     temp: Math.round(today.maxTemp),
-    stores: [
-      { store: "Zuid", location: "Zuid", items: collectItems("Zuid"), note: zuidNote },
-      { store: "UvA",  location: uvaLocation, items: collectItems("UvA"), note: uvaNote },
-    ],
+    stores: [{ store: storeKey, location, items, note }],
   };
 
-  const btn = document.getElementById("saveActualBtn");
-  btn.disabled = true;
-  btn.textContent = "送信中...";
+  const btnId = storeKey === "Zuid" ? "saveZuidBtn" : "saveUvABtn";
+  const btn = document.getElementById(btnId);
+  if(btn){ btn.disabled = true; btn.textContent = "送信中..."; }
   try{
     await fetch(SCRIPT_URL, { method: "POST", mode: "no-cors", body: JSON.stringify(payload) });
-    btn.textContent = "✓ 記録しました";
-    setTimeout(() => { btn.textContent = "記録する"; btn.disabled = false; }, 3000);
+    if(btn){ btn.textContent = "✓ 記録しました"; }
+    setTimeout(() => {
+      if(btn){ btn.textContent = `${storeKey}の実績を記録する`; btn.disabled = false; }
+    }, 3000);
   }catch(e){
     console.error("実績記録失敗:", e);
-    btn.textContent = "記録する";
-    btn.disabled = false;
+    if(btn){ btn.textContent = `${storeKey}の実績を記録する`; btn.disabled = false; }
   }
 }
 

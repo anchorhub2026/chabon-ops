@@ -250,6 +250,37 @@ function handleGetStatus(ss) {
     .setMimeType(ContentService.MimeType.JSON);
 }
 
+function handleGetHourly(ss) {
+  var sheet = ss.getSheetByName("時間帯別実績");
+  if (!sheet) {
+    return ContentService.createTextOutput(JSON.stringify({ rows: [] }))
+      .setMimeType(ContentService.MimeType.JSON);
+  }
+  var rows = sheet.getDataRange().getValues();
+  var result = [];
+  for (var i = 1; i < rows.length; i++) {
+    if (!rows[i][0]) continue;
+    var r = rows[i];
+    result.push({
+      date:     normalizeDateCell(r[0]),
+      store:    String(r[4] || ""),
+      location: String(r[5] || ""),
+      filling:  String(r[6] || ""),
+      total:    r[7] !== "" && r[7] !== null ? r[7] : "",
+      r12:      r[8]  !== "" && r[8]  !== null ? r[8]  : "",
+      r13:      r[9]  !== "" && r[9]  !== null ? r[9]  : "",
+      r14:      r[10] !== "" && r[10] !== null ? r[10] : "",
+      r15:      r[11] !== "" && r[11] !== null ? r[11] : "",
+      r16:      r[12] !== "" && r[12] !== null ? r[12] : "",
+      r17:      r[13] !== "" && r[13] !== null ? r[13] : "",
+      r18:      r[14] !== "" && r[14] !== null ? r[14] : "",
+      note:     String(r[15] || ""),
+    });
+  }
+  return ContentService.createTextOutput(JSON.stringify({ rows: result }))
+    .setMimeType(ContentService.MimeType.JSON);
+}
+
 function doGet(e) {
   if (e.parameter && e.parameter.type === "disruptions") {
     return handleDisruptions();
@@ -263,6 +294,10 @@ function doGet(e) {
 
   if (e.parameter && e.parameter.type === "status") {
     return handleGetStatus(ss);
+  }
+
+  if (e.parameter && e.parameter.type === "hourly") {
+    return handleGetHourly(ss);
   }
   var sheet = ss.getSheetByName("シフト回答");
   if (!sheet) {
