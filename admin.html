@@ -2097,6 +2097,7 @@ function summaryHtmlFor(snap){
     <div>総生産数：${snap.allocationTarget}個</div>
     <div>ニギニギ隊合計：${snap.ningiTotal}個</div>
     <div>本部：${snap.hqQty}個（自動計算）</div>
+    <div style="font-size:0.82em;color:#888;margin-top:2px;">${Math.ceil(snap.hqQty / 3)}合</div>
     ${snap.isOverCap ? `<div class="warning-line">⚠️ ニギニギ隊の希望数合計が総生産数を超えています</div>` : ""}
   `;
 }

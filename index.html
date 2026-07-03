@@ -1411,7 +1411,7 @@ function renderFillings(){
     <tr>
       <td>本部</td>
       <td>${hqItems.map(it => `<span class="pill">${it.filling}×${it.qty}</span>`).join("") || "—"}</td>
-      <td>${plan.hqQty}個</td>
+      <td>${plan.hqQty}個<br><small style="color:#888;">${Math.ceil(plan.hqQty / 3)}合</small></td>
     </tr>
   `;
 
