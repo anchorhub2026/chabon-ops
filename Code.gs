@@ -57,7 +57,15 @@ function handleConfirmPlan(ss, data) {
     var day = data.days[i];
     var foundRow = -1;
     for (var r = 1; r < values.length; r++) {
-      if (String(values[r][0]) === String(day.date)) {
+      // Google Sheets が日付文字列を Date オブジェクトに自動変換する場合があるため
+      // normalizeDateCell で ISO 形式に揃えてから "M/D" 形式と比較する
+      var cellNorm = normalizeDateCell(values[r][0]);
+      var cellMD = "";
+      var parts = cellNorm.split("-");
+      if (parts.length === 3) {
+        cellMD = String(Number(parts[1])) + "/" + String(Number(parts[2]));
+      }
+      if (String(values[r][0]) === String(day.date) || cellMD === String(day.date)) {
         foundRow = r + 1;
         break;
       }

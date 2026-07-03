@@ -2849,10 +2849,17 @@ async function initPaymentSection(){
     // monthly: { "2026-06": { "YUMI": 450, ... }, ... }
     const monthly = {};
 
+    // 同じ日付が重複していた場合は最後の行（最新）のみ使用する
+    const dedupedByDate = {};
     rows.filter(r => r.c && r.c[0]).forEach(r => {
+      const dateStr = String(r.c[0]?.f || r.c[0]?.v || "").trim();
+      if(!dateStr || !/^\d{1,2}\/\d{1,2}$/.test(dateStr)) return;
+      dedupedByDate[dateStr] = r;
+    });
+
+    Object.values(dedupedByDate).forEach(r => {
       const c = r.c;
       const dateStr = String(c[0]?.f || c[0]?.v || "").trim();
-      if(!dateStr || !/^\d{1,2}\/\d{1,2}$/.test(dateStr)) return;
 
       const dateObj = inferYearForPayment(dateStr);
       if(!dateObj) return;
