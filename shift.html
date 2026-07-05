@@ -40,6 +40,7 @@
     position:absolute;
     inset:0;
     background: repeating-linear-gradient(135deg, rgba(255,255,255,0.05) 0 8px, transparent 8px 16px);
+    pointer-events: none;
   }
   .logo{
     position: relative;
@@ -66,9 +67,13 @@
   }
   nav.back-link{
     position: relative;
+    z-index: 10;
     margin-top: 10px;
   }
   nav.back-link a{
+    position: relative;
+    z-index: 10;
+    cursor: pointer;
     color: #fff;
     font-size: 0.78rem;
     opacity: 0.85;

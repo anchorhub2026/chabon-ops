@@ -51,8 +51,11 @@
     letter-spacing: 0.05em;
   }
   .header-left p{ margin: 3px 0 0; font-size: 0.78rem; opacity: 0.72; }
-  .header-nav{ margin-top: 10px; display: flex; gap: 6px; flex-wrap: wrap; }
+  .header-nav{ position: relative; z-index: 10; margin-top: 10px; display: flex; gap: 6px; flex-wrap: wrap; }
   .header-nav a{
+    position: relative;
+    z-index: 10;
+    cursor: pointer;
     display: inline-block;
     background: rgba(255,255,255,0.12);
     color: #fff;

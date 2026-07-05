@@ -36,7 +36,7 @@
   }
   header h1{ margin: 0; font-size: 1.3rem; letter-spacing: 0.05em; }
   header p{ margin: 6px 0 0; font-size: 0.82rem; opacity: 0.85; }
-  .header-nav{ margin-top: 12px; }
+  .header-nav{ position: relative; z-index: 10; margin-top: 12px; }
   .header-refresh-btn{
     display: inline-block;
     margin-top: 14px;
@@ -55,6 +55,9 @@
   .header-refresh-btn:active{ background: rgba(255,255,255,0.28); border-color: rgba(255,255,255,0.7); }
   .header-refresh-btn:disabled{ opacity: 0.55; cursor: default; }
   .header-nav a{
+    position: relative;
+    z-index: 10;
+    cursor: pointer;
     display: inline-block;
     background: rgba(255,255,255,0.12);
     color: #fff;
