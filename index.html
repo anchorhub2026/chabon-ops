@@ -105,6 +105,20 @@
     border-radius: 100px;
     font-weight: normal;
   }
+  .refresh-btn{
+    margin-left: auto;
+    border: 1px solid var(--main);
+    background: var(--main-light);
+    color: var(--main-dark);
+    font-weight: bold;
+    font-size: 0.78rem;
+    padding: 6px 14px;
+    border-radius: 100px;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+  .refresh-btn:active{ background: var(--main); color: #fff; }
+  .refresh-btn:disabled{ opacity: 0.7; cursor: default; }
   /* 天気 */
   #weatherList{
     display:flex;
@@ -265,10 +279,26 @@
     border-radius: 10px;
     padding: 12px;
     background: #fdfcf9;
+    cursor: pointer;
   }
   .week-card.today{
     border-color: var(--main);
     background: var(--main-light);
+  }
+  .week-card.open{
+    box-shadow: 0 0 0 2px var(--main);
+  }
+  .week-detail-box{
+    margin-top: 14px;
+    padding: 14px;
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    background: #fdfcf9;
+  }
+  .week-detail-heading{
+    font-weight: bold;
+    color: var(--main-dark);
+    margin-bottom: 8px;
   }
   .week-date{
     font-weight: bold;
@@ -465,6 +495,7 @@
     <div class="week-cards" id="weeklyView">
       <div class="loading">天気データを取得中です…</div>
     </div>
+    <div id="weekDetail"></div>
   </section>
 
   <section>
@@ -473,7 +504,7 @@
   </section>
 
   <section>
-    <h2>今日の販売実績</h2>
+    <h2>今日の販売実績<button type="button" class="refresh-btn" id="refreshHourlyBtn">🔄 更新</button></h2>
     <div id="actualSalesArea"><p class="off-note">読み込み中...</p></div>
   </section>
 
@@ -704,6 +735,7 @@ const state = {
   shiftByDate: {}, // { [dateKey "M/D"]: { [memberName]: { qty, raw } } }
   confirmedPlanByDate: {}, // { [dateKey "M/D"]: { zuid, uva, chise, ningiBreakdown, hqQty, hqBreakdown } }
   todayDraft: null, // forecast from "作業中プラン" for today: { zuidFillingQty, uvaFillingQty, ... } | null
+  openWeekKey: null, // 週間ビューで展開中の日付キー "M/D" | null
 };
 
 const FILLING_RATIOS = {
@@ -1096,6 +1128,7 @@ function renderWeeklyView(){
 
   if(weekDays.length === 0){
     container.innerHTML = `<p class="off-note">今週の営業日データがありません。</p>`;
+    renderWeekDetail();
     return;
   }
 
@@ -1104,9 +1137,11 @@ function renderWeeklyView(){
     const d = new Date(r.dateStr);
     const label = `${d.getMonth() + 1}/${d.getDate()}（${DAY_NAMES[r.dow]}）`;
     const w = weatherInfo(r.code);
+    const key = mdLabel(r.dateStr);
+    const isOpen = state.openWeekKey === key;
 
     return `
-      <div class="week-card ${isToday ? "today" : ""}">
+      <div class="week-card ${isToday ? "today" : ""}${isOpen ? " open" : ""}" data-key="${key}">
         <div class="week-date">${label}${isToday ? '<span class="today-tag">本日</span>' : ""}</div>
         ${r.holidayName ? `<div class="holiday-badge">🎉 祝日：${r.holidayName}</div>` : ""}
         ${r.nsDisruptions && r.nsDisruptions.length ? `<div class="ns-badge">🚆 NSストライキ/運休</div>` : ""}
@@ -1116,6 +1151,68 @@ function renderWeeklyView(){
       </div>
     `;
   }).join("");
+
+  container.querySelectorAll(".week-card").forEach(card => {
+    card.addEventListener("click", () => {
+      const key = card.dataset.key;
+      state.openWeekKey = state.openWeekKey === key ? null : key;
+      renderWeeklyView();
+    });
+  });
+
+  renderWeekDetail();
+}
+
+// ニギニギ隊内訳・本部内訳のテーブルHTML（renderFillings・週間ビュー展開の共通部品）
+function buildFillingBreakdownTable(plan){
+  const members = parseNingiBreakdown(plan.ningiBreakdown);
+  const hqItems = parseFillingString(plan.hqBreakdown);
+
+  const memberRows = members.length
+    ? members.map(m => `
+        <tr>
+          <td>${m.name}</td>
+          <td>${m.items.filter(it => it.qty > 0).map(it => `<span class="pill">${it.filling}×${it.qty}</span>`).join("") || "—"}</td>
+          <td>${m.total}個</td>
+        </tr>
+      `).join("")
+    : "";
+
+  const hqRow = `
+    <tr>
+      <td>本部</td>
+      <td>${hqItems.map(it => `<span class="pill">${it.filling}×${it.qty}</span>`).join("") || "—"}</td>
+      <td>${plan.hqQty}個<br><small style="color:#888;">${Math.ceil(plan.hqQty / 3)}合</small></td>
+    </tr>
+  `;
+
+  return `
+    <table>
+      <thead><tr><th>担当</th><th>具材</th><th>個数</th></tr></thead>
+      <tbody>${memberRows}${hqRow}</tbody>
+    </table>
+  `;
+}
+
+function renderWeekDetail(){
+  const area = document.getElementById("weekDetail");
+  if(!area) return;
+  const key = state.openWeekKey;
+  if(!key){ area.innerHTML = ""; return; }
+
+  const dayInfo = state.dailyResults.find(r => mdLabel(r.dateStr) === key);
+  const label = dayInfo ? `${key}（${DAY_NAMES[dayInfo.dow]}曜）` : key;
+  const plan = state.confirmedPlanByDate[key];
+  const body = plan
+    ? buildFillingBreakdownTable(plan)
+    : `<p class="off-note">まだデータがありません</p>`;
+
+  area.innerHTML = `
+    <div class="week-detail-box">
+      <div class="week-detail-heading">${label}の具材割り振り</div>
+      ${body}
+    </div>
+  `;
 }
 
 function getTodayFillingTotals(plan){
@@ -1181,7 +1278,7 @@ function buildStoreTable(storeKey, fillings, totals){
     <thead><tr><th class="col-name">具材</th><th>作った数</th>${slotHeaders}</tr></thead>
     <tbody>
       ${rows}
-      <tr class="total-row"><td class="col-name">残り合計</td><td>—</td>${remainCells}</tr>
+      <tr class="total-row"><td class="col-name">残り合計</td><td class="total-cell"><span id="total-made-${storeKey}"></span></td>${remainCells}</tr>
       <tr class="total-row"><td class="col-name">売った合計</td><td>—</td>${soldCells}</tr>
     </tbody>
   </table>`;
@@ -1230,10 +1327,33 @@ function renderActualSales(){
   document.getElementById("saveUvABtn").addEventListener("click", () => saveStoreActual("UvA"));
 
   // 保存済みデータを読み込んで入力欄を復元する
-  fetchHourlyData().then(rows => {
-    restoreHourlyInputs(rows, today.dateStr);
-    updateSoldDisplay(fillings);
-  });
+  refreshHourlyRecords();
+}
+
+// 他端末で入力された最新の時間帯別実績を取得し、入力欄に反映する
+async function refreshHourlyRecords(){
+  if(!state.dailyResults.length) return;
+  const today = state.dailyResults[0];
+  const plan = state.confirmedPlanByDate[mdLabel(today.dateStr)];
+  if(!plan) return;
+
+  const { zuidTotals, uvaTotals } = getStoreTotals(plan, state.todayDraft);
+  const fillings = FILLINGS.filter(f => (zuidTotals[f] || 0) > 0 || (uvaTotals[f] || 0) > 0);
+  if(fillings.length === 0) return;
+
+  const rows = await fetchHourlyData();
+  restoreHourlyInputs(rows, today.dateStr);
+  updateSoldDisplay(fillings);
+}
+
+async function handleRefreshHourlyClick(){
+  const btn = document.getElementById("refreshHourlyBtn");
+  if(btn){ btn.disabled = true; btn.textContent = "更新中..."; }
+  try{
+    await refreshHourlyRecords();
+  }finally{
+    if(btn){ btn.disabled = false; btn.textContent = "🔄 更新"; }
+  }
 }
 
 function updateSoldDisplay(fillings){
@@ -1243,10 +1363,12 @@ function updateSoldDisplay(fillings){
     const soldTotals = new Array(nSlots).fill(0);
     const remainCount = new Array(nSlots).fill(0);
     const soldCount = new Array(nSlots).fill(0);
+    let madeTotal = 0;
 
     fillings.forEach((f, fi) => {
       const madeEl = document.querySelector(`.made-input[data-store="${storeKey}"][data-filling="${f}"]`);
       const made = madeEl ? (parseInt(madeEl.value, 10) || 0) : 0;
+      madeTotal += made;
 
       // 完売後の自動ゼロ入力：残数が0になったら以降の空欄に0を入力
       let hitZero = false;
@@ -1283,6 +1405,8 @@ function updateSoldDisplay(fillings){
     });
 
     // 合計行を更新
+    const mEl = document.getElementById(`total-made-${storeKey}`);
+    if(mEl) mEl.textContent = String(madeTotal);
     HOURLY_SLOTS.forEach((h, si) => {
       const rEl = document.getElementById(`total-remain-${storeKey}-${si}`);
       const sEl = document.getElementById(`total-sold-${storeKey}-${si}`);
@@ -1399,33 +1523,7 @@ function renderFillings(){
     return;
   }
 
-  const members = parseNingiBreakdown(plan.ningiBreakdown);
-  const hqItems = parseFillingString(plan.hqBreakdown);
-
-  const memberRows = members.length
-    ? members.map(m => `
-        <tr>
-          <td>${m.name}</td>
-          <td>${m.items.filter(it => it.qty > 0).map(it => `<span class="pill">${it.filling}×${it.qty}</span>`).join("") || "—"}</td>
-          <td>${m.total}個</td>
-        </tr>
-      `).join("")
-    : "";
-
-  const hqRow = `
-    <tr>
-      <td>本部</td>
-      <td>${hqItems.map(it => `<span class="pill">${it.filling}×${it.qty}</span>`).join("") || "—"}</td>
-      <td>${plan.hqQty}個<br><small style="color:#888;">${Math.ceil(plan.hqQty / 3)}合</small></td>
-    </tr>
-  `;
-
-  area.innerHTML = `
-    <table>
-      <thead><tr><th>担当</th><th>具材</th><th>個数</th></tr></thead>
-      <tbody>${memberRows}${hqRow}</tbody>
-    </table>
-  `;
+  area.innerHTML = buildFillingBreakdownTable(plan);
 }
 
 function ensureCellStatus(dateKeyStr, name){
@@ -1594,6 +1692,8 @@ async function loadWeather(){
     console.error(e);
   }
 }
+
+document.getElementById("refreshHourlyBtn").addEventListener("click", handleRefreshHourlyClick);
 
 renderFillings();
 loadWeather();
