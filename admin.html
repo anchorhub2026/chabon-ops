@@ -563,6 +563,17 @@
   .week-collapsed .day-cards,
   .week-collapsed .prod-cards-wrap,
   .week-collapsed .day-pairs-wrap{ display: none; }
+  .toggle-shift-btn{
+    font-size: 0.75rem;
+    padding: 4px 12px;
+    border: 1px solid var(--main);
+    border-radius: 100px;
+    background: #fff;
+    color: var(--main-dark);
+    cursor: pointer;
+  }
+  .toggle-shift-btn:hover{ background: var(--main-light); border-color: var(--main-dark); }
+  .shift-table-collapsed{ display: none; }
 
   /* ── 日付ブロック（統合レイアウト） ── */
   .day-pairs-wrap{ display: flex; flex-direction: column; gap: 12px; }
@@ -972,9 +983,10 @@
   <section>
     <h2>
       ニギニギ隊シフト希望一覧
+      <button type="button" class="toggle-shift-btn" id="toggleShiftBtn">▼ 開く</button>
       <button type="button" class="refresh-shift-btn" id="refreshShiftBtn">🔄 希望シフトを更新</button>
     </h2>
-    <div id="shiftTableArea"><p class="loading">データを読み込み中...</p></div>
+    <div id="shiftTableArea" class="shift-table-collapsed"><p class="loading">データを読み込み中...</p></div>
   </section>
 
   <section>
@@ -1070,6 +1082,7 @@ const state = {
 };
 
 const weekCollapsed = { 1: false, 2: false };
+let shiftListCollapsed = true;
 
 /* ---------- 日付ユーティリティ ---------- */
 
@@ -2451,6 +2464,14 @@ function toggleWeek(weekIndex){
   });
 }
 
+function toggleShiftList(){
+  shiftListCollapsed = !shiftListCollapsed;
+  const btn = document.getElementById("toggleShiftBtn");
+  const area = document.getElementById("shiftTableArea");
+  if(btn) btn.textContent = shiftListCollapsed ? "▼ 開く" : "▲ 閉じる";
+  if(area) area.classList.toggle("shift-table-collapsed", shiftListCollapsed);
+}
+
 /* ---------- showConfirm ---------- */
 
 function showConfirm(message, onConfirm){
@@ -3034,6 +3055,9 @@ async function init(){
 
     const refreshBtn = document.getElementById("refreshShiftBtn");
     if(refreshBtn) refreshBtn.addEventListener("click", refreshShiftData);
+
+    const toggleShiftBtn = document.getElementById("toggleShiftBtn");
+    if(toggleShiftBtn) toggleShiftBtn.addEventListener("click", toggleShiftList);
 
     const headerRefreshBtn = document.getElementById("headerRefreshBtn");
     if(headerRefreshBtn) headerRefreshBtn.addEventListener("click", refreshAllData);
