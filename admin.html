@@ -1082,6 +1082,7 @@ const state = {
 };
 
 const weekCollapsed = { 1: false, 2: false };
+let weekCollapseInitialized = false;
 let shiftListCollapsed = true;
 
 /* ---------- 日付ユーティリティ ---------- */
@@ -1581,6 +1582,14 @@ function renderCombined(){
     { title: "来週",   weekIndex: 1, days: state.days.filter(d => d.weekIndex === 1), cssClass: "" },
     { title: "再来週", weekIndex: 2, days: state.days.filter(d => d.weekIndex === 2), cssClass: "week-next-next" },
   ].filter(week => week.days.length > 0);
+
+  // 初期表示：表示されている週の中で最初の週のみ展開し、それ以外は折りたたむ
+  if(!weekCollapseInitialized && weeks.length){
+    weeks.forEach((week, idx) => {
+      if(week.weekIndex >= 1) weekCollapsed[week.weekIndex] = idx !== 0;
+    });
+    weekCollapseInitialized = true;
+  }
 
   area.innerHTML = weeks.map((week, idx) => {
     const collapsible = week.weekIndex >= 1;
