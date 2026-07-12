@@ -1519,15 +1519,22 @@ function renderFillings(){
     return;
   }
 
-  const todayKey = mdLabel(state.dailyResults[0].dateStr);
-  const plan = state.confirmedPlanByDate[todayKey];
+  // 今日が定休日（金土日）の場合は、直近の営業日の割り振りを表示する
+  const todayEntry = state.dailyResults[0];
+  const targetEntry = OPERATING_DAYS.includes(todayEntry.dow)
+    ? todayEntry
+    : (state.dailyResults.find(r => OPERATING_DAYS.includes(r.dow)) || todayEntry);
+  const isToday = targetEntry === todayEntry;
+  const targetKey = mdLabel(targetEntry.dateStr);
+  const plan = state.confirmedPlanByDate[targetKey];
 
   if(!plan){
     area.innerHTML = `<p class="off-note">まだ確定されていません。</p>`;
     return;
   }
 
-  area.innerHTML = buildFillingBreakdownTable(plan);
+  const dateLabel = isToday ? "" : `<p class="off-note">${targetKey}（${DAY_NAMES[targetEntry.dow]}曜）の割り振りを表示しています</p>`;
+  area.innerHTML = dateLabel + buildFillingBreakdownTable(plan);
 }
 
 function ensureCellStatus(dateKeyStr, name, filling){
@@ -1539,13 +1546,18 @@ function ensureCellStatus(dateKeyStr, name, filling){
 function renderWeeklyStatusTable(){
   const area = document.getElementById("fillingStatusArea");
 
-  // 「今週」（今日〜今週木曜）のみに絞る。来週以降は表示しない
+  // 「今週」（直近の営業週の月〜木）のみに絞る。来週以降は表示しない
+  // 今日が定休日（金土日）の場合は、直近の営業日を起点に週を決定する
   const today = new Date(state.dailyResults[0].dateStr);
   today.setHours(0, 0, 0, 0);
-  const todayDow = today.getDay();
-  const diffToMonday = todayDow === 0 ? -6 : 1 - todayDow;
-  const thisMonday = new Date(today);
-  thisMonday.setDate(today.getDate() + diffToMonday);
+  const cursor = new Date(today);
+  while(!OPERATING_DAYS.includes(cursor.getDay())){
+    cursor.setDate(cursor.getDate() + 1);
+  }
+  const cursorDow = cursor.getDay();
+  const diffToMonday = 1 - cursorDow;
+  const thisMonday = new Date(cursor);
+  thisMonday.setDate(cursor.getDate() + diffToMonday);
   const thisThursday = new Date(thisMonday);
   thisThursday.setDate(thisMonday.getDate() + 3);
 

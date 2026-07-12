@@ -2581,7 +2581,12 @@ function renderCellStatusTable(){
       return `<td>${fillingRows}</td>`;
     }).join("");
     if(!anyDay) return "";
-    return `<tr><td><strong>${name}</strong></td>${cells}</tr>`;
+    const mn = state.notesByName && state.notesByName[name];
+    const noteHtml = mn ? [
+      mn.note     ? `<div class="shift-note">📝 ${mn.note}</div>` : "",
+      mn.supplies ? `<div class="shift-note">📦 ${mn.supplies}</div>` : "",
+    ].join("") : "";
+    return `<tr><td><strong>${name}</strong>${noteHtml}</td>${cells}</tr>`;
   }).filter(Boolean).join("");
 
   area.innerHTML = `
