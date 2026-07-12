@@ -377,6 +377,9 @@
   .cell-fillings{ margin: 6px 0; font-size: 0.8rem; color: #555; }
   .needed-items-cell{ font-size: 0.78rem; color: var(--main-dark); font-weight: bold; white-space: nowrap; }
   .cell-status{ display: flex; flex-direction: column; align-items: flex-start; }
+  .cell-filling-row{ margin-bottom: 8px; }
+  .cell-filling-row:last-child{ margin-bottom: 0; }
+  .cell-filling-row .cell-fillings{ margin: 0 0 2px; }
 
   footer{
     text-align:center;
@@ -697,15 +700,16 @@ async function fetchStatusFromSheet(){
       const key = isoToMdLabel(s.date);
       if(!key) return;
       if(!state.cellStatus[key]) state.cellStatus[key] = {};
-      state.cellStatus[key][s.member] = { handed: !!s.handed, cooked: !!s.cooked };
+      if(!state.cellStatus[key][s.member]) state.cellStatus[key][s.member] = {};
+      state.cellStatus[key][s.member][s.filling] = { handed: !!s.handed, cooked: !!s.cooked };
     });
   }catch(e){
     console.warn("ステータス読み込み失敗:", e);
   }
 }
 
-async function saveStatusToSheet(isoDate, member, handed, cooked){
-  const payload = { type: "saveStatus", date: isoDate, member, handed, cooked };
+async function saveStatusToSheet(isoDate, member, filling, handed, cooked){
+  const payload = { type: "saveStatus", date: isoDate, member, filling, handed, cooked };
   try{
     await fetch(SCRIPT_URL, { method: "POST", mode: "no-cors", body: JSON.stringify(payload) });
   }catch(e){
@@ -730,7 +734,7 @@ const state = {
   dailyResults: [],
   hourlyByDate: {},
   todayTotal: 0,
-  cellStatus: {},  // { [dateKey "M/D"]: { [memberName]: { handed: bool, cooked: bool } } }
+  cellStatus: {},  // { [dateKey "M/D"]: { [memberName]: { [fillingName]: { handed: bool, cooked: bool } } } }
   memberNeededItems: {}, // { [memberName]: "お米×2、手袋×1" }
   shiftByDate: {}, // { [dateKey "M/D"]: { [memberName]: { qty, raw } } }
   confirmedPlanByDate: {}, // { [dateKey "M/D"]: { zuid, uva, chise, ningiBreakdown, hqQty, hqBreakdown } }
@@ -1526,9 +1530,10 @@ function renderFillings(){
   area.innerHTML = buildFillingBreakdownTable(plan);
 }
 
-function ensureCellStatus(dateKeyStr, name){
+function ensureCellStatus(dateKeyStr, name, filling){
   if(!state.cellStatus[dateKeyStr]) state.cellStatus[dateKeyStr] = {};
-  if(!state.cellStatus[dateKeyStr][name]) state.cellStatus[dateKeyStr][name] = { handed: false, cooked: false };
+  if(!state.cellStatus[dateKeyStr][name]) state.cellStatus[dateKeyStr][name] = {};
+  if(!state.cellStatus[dateKeyStr][name][filling]) state.cellStatus[dateKeyStr][name][filling] = { handed: false, cooked: false };
 }
 
 function renderWeeklyStatusTable(){
@@ -1565,7 +1570,6 @@ function renderWeeklyStatusTable(){
     if(plan){
       parseNingiBreakdown(plan.ningiBreakdown).forEach(m => {
         map[m.name] = m.items;
-        ensureCellStatus(key, m.name);
       });
     }
     dayAssign[key] = { plan, map };
@@ -1591,18 +1595,21 @@ function renderWeeklyStatusTable(){
         return `<td>—</td>`;
       }
 
-      const fillingText = allocatedItems.map(it => `${it.filling}×${it.qty}`).join(" ");
-      const st = state.cellStatus[key][m.name];
-
-      return `
-        <td>
-          <div class="cell-fillings">${fillingText}</div>
-          <div class="cell-status">
-            <button class="status-btn handed ${st.handed ? "active" : ""}" data-key="${key}" data-iso="${d.dateStr}" data-member="${m.name}" data-kind="handed">具材渡し済み✓</button>
-            <button class="status-btn cooked ${st.cooked ? "active" : ""}" data-key="${key}" data-iso="${d.dateStr}" data-member="${m.name}" data-kind="cooked">調理済み❄️</button>
+      const fillingRows = allocatedItems.map(it => {
+        ensureCellStatus(key, m.name, it.filling);
+        const st = state.cellStatus[key][m.name][it.filling];
+        return `
+          <div class="cell-filling-row">
+            <div class="cell-fillings">${it.filling}×${it.qty}</div>
+            <div class="cell-status">
+              <button class="status-btn handed ${st.handed ? "active" : ""}" data-key="${key}" data-iso="${d.dateStr}" data-member="${m.name}" data-filling="${it.filling}" data-kind="handed">渡し済み✓</button>
+              <button class="status-btn cooked ${st.cooked ? "active" : ""}" data-key="${key}" data-iso="${d.dateStr}" data-member="${m.name}" data-filling="${it.filling}" data-kind="cooked">調理済み❄️</button>
+            </div>
           </div>
-        </td>
-      `;
+        `;
+      }).join("");
+
+      return `<td>${fillingRows}</td>`;
     }).join("");
 
     const neededItemsText = state.memberNeededItems[m.name];
@@ -1620,16 +1627,18 @@ function renderWeeklyStatusTable(){
 
   area.querySelectorAll(".cell-status .status-btn").forEach(btn => {
     btn.addEventListener("click", () => {
-      const key = btn.dataset.key;
-      const name = btn.dataset.member;
-      const kind = btn.dataset.kind;
+      const key     = btn.dataset.key;
+      const name    = btn.dataset.member;
+      const filling = btn.dataset.filling;
+      const kind    = btn.dataset.kind;
       const label = kind === "handed" ? "渡し済み" : "調理済み";
-      const nextState = !state.cellStatus[key][name][kind];
+      const nextState = !state.cellStatus[key][name][filling][kind];
       const actionLabel = nextState ? label : `未${label}`;
 
-      showConfirm(`${name}さんの${key}の具材を『${actionLabel}』にしますか？`, () => {
-        state.cellStatus[key][name][kind] = nextState;
-        saveStatusToSheet(btn.dataset.iso, name, state.cellStatus[key][name].handed, state.cellStatus[key][name].cooked);
+      showConfirm(`${name}さんの${key}の${filling}を『${actionLabel}』にしますか？`, () => {
+        state.cellStatus[key][name][filling][kind] = nextState;
+        const st = state.cellStatus[key][name][filling];
+        saveStatusToSheet(btn.dataset.iso, name, filling, st.handed, st.cooked);
         renderWeeklyStatusTable();
       });
     });

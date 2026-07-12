@@ -153,19 +153,21 @@ function handleSaveStatus(ss, data) {
   var sheet = ss.getSheetByName("具材ステータス");
   if (!sheet) {
     sheet = ss.insertSheet("具材ステータス");
-    sheet.appendRow(["日付", "メンバー", "具材渡し済み", "調理済み", "更新日時"]);
+    sheet.appendRow(["日付", "メンバー", "具材", "具材渡し済み", "調理済み", "更新日時"]);
   }
   var values = sheet.getDataRange().getValues();
   var foundRow = -1;
   for (var r = 1; r < values.length; r++) {
-    if (normalizeDateCell(values[r][0]) === String(data.date) && String(values[r][1]) === String(data.member)) {
+    if (normalizeDateCell(values[r][0]) === String(data.date) &&
+        String(values[r][1]) === String(data.member) &&
+        String(values[r][2]) === String(data.filling)) {
       foundRow = r + 1;
       break;
     }
   }
-  var row = [data.date, data.member, !!data.handed, !!data.cooked, new Date()];
+  var row = [data.date, data.member, data.filling, !!data.handed, !!data.cooked, new Date()];
   if (foundRow > 0) {
-    sheet.getRange(foundRow, 1, 1, 5).setValues([row]);
+    sheet.getRange(foundRow, 1, 1, 6).setValues([row]);
   } else {
     sheet.appendRow(row);
   }
@@ -250,8 +252,9 @@ function handleGetStatus(ss) {
     statuses.push({
       date: normalizeDateCell(rows[i][0]),
       member: String(rows[i][1]),
-      handed: rows[i][2] === true,
-      cooked: rows[i][3] === true,
+      filling: String(rows[i][2] || ""),
+      handed: rows[i][3] === true,
+      cooked: rows[i][4] === true,
     });
   }
   return ContentService.createTextOutput(JSON.stringify({ statuses: statuses }))
