@@ -447,6 +447,8 @@
   .store-heading{ font-size: 1rem; font-weight: bold; color: var(--main-dark); margin: 12px 0 6px; }
   .location-input-row{ margin-bottom: 6px; font-size: 0.88rem; }
   .location-input-row input{ border: 1px solid #ccc; border-radius: 4px; padding: 3px 6px; font-size: 0.88rem; width: 140px; margin-left: 4px; }
+  .soldout-time-row{ margin-bottom: 6px; font-size: 0.88rem; }
+  .soldout-time-row input{ border: 1px solid #ccc; border-radius: 4px; padding: 3px 6px; font-size: 0.88rem; margin-left: 4px; }
   .made-input{ width: 52px !important; }
   .total-row td{ background: #f5f2ec; font-weight: bold; font-size: 0.8rem; color: #555; border-top: 2px solid #d0c8b8; }
   .total-cell{ min-width: 52px; }
@@ -1304,6 +1306,10 @@ function renderActualSales(){
     <div class="store-section">
       <div class="store-heading">🏪 Zuid</div>
       ${buildStoreTable("Zuid", fillings, zuidTotals)}
+      <div class="soldout-time-row">
+        販売終了時間：<input type="time" id="soldoutTime-Zuid">
+        <span class="notes-label">（完売した場合はその時刻、完売しなかった場合は営業終了時刻）</span>
+      </div>
       <div class="notes-area">
         <span class="notes-label">今日の販売メモ</span>
         <textarea id="notes-Zuid" rows="2" placeholder="天気の様子・特記事項など"></textarea>
@@ -1316,6 +1322,10 @@ function renderActualSales(){
         販売場所：<input type="text" id="uvaLocationInput" value="UvA" placeholder="UvA" maxlength="20">
       </div>
       ${buildStoreTable("UvA", fillings, uvaTotals)}
+      <div class="soldout-time-row">
+        販売終了時間：<input type="time" id="soldoutTime-UvA">
+        <span class="notes-label">（完売した場合はその時刻、完売しなかった場合は営業終了時刻）</span>
+      </div>
       <div class="notes-area">
         <span class="notes-label">今日の販売メモ</span>
         <textarea id="notes-UvA" rows="2" placeholder="天気の様子・特記事項など"></textarea>
@@ -1434,6 +1444,7 @@ async function fetchHourlyData(){
 function restoreHourlyInputs(rows, todayIso){
   const slotKeys = ["r12","r13","r14","r15","r16","r17","r18"];
   const noteRestored = {};
+  const soldOutRestored = {};
   rows.filter(r => r.date === todayIso).forEach(row => {
     const sk = row.store;
     const f  = row.filling;
@@ -1460,6 +1471,12 @@ function restoreHourlyInputs(rows, todayIso){
       const locEl = document.getElementById("uvaLocationInput");
       if(locEl) locEl.value = row.location;
     }
+    // 販売終了時間を復元（店舗ごとに1回）
+    if(!soldOutRestored[sk] && row.soldOutTime){
+      const soldOutEl = document.getElementById(`soldoutTime-${sk}`);
+      if(soldOutEl) soldOutEl.value = row.soldOutTime;
+      soldOutRestored[sk] = true;
+    }
   });
 }
 
@@ -1475,6 +1492,7 @@ async function saveStoreActual(storeKey){
   const uvaLocation = (document.getElementById("uvaLocationInput") || {value:"UvA"}).value.trim() || "UvA";
   const location = storeKey === "UvA" ? uvaLocation : storeKey;
   const note = (document.getElementById(`notes-${storeKey}`) || {value:""}).value.trim();
+  const soldOutTime = (document.getElementById(`soldoutTime-${storeKey}`) || {value:""}).value.trim();
 
   const items = fillings.map(f => {
     const madeEl = document.querySelector(`.made-input[data-store="${storeKey}"][data-filling="${f}"]`);
@@ -1493,7 +1511,7 @@ async function saveStoreActual(storeKey){
     weekday: DAY_NAMES[today.dow] + "曜",
     weather: w.text,
     temp: Math.round(today.maxTemp),
-    stores: [{ store: storeKey, location, items, note }],
+    stores: [{ store: storeKey, location, items, note, soldOutTime }],
   };
 
   const btnId = storeKey === "Zuid" ? "saveZuidBtn" : "saveUvABtn";

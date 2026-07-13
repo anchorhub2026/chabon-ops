@@ -198,12 +198,38 @@ function handleSaveActual(ss, data) {
   });
 }
 
+var HOURLY_SHEET_HEADER = ["日付", "曜日", "天気", "気温", "店舗", "場所名", "具材名", "作った数",
+  "12時残り", "13時残り", "14時残り", "15時残り", "16時残り", "17時残り", "18時残り",
+  "12時売上", "13時売上", "14時売上", "15時売上", "16時売上", "17時売上", "18時売上",
+  "12時累計", "13時累計", "14時累計", "15時累計", "16時累計", "17時累計", "18時累計",
+  "販売終了時間", "備考"];
+
+// 作った数と各時間帯残数から、時間帯ごとの売れた数・累計売上を算出する
+// 売れた数[i] = (i==0 ? 作った数 : 直前の残数) - 残数[i]（前後どちらかが未入力なら空欄）
+// 累計売上[i] = 作った数 - 残数[i]（残数が未入力なら空欄）
+function calcHourlySoldAndCumulative(made, remains) {
+  var sold = [];
+  var cumulative = [];
+  var prev = made;
+  for (var i = 0; i < remains.length; i++) {
+    var curr = remains[i];
+    var hasCurr = curr !== "" && curr !== null && curr !== undefined;
+    var hasPrev = prev !== "" && prev !== null && prev !== undefined;
+    sold.push(hasCurr && hasPrev ? (Number(prev) - Number(curr)) : "");
+    var hasMade = made !== "" && made !== null && made !== undefined;
+    cumulative.push(hasCurr && hasMade ? (Number(made) - Number(curr)) : "");
+    prev = curr;
+  }
+  return { sold: sold, cumulative: cumulative };
+}
+
 function handleSaveHourly(ss, data) {
   var sheet = ss.getSheetByName("時間帯別実績");
   if (!sheet) {
     sheet = ss.insertSheet("時間帯別実績");
-    sheet.appendRow(["日付", "曜日", "天気", "気温", "店舗", "場所名", "具材名", "作った数",
-                     "12時残り", "13時残り", "14時残り", "15時残り", "16時残り", "17時残り", "18時残り", "備考"]);
+    sheet.appendRow(HOURLY_SHEET_HEADER);
+  } else if (sheet.getLastColumn() < HOURLY_SHEET_HEADER.length) {
+    sheet.getRange(1, 1, 1, HOURLY_SHEET_HEADER.length).setValues([HOURLY_SHEET_HEADER]);
   }
   var values = sheet.getDataRange().getValues();
   (data.stores || []).forEach(function(storeData) {
@@ -217,17 +243,17 @@ function handleSaveHourly(ss, data) {
           break;
         }
       }
+      var remains = [item.r12, item.r13, item.r14, item.r15, item.r16, item.r17, item.r18]
+        .map(function(v) { return v === "" ? "" : v; });
+      var calc = calcHourlySoldAndCumulative(item.total, remains);
       var row = [
         data.date, data.weekday, data.weather, data.temp,
         storeData.store, storeData.location,
         item.filling, item.total,
-        item.r12 === "" ? "" : item.r12,
-        item.r13 === "" ? "" : item.r13,
-        item.r14 === "" ? "" : item.r14,
-        item.r15 === "" ? "" : item.r15,
-        item.r16 === "" ? "" : item.r16,
-        item.r17 === "" ? "" : item.r17,
-        item.r18 === "" ? "" : item.r18,
+        remains[0], remains[1], remains[2], remains[3], remains[4], remains[5], remains[6],
+        calc.sold[0], calc.sold[1], calc.sold[2], calc.sold[3], calc.sold[4], calc.sold[5], calc.sold[6],
+        calc.cumulative[0], calc.cumulative[1], calc.cumulative[2], calc.cumulative[3], calc.cumulative[4], calc.cumulative[5], calc.cumulative[6],
+        storeData.soldOutTime || "",
         storeData.note || ""
       ];
       if (foundRow > 0) {
@@ -272,20 +298,18 @@ function handleGetHourly(ss) {
   for (var i = 1; i < rows.length; i++) {
     if (!rows[i][0]) continue;
     var r = rows[i];
+    var v = function(idx) { return r[idx] !== "" && r[idx] !== null && r[idx] !== undefined ? r[idx] : ""; };
     result.push({
-      date:     normalizeDateCell(r[0]),
-      store:    String(r[4] || ""),
-      location: String(r[5] || ""),
-      filling:  String(r[6] || ""),
-      total:    r[7] !== "" && r[7] !== null ? r[7] : "",
-      r12:      r[8]  !== "" && r[8]  !== null ? r[8]  : "",
-      r13:      r[9]  !== "" && r[9]  !== null ? r[9]  : "",
-      r14:      r[10] !== "" && r[10] !== null ? r[10] : "",
-      r15:      r[11] !== "" && r[11] !== null ? r[11] : "",
-      r16:      r[12] !== "" && r[12] !== null ? r[12] : "",
-      r17:      r[13] !== "" && r[13] !== null ? r[13] : "",
-      r18:      r[14] !== "" && r[14] !== null ? r[14] : "",
-      note:     String(r[15] || ""),
+      date:        normalizeDateCell(r[0]),
+      store:       String(r[4] || ""),
+      location:    String(r[5] || ""),
+      filling:     String(r[6] || ""),
+      total:       v(7),
+      r12:         v(8),  r13: v(9),  r14: v(10), r15: v(11), r16: v(12), r17: v(13), r18: v(14),
+      sold12:      v(15), sold13: v(16), sold14: v(17), sold15: v(18), sold16: v(19), sold17: v(20), sold18: v(21),
+      cum12:       v(22), cum13:  v(23), cum14:  v(24), cum15:  v(25), cum16:  v(26), cum17:  v(27), cum18:  v(28),
+      soldOutTime: String(r[29] || ""),
+      note:        String(r[30] || ""),
     });
   }
   return ContentService.createTextOutput(JSON.stringify({ rows: result }))
