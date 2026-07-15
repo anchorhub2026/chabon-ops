@@ -1,0 +1,947 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Chabon Ops">
+<link rel="apple-touch-icon" href="./chabon-logo.png">
+<title>Chabon Ops｜データ分析</title>
+<style>
+  :root{
+    --main: #4a7c59;
+    --main-dark: #335c3e;
+    --main-light: #e9f1ea;
+    --accent: #c9533f;
+    --bg: #faf8f3;
+    --card: #ffffff;
+    --ink: #2b2b28;
+    --line: #e2ddd0;
+  }
+  *{box-sizing:border-box;}
+  body{
+    margin:0;
+    font-family: "Hiragino Sans", "Yu Gothic", "Noto Sans JP", sans-serif;
+    background: var(--bg);
+    color: var(--ink);
+    line-height: 1.6;
+  }
+  header{
+    background: var(--main);
+    color: #fff;
+    padding: 22px 16px;
+    text-align: center;
+    position: relative;
+    overflow: hidden;
+  }
+  header::after{
+    content:"";
+    position:absolute;
+    inset:0;
+    background: repeating-linear-gradient(135deg, rgba(255,255,255,0.05) 0 8px, transparent 8px 16px);
+    pointer-events: none;
+  }
+  header h1{ margin:0; font-size: 1.3rem; letter-spacing: 0.05em; position: relative; }
+  header p{ margin: 6px 0 0; font-size: 0.82rem; opacity: 0.9; position: relative; }
+  .header-nav{ position: relative; z-index: 10; margin-top: 12px; }
+  .header-nav a{
+    position: relative;
+    z-index: 10;
+    cursor: pointer;
+    display: inline-block;
+    background: rgba(255,255,255,0.15);
+    color: #fff;
+    text-decoration: none;
+    font-size: 0.82rem;
+    font-weight: bold;
+    padding: 7px 16px;
+    border-radius: 100px;
+    border: 1px solid rgba(255,255,255,0.4);
+    margin: 0 4px;
+  }
+  main{
+    max-width: 980px;
+    margin: 0 auto;
+    padding: 18px 14px 60px;
+  }
+  section{
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: 14px;
+    padding: 18px;
+    margin-bottom: 18px;
+    box-shadow: 0 2px 6px rgba(0,0,0,0.03);
+  }
+  section h2{
+    margin: 0 0 14px;
+    font-size: 1.05rem;
+    color: var(--main-dark);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    border-bottom: 2px solid var(--main-light);
+    padding-bottom: 8px;
+  }
+  section h2 .badge{
+    font-size: 0.65rem;
+    background: var(--main-light);
+    color: var(--main-dark);
+    padding: 2px 8px;
+    border-radius: 100px;
+    font-weight: normal;
+  }
+  .loading{ color: #999; font-size: 0.9rem; }
+  .off-note{ color:#999; font-size: 0.85rem; }
+  table{ width: 100%; border-collapse: collapse; font-size: 0.86rem; }
+  th, td{ text-align: left; padding: 7px 9px; border-bottom: 1px solid var(--line); }
+  th{ background: var(--main-light); color: var(--main-dark); font-weight: bold; white-space: nowrap; }
+
+  /* 期間フィルター */
+  .filter-mode-tabs{ display: flex; gap: 6px; margin-bottom: 12px; flex-wrap: wrap; }
+  .filter-mode-tab{
+    border: 1px solid var(--main);
+    background: #fff;
+    color: var(--main-dark);
+    font-size: 0.82rem;
+    font-weight: bold;
+    padding: 6px 14px;
+    border-radius: 100px;
+    cursor: pointer;
+  }
+  .filter-mode-tab.active{ background: var(--main); color: #fff; }
+  .filter-controls{ display: flex; align-items: center; gap: 10px; flex-wrap: wrap; font-size: 0.88rem; }
+  .filter-controls input{
+    border: 1px solid #ccc; border-radius: 6px; padding: 6px 8px; font-size: 0.88rem;
+  }
+  .filter-quick-row{ display: flex; gap: 6px; flex-wrap: wrap; margin-top: 10px; }
+  .filter-quick-btn{
+    border: 1px solid var(--line);
+    background: var(--bg);
+    color: var(--ink);
+    font-size: 0.78rem;
+    padding: 5px 12px;
+    border-radius: 100px;
+    cursor: pointer;
+  }
+  .filter-quick-btn:hover{ border-color: var(--main); color: var(--main-dark); }
+  .filter-range-label{ font-size: 0.82rem; color: #777; margin-top: 8px; }
+
+  /* サマリー統計 */
+  .stat-grid{
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 14px;
+  }
+  .stat-card{
+    background: var(--bg);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 12px 14px;
+  }
+  .stat-card h3{ margin: 0 0 8px; font-size: 0.86rem; color: var(--main-dark); }
+  .stat-card table{ font-size: 0.8rem; }
+  .stat-card th, .stat-card td{ padding: 4px 6px; }
+
+  /* 時間帯別グラフ */
+  .chart-toolbar{ display: flex; align-items: center; justify-content: space-between; margin-bottom: 14px; flex-wrap: wrap; gap: 8px; }
+  .chart-toolbar label{ font-size: 0.82rem; color: #666; display: flex; align-items: center; gap: 5px; cursor: pointer; }
+  .bar-chart{ display: flex; align-items: flex-end; gap: 10px; height: 200px; padding: 0 4px; }
+  .bar-col{ flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: flex-end; height: 100%; }
+  .bar-track{
+    flex: 1;
+    width: 100%;
+    max-width: 46px;
+    display: flex;
+    align-items: flex-end;
+    justify-content: center;
+    gap: 2px;
+  }
+  .bar-fill{
+    width: 100%;
+    border-radius: 4px 4px 0 0;
+    background: var(--main);
+    min-height: 2px;
+    transition: height 0.2s;
+  }
+  .bar-fill.mini{ flex: 1; }
+  .bar-fill.wd-1{ background: #4a7c59; }
+  .bar-fill.wd-2{ background: #c9533f; }
+  .bar-fill.wd-3{ background: #5b7fa6; }
+  .bar-fill.wd-4{ background: #b8933f; }
+  .bar-fill.wd-5{ background: #8a6db1; }
+  .bar-fill.wd-0, .bar-fill.wd-6{ background: #999; }
+  .bar-value{ font-size: 0.72rem; color: #777; margin-bottom: 3px; }
+  .bar-label{ font-size: 0.78rem; color: var(--ink); margin-top: 6px; font-weight: bold; }
+  .bar-legend{ display: flex; gap: 10px; flex-wrap: wrap; margin-top: 14px; font-size: 0.76rem; color: #666; }
+  .bar-legend span{ display: inline-flex; align-items: center; gap: 4px; }
+  .bar-legend i{ display: inline-block; width: 10px; height: 10px; border-radius: 2px; }
+
+  /* 日別データ一覧 */
+  .table-filter-row{ display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 12px; font-size: 0.84rem; align-items: center; }
+  .table-filter-row select{ border: 1px solid #ccc; border-radius: 6px; padding: 5px 8px; font-size: 0.84rem; }
+  .table-scroll{ overflow-x: auto; }
+  .table-scroll table{ min-width: 760px; }
+  th.sortable{ cursor: pointer; user-select: none; }
+  th.sortable:hover{ background: #dcebe0; }
+  th.sortable .arrow{ font-size: 0.7rem; opacity: 0.5; margin-left: 3px; }
+  th.sortable.sorted .arrow{ opacity: 1; }
+  td.num{ text-align: right; }
+
+  /* 傾向インサイト */
+  .insight-list{ list-style: none; margin: 0; padding: 0; }
+  .insight-list li{
+    background: var(--main-light);
+    color: var(--main-dark);
+    border-radius: 10px;
+    padding: 10px 14px;
+    margin-bottom: 8px;
+    font-size: 0.88rem;
+    display: flex;
+    gap: 8px;
+  }
+  .insight-list li .icon{ flex-shrink: 0; }
+
+  footer{ text-align:center; font-size: 0.78rem; color: #999; padding: 20px 0 40px; }
+
+  @media (max-width: 640px){
+    .bar-chart{ height: 160px; gap: 6px; }
+    .bar-label{ font-size: 0.68rem; }
+    .bar-value{ font-size: 0.64rem; }
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>📊 Chabon Ops データ分析</h1>
+  <p>時間帯別実績の集計・分析ダッシュボード</p>
+  <nav class="header-nav">
+    <a href="admin.html">← 管理画面</a>
+    <a href="index.html">スタッフ画面</a>
+  </nav>
+</header>
+
+<main>
+
+  <section>
+    <h2>📅 期間フィルター</h2>
+    <div class="filter-mode-tabs">
+      <button type="button" class="filter-mode-tab active" data-mode="week">週選択</button>
+      <button type="button" class="filter-mode-tab" data-mode="month">月選択</button>
+      <button type="button" class="filter-mode-tab" data-mode="custom">カスタム期間</button>
+    </div>
+    <div class="filter-controls" id="filterControls"></div>
+    <div class="filter-quick-row">
+      <button type="button" class="filter-quick-btn" data-quick="thisWeek">今週</button>
+      <button type="button" class="filter-quick-btn" data-quick="lastWeek">先週</button>
+      <button type="button" class="filter-quick-btn" data-quick="last4weeks">直近4週間</button>
+      <button type="button" class="filter-quick-btn" data-quick="thisMonth">今月</button>
+      <button type="button" class="filter-quick-btn" data-quick="lastMonth">先月</button>
+      <button type="button" class="filter-quick-btn" data-quick="all">全期間</button>
+    </div>
+    <div class="filter-range-label" id="filterRangeLabel"></div>
+  </section>
+
+  <section>
+    <h2>📈 サマリー統計 <span class="badge" id="summaryPeriodBadge"></span></h2>
+    <div id="summaryArea" class="loading">読み込み中...</div>
+  </section>
+
+  <section>
+    <h2>⏰ 時間帯別の販売傾向</h2>
+    <div class="chart-toolbar">
+      <span class="off-note">各時間帯の平均売上個数</span>
+      <label><input type="checkbox" id="chartByWeekdayToggle"> 曜日ごとに色分け</label>
+    </div>
+    <div id="hourlyChartArea" class="loading">読み込み中...</div>
+  </section>
+
+  <section>
+    <h2>📋 日別データ一覧</h2>
+    <div class="table-filter-row">
+      曜日：
+      <select id="tableWeekdayFilter">
+        <option value="">すべて</option>
+        <option value="月">月曜</option>
+        <option value="火">火曜</option>
+        <option value="水">水曜</option>
+        <option value="木">木曜</option>
+        <option value="金">金曜</option>
+        <option value="土">土曜</option>
+        <option value="日">日曜</option>
+      </select>
+      天気：
+      <select id="tableWeatherFilter">
+        <option value="">すべて</option>
+        <option value="sunny">晴れ系</option>
+        <option value="cloudy">曇り系</option>
+        <option value="rainy">雨系</option>
+      </select>
+    </div>
+    <div id="dailyTableArea" class="loading">読み込み中...</div>
+  </section>
+
+  <section>
+    <h2>💡 傾向インサイト</h2>
+    <div id="insightArea" class="loading">読み込み中...</div>
+  </section>
+
+</main>
+
+<footer>Chabon Ops — Amsterdam Onigiri Truck</footer>
+
+<script>
+const SCRIPT_URL = "https://script.google.com/macros/s/AKfycbyxbKMgM4ZiowaJu3cQ4NdLhwSE9-Pet8DbYB3qvgEX2NS2h1Dosgfm62vu7-in52ZT/exec";
+const HOURLY_SLOTS = [12, 13, 14, 15, 16, 17, 18];
+const DAY_NAMES = ["日", "月", "火", "水", "木", "金", "土"];
+const WEEKDAY_COLOR_INDEX = { "日":0, "月":1, "火":2, "水":3, "木":4, "金":5, "土":6 };
+
+const state = {
+  rawRows: [],
+  dateRows: [],       // 日付単位に集計した行
+  filtered: [],        // 期間フィルター後の日付単位の行
+  filterMode: "week",  // week | month | custom
+  from: null,          // Date（期間の開始、当日を含む）
+  to: null,            // Date（期間の終了、当日を含む）
+  sortKey: "date",
+  sortDir: "asc",
+  tableWeekday: "",
+  tableWeather: "",
+  chartByWeekday: false,
+};
+
+/* ---------- ユーティリティ ---------- */
+
+function pad2(n){ return String(n).padStart(2, "0"); }
+function toIso(d){ return `${d.getFullYear()}-${pad2(d.getMonth()+1)}-${pad2(d.getDate())}`; }
+function parseIsoDate(s){
+  const [y,m,d] = String(s).split("-").map(Number);
+  return new Date(y, (m||1)-1, d||1);
+}
+function mdLabel(d){ return `${d.getMonth()+1}/${d.getDate()}`; }
+
+function weekdayFromLabel(label){
+  // "月曜" 等 → "月"
+  return String(label || "").charAt(0);
+}
+
+function weatherCategory(text){
+  const t = String(text || "");
+  if(["快晴","晴れ"].includes(t)) return "sunny";
+  if(["曇り","霧","霧雨"].includes(t)) return "cloudy";
+  if(["雨","にわか雨","雷雨","雪","にわか雪"].includes(t)) return "rainy";
+  return "other";
+}
+function weatherCategoryLabel(cat){
+  return { sunny:"晴れ系", cloudy:"曇り系", rainy:"雨系", other:"その他" }[cat] || "不明";
+}
+
+function tempBucket(temp){
+  const t = Number(temp);
+  if(!isFinite(t)) return null;
+  if(t < 15) return "〜14℃";
+  if(t < 20) return "15〜19℃";
+  if(t < 25) return "20〜24℃";
+  if(t < 30) return "25〜29℃";
+  return "30℃〜";
+}
+
+// 作った数と各時間帯残数から、隣接差分で時間帯ごとの売れた数を算出する
+// （Code.gsのcalcHourlySoldAndCumulativeと同じロジックをクライアント側でも使用）
+function calcSoldFromRemains(made, remains){
+  const sold = [];
+  let prev = made;
+  remains.forEach(curr => {
+    const hasCurr = curr !== "" && curr !== null && curr !== undefined;
+    const hasPrev = prev !== "" && prev !== null && prev !== undefined;
+    sold.push(hasCurr && hasPrev ? (Number(prev) - Number(curr)) : null);
+    prev = curr;
+  });
+  return sold;
+}
+
+function timeToMinutes(hhmm){
+  const m = String(hhmm || "").match(/^(\d{1,2}):(\d{2})$/);
+  if(!m) return null;
+  return Number(m[1]) * 60 + Number(m[2]);
+}
+function minutesToTime(mins){
+  if(mins === null || mins === undefined || !isFinite(mins)) return "";
+  const m = Math.round(mins);
+  return `${pad2(Math.floor(m/60))}:${pad2(m%60)}`;
+}
+
+function avg(arr){
+  const vals = arr.filter(v => v !== null && v !== undefined && isFinite(v));
+  if(vals.length === 0) return null;
+  return vals.reduce((s,v)=>s+v,0) / vals.length;
+}
+function round1(n){ return n === null ? null : Math.round(n * 10) / 10; }
+
+/* ---------- データ取得・集計 ---------- */
+
+async function fetchAnalyticsRows(){
+  try{
+    const res = await fetch(`${SCRIPT_URL}?type=analytics`, { cache: "no-store" });
+    const json = await res.json();
+    return json.rows || [];
+  }catch(e){
+    console.warn("分析データの取得に失敗しました:", e);
+    return [];
+  }
+}
+
+// 具材・店舗をまたいで日付単位に集計する
+function aggregateByDate(rows){
+  const map = {};
+  rows.forEach(row => {
+    if(!row.date) return;
+    if(!map[row.date]){
+      map[row.date] = {
+        date: row.date,
+        weekday: weekdayFromLabel(row.weekday),
+        weather: row.weather || "",
+        temps: [],
+        totalMade: 0,
+        remainSum: [0,0,0,0,0,0,0],
+        remainCount: [0,0,0,0,0,0,0],
+        soldOutTimes: [], // { store, time }
+        stores: new Set(),
+      };
+    }
+    const agg = map[row.date];
+    agg.totalMade += Number(row.total) || 0;
+    if(!agg.weather && row.weather) agg.weather = row.weather;
+    if(row.temp !== "" && row.temp !== null && row.temp !== undefined) agg.temps.push(Number(row.temp));
+    if(row.store) agg.stores.add(row.store);
+    if(row.soldOutTime && !agg.soldOutTimes.some(s => s.store === row.store)){
+      agg.soldOutTimes.push({ store: row.store, time: row.soldOutTime });
+    }
+    HOURLY_SLOTS.forEach((h, i) => {
+      const v = row[`r${h}`];
+      if(v !== "" && v !== null && v !== undefined){
+        agg.remainSum[i] += Number(v);
+        agg.remainCount[i]++;
+      }
+    });
+  });
+
+  return Object.values(map).map(agg => {
+    const remains = agg.remainSum.map((sum, i) => agg.remainCount[i] > 0 ? sum : "");
+    const sold = calcSoldFromRemains(agg.totalMade, remains);
+    const totalSold = sold.some(v => v !== null) ? sold.reduce((s,v) => s + (v || 0), 0) : null;
+    const temp = agg.temps.length ? avg(agg.temps) : null;
+    const soldOutMinutesList = agg.soldOutTimes.map(s => timeToMinutes(s.time)).filter(v => v !== null);
+    const soldOutTime = soldOutMinutesList.length ? minutesToTime(Math.max(...soldOutMinutesList)) : "";
+    const soldOutDisplay = agg.soldOutTimes.length
+      ? agg.soldOutTimes.map(s => `${s.store} ${s.time}`).join(" / ")
+      : "";
+    return {
+      date: agg.date,
+      dateObj: parseIsoDate(agg.date),
+      weekday: agg.weekday,
+      weather: agg.weather,
+      temp,
+      totalMade: agg.totalMade,
+      remains,
+      sold,
+      totalSold,
+      soldOutTime,
+      soldOutDisplay,
+      stores: Array.from(agg.stores),
+    };
+  }).sort((a,b) => a.date < b.date ? -1 : (a.date > b.date ? 1 : 0));
+}
+
+/* ---------- 期間フィルター ---------- */
+
+function startOfWeek(d){
+  const day = d.getDay();
+  const diff = day === 0 ? -6 : 1 - day; // 月曜始まり
+  const monday = new Date(d);
+  monday.setDate(d.getDate() + diff);
+  monday.setHours(0,0,0,0);
+  return monday;
+}
+
+function renderFilterControls(){
+  const el = document.getElementById("filterControls");
+  const today = new Date();
+  if(state.filterMode === "week"){
+    const monday = startOfWeek(state.from || today);
+    el.innerHTML = `<input type="week" id="weekInput"> <span class="off-note">週の月曜〜木曜（営業日）を対象にします</span>`;
+    const weekInput = document.getElementById("weekInput");
+    weekInput.value = isoWeekValue(monday);
+    weekInput.addEventListener("change", () => {
+      if(!weekInput.value) return;
+      const [y, w] = weekInput.value.split("-W").map(Number);
+      const jan4 = new Date(y, 0, 4);
+      const mondayOfWeek1 = startOfWeek(jan4);
+      const monday = new Date(mondayOfWeek1);
+      monday.setDate(mondayOfWeek1.getDate() + (w - 1) * 7);
+      setRange(monday, addDays(monday, 6));
+    });
+  } else if(state.filterMode === "month"){
+    el.innerHTML = `<input type="month" id="monthInput">`;
+    const monthInput = document.getElementById("monthInput");
+    const base = state.from || today;
+    monthInput.value = `${base.getFullYear()}-${pad2(base.getMonth()+1)}`;
+    monthInput.addEventListener("change", () => {
+      if(!monthInput.value) return;
+      const [y, m] = monthInput.value.split("-").map(Number);
+      const from = new Date(y, m-1, 1);
+      const to = new Date(y, m, 0);
+      setRange(from, to);
+    });
+  } else {
+    el.innerHTML = `
+      <input type="date" id="fromInput"> 〜 <input type="date" id="toInput">
+      <button type="button" class="filter-quick-btn" id="applyCustomBtn">適用</button>
+    `;
+    document.getElementById("fromInput").value = state.from ? toIso(state.from) : "";
+    document.getElementById("toInput").value = state.to ? toIso(state.to) : "";
+    document.getElementById("applyCustomBtn").addEventListener("click", () => {
+      const f = document.getElementById("fromInput").value;
+      const t = document.getElementById("toInput").value;
+      if(!f || !t) return;
+      setRange(parseIsoDate(f), parseIsoDate(t));
+    });
+  }
+}
+
+function isoWeekValue(monday){
+  // ISO週番号の簡易計算（月曜始まりのmondayから算出）
+  const d = new Date(Date.UTC(monday.getFullYear(), monday.getMonth(), monday.getDate()));
+  const dayNum = d.getUTCDay() || 7;
+  d.setUTCDate(d.getUTCDate() + 4 - dayNum);
+  const yearStart = new Date(Date.UTC(d.getUTCFullYear(), 0, 1));
+  const weekNo = Math.ceil((((d - yearStart) / 86400000) + 1) / 7);
+  return `${d.getUTCFullYear()}-W${pad2(weekNo)}`;
+}
+
+function addDays(d, n){
+  const r = new Date(d);
+  r.setDate(r.getDate() + n);
+  return r;
+}
+
+function setRange(from, to){
+  from.setHours(0,0,0,0);
+  to.setHours(23,59,59,999);
+  state.from = from;
+  state.to = to;
+  applyFilterAndRender();
+}
+
+function setQuickRange(kind){
+  const today = new Date();
+  today.setHours(0,0,0,0);
+  if(kind === "thisWeek"){
+    state.filterMode = "week";
+    const monday = startOfWeek(today);
+    setActiveTab("week");
+    setRange(monday, addDays(monday, 6));
+  } else if(kind === "lastWeek"){
+    state.filterMode = "week";
+    setActiveTab("week");
+    const monday = addDays(startOfWeek(today), -7);
+    setRange(monday, addDays(monday, 6));
+  } else if(kind === "last4weeks"){
+    state.filterMode = "custom";
+    setActiveTab("custom");
+    const monday = startOfWeek(today);
+    setRange(addDays(monday, -21), addDays(monday, 6));
+  } else if(kind === "thisMonth"){
+    state.filterMode = "month";
+    setActiveTab("month");
+    setRange(new Date(today.getFullYear(), today.getMonth(), 1), new Date(today.getFullYear(), today.getMonth()+1, 0));
+  } else if(kind === "lastMonth"){
+    state.filterMode = "month";
+    setActiveTab("month");
+    setRange(new Date(today.getFullYear(), today.getMonth()-1, 1), new Date(today.getFullYear(), today.getMonth(), 0));
+  } else if(kind === "all"){
+    state.filterMode = "custom";
+    setActiveTab("custom");
+    if(state.dateRows.length){
+      setRange(parseIsoDate(state.dateRows[0].date), parseIsoDate(state.dateRows[state.dateRows.length-1].date));
+    } else {
+      setRange(addDays(today, -365), today);
+    }
+  }
+  renderFilterControls();
+}
+
+function setActiveTab(mode){
+  document.querySelectorAll(".filter-mode-tab").forEach(btn => {
+    btn.classList.toggle("active", btn.dataset.mode === mode);
+  });
+}
+
+function applyFilterAndRender(){
+  const fromIso = state.from ? toIso(state.from) : null;
+  const toIsoStr = state.to ? toIso(state.to) : null;
+  state.filtered = state.dateRows.filter(r => {
+    if(fromIso && r.date < fromIso) return false;
+    if(toIsoStr && r.date > toIsoStr) return false;
+    return true;
+  });
+  const label = document.getElementById("filterRangeLabel");
+  if(state.from && state.to){
+    label.textContent = `対象期間：${mdLabel(state.from)}〜${mdLabel(state.to)}（${state.filtered.length}日分のデータ）`;
+  }
+  renderAll();
+}
+
+/* ---------- サマリー統計 ---------- */
+
+function renderSummary(){
+  const area = document.getElementById("summaryArea");
+  const badge = document.getElementById("summaryPeriodBadge");
+  const rows = state.filtered;
+  badge.textContent = `${rows.length}日分`;
+
+  if(rows.length === 0){
+    area.innerHTML = `<p class="off-note">この期間のデータがありません。</p>`;
+    return;
+  }
+
+  // 曜日別 平均販売終了時刻・平均総売上個数
+  const weekdayOrder = ["月","火","水","木","金","土","日"];
+  const byWeekday = {};
+  weekdayOrder.forEach(w => byWeekday[w] = { soldOutMins: [], totals: [] });
+  rows.forEach(r => {
+    if(!byWeekday[r.weekday]) return;
+    const mins = timeToMinutes(r.soldOutTime);
+    if(mins !== null) byWeekday[r.weekday].soldOutMins.push(mins);
+    if(r.totalSold !== null) byWeekday[r.weekday].totals.push(r.totalSold);
+  });
+  const weekdayRowsHtml = weekdayOrder.filter(w => byWeekday[w].totals.length > 0 || byWeekday[w].soldOutMins.length > 0).map(w => {
+    const soldOutAvg = avg(byWeekday[w].soldOutMins);
+    const totalAvg = avg(byWeekday[w].totals);
+    return `<tr><td>${w}曜</td><td class="num">${soldOutAvg !== null ? minutesToTime(soldOutAvg) : "—"}</td><td class="num">${totalAvg !== null ? round1(totalAvg) : "—"}個</td></tr>`;
+  }).join("");
+
+  // 天気別 平均販売数
+  const byWeather = {};
+  rows.forEach(r => {
+    const cat = weatherCategory(r.weather);
+    if(!byWeather[cat]) byWeather[cat] = [];
+    if(r.totalSold !== null) byWeather[cat].push(r.totalSold);
+  });
+  const weatherRowsHtml = ["sunny","cloudy","rainy","other"].filter(c => byWeather[c] && byWeather[c].length).map(c => {
+    const a = avg(byWeather[c]);
+    return `<tr><td>${weatherCategoryLabel(c)}</td><td class="num">${a !== null ? round1(a) : "—"}個</td><td class="num">${byWeather[c].length}日</td></tr>`;
+  }).join("");
+
+  // 気温帯別 平均販売数
+  const byTemp = {};
+  rows.forEach(r => {
+    const b = tempBucket(r.temp);
+    if(!b) return;
+    if(!byTemp[b]) byTemp[b] = [];
+    if(r.totalSold !== null) byTemp[b].push(r.totalSold);
+  });
+  const tempOrder = ["〜14℃","15〜19℃","20〜24℃","25〜29℃","30℃〜"];
+  const tempRowsHtml = tempOrder.filter(b => byTemp[b] && byTemp[b].length).map(b => {
+    const a = avg(byTemp[b]);
+    return `<tr><td>${b}</td><td class="num">${a !== null ? round1(a) : "—"}個</td><td class="num">${byTemp[b].length}日</td></tr>`;
+  }).join("");
+
+  area.innerHTML = `
+    <div class="stat-grid">
+      <div class="stat-card">
+        <h3>曜日別 平均完売時刻・平均売上</h3>
+        ${weekdayRowsHtml
+          ? `<table><thead><tr><th>曜日</th><th>完売時刻</th><th>売上個数</th></tr></thead><tbody>${weekdayRowsHtml}</tbody></table>`
+          : `<p class="off-note">データが不足しています</p>`}
+      </div>
+      <div class="stat-card">
+        <h3>天気別 平均販売数</h3>
+        ${weatherRowsHtml
+          ? `<table><thead><tr><th>天気</th><th>平均販売数</th><th>日数</th></tr></thead><tbody>${weatherRowsHtml}</tbody></table>`
+          : `<p class="off-note">データが不足しています</p>`}
+      </div>
+      <div class="stat-card">
+        <h3>気温帯別 平均販売数</h3>
+        ${tempRowsHtml
+          ? `<table><thead><tr><th>気温帯</th><th>平均販売数</th><th>日数</th></tr></thead><tbody>${tempRowsHtml}</tbody></table>`
+          : `<p class="off-note">データが不足しています</p>`}
+      </div>
+    </div>
+  `;
+}
+
+/* ---------- 時間帯別グラフ ---------- */
+
+function renderHourlyChart(){
+  const area = document.getElementById("hourlyChartArea");
+  const rows = state.filtered;
+  if(rows.length === 0){
+    area.innerHTML = `<p class="off-note">この期間のデータがありません。</p>`;
+    return;
+  }
+
+  if(!state.chartByWeekday){
+    const avgPerSlot = HOURLY_SLOTS.map((h, i) => avg(rows.map(r => r.sold[i])));
+    const max = Math.max(1, ...avgPerSlot.filter(v => v !== null));
+    const cols = HOURLY_SLOTS.map((h, i) => {
+      const v = avgPerSlot[i];
+      const heightPct = v !== null ? Math.max(2, Math.round((v / max) * 100)) : 0;
+      return `
+        <div class="bar-col">
+          <div class="bar-value">${v !== null ? round1(v) : "—"}</div>
+          <div class="bar-track"><div class="bar-fill" style="height:${heightPct}%"></div></div>
+          <div class="bar-label">${h}時</div>
+        </div>
+      `;
+    }).join("");
+    area.innerHTML = `<div class="bar-chart">${cols}</div>`;
+    return;
+  }
+
+  // 曜日別色分けモード
+  const weekdayOrder = ["月","火","水","木","金","土","日"];
+  const activeWeekdays = weekdayOrder.filter(w => rows.some(r => r.weekday === w));
+  const avgByWeekdaySlot = {};
+  activeWeekdays.forEach(w => {
+    const wRows = rows.filter(r => r.weekday === w);
+    avgByWeekdaySlot[w] = HOURLY_SLOTS.map((h, i) => avg(wRows.map(r => r.sold[i])));
+  });
+  const allVals = activeWeekdays.flatMap(w => avgByWeekdaySlot[w]).filter(v => v !== null);
+  const max = Math.max(1, ...allVals);
+
+  const cols = HOURLY_SLOTS.map((h, i) => {
+    const bars = activeWeekdays.map(w => {
+      const v = avgByWeekdaySlot[w][i];
+      const heightPct = v !== null ? Math.max(2, Math.round((v / max) * 100)) : 0;
+      return `<div class="bar-fill mini wd-${WEEKDAY_COLOR_INDEX[w]}" style="height:${heightPct}%" title="${w}曜 ${h}時: ${v !== null ? round1(v) : "—"}個"></div>`;
+    }).join("");
+    return `
+      <div class="bar-col">
+        <div class="bar-track">${bars}</div>
+        <div class="bar-label">${h}時</div>
+      </div>
+    `;
+  }).join("");
+
+  const legend = activeWeekdays.map(w =>
+    `<span><i style="background:${weekdayColorHex(w)}"></i>${w}曜</span>`
+  ).join("");
+
+  area.innerHTML = `<div class="bar-chart">${cols}</div><div class="bar-legend">${legend}</div>`;
+}
+
+function weekdayColorHex(w){
+  const map = { "月":"#4a7c59","火":"#c9533f","水":"#5b7fa6","木":"#b8933f","金":"#8a6db1","土":"#999","日":"#999" };
+  return map[w] || "#999";
+}
+
+/* ---------- 日別データ一覧 ---------- */
+
+function renderDailyTable(){
+  const area = document.getElementById("dailyTableArea");
+  let rows = state.filtered.slice();
+
+  if(state.tableWeekday) rows = rows.filter(r => r.weekday === state.tableWeekday);
+  if(state.tableWeather) rows = rows.filter(r => weatherCategory(r.weather) === state.tableWeather);
+
+  if(rows.length === 0){
+    area.innerHTML = `<p class="off-note">条件に一致するデータがありません。</p>`;
+    return;
+  }
+
+  const sortKey = state.sortKey;
+  const dir = state.sortDir === "asc" ? 1 : -1;
+  rows.sort((a, b) => {
+    let av, bv;
+    if(sortKey === "date"){ av = a.date; bv = b.date; }
+    else if(sortKey === "weekday"){ av = a.weekday; bv = b.weekday; }
+    else if(sortKey === "weather"){ av = a.weather; bv = b.weather; }
+    else if(sortKey === "temp"){ av = a.temp ?? -999; bv = b.temp ?? -999; }
+    else if(sortKey === "totalMade"){ av = a.totalMade; bv = b.totalMade; }
+    else if(sortKey === "totalSold"){ av = a.totalSold ?? -999; bv = b.totalSold ?? -999; }
+    else if(sortKey === "soldOutTime"){ av = timeToMinutes(a.soldOutTime) ?? 9999; bv = timeToMinutes(b.soldOutTime) ?? 9999; }
+    else if(sortKey.startsWith("slot")){
+      const i = Number(sortKey.slice(4));
+      av = a.sold[i] ?? -999; bv = b.sold[i] ?? -999;
+    } else { av = a.date; bv = b.date; }
+    if(av < bv) return -1 * dir;
+    if(av > bv) return 1 * dir;
+    return 0;
+  });
+
+  const cols = [
+    { key: "date", label: "日付" },
+    { key: "weekday", label: "曜日" },
+    { key: "weather", label: "天気" },
+    { key: "temp", label: "気温" },
+    { key: "totalMade", label: "総生産数" },
+    { key: "soldOutTime", label: "完売時刻" },
+    ...HOURLY_SLOTS.map((h, i) => ({ key: `slot${i}`, label: `${h}時` })),
+    { key: "totalSold", label: "売上合計" },
+  ];
+
+  const headerHtml = cols.map(c => {
+    const sorted = state.sortKey === c.key;
+    const arrow = sorted ? (state.sortDir === "asc" ? "▲" : "▼") : "▲";
+    return `<th class="sortable${sorted ? " sorted" : ""}" data-key="${c.key}">${c.label}<span class="arrow">${arrow}</span></th>`;
+  }).join("");
+
+  const bodyHtml = rows.map(r => {
+    const dt = r.dateObj;
+    const slotCells = r.sold.map(v => `<td class="num">${v !== null ? v : "—"}</td>`).join("");
+    return `<tr>
+      <td>${dt.getMonth()+1}/${dt.getDate()}</td>
+      <td>${r.weekday}曜</td>
+      <td>${r.weather || "—"}</td>
+      <td class="num">${r.temp !== null ? round1(r.temp) + "℃" : "—"}</td>
+      <td class="num">${r.totalMade}個</td>
+      <td>${r.soldOutDisplay || "—"}</td>
+      ${slotCells}
+      <td class="num"><strong>${r.totalSold !== null ? r.totalSold : "—"}</strong></td>
+    </tr>`;
+  }).join("");
+
+  area.innerHTML = `
+    <div class="table-scroll">
+      <table><thead><tr>${headerHtml}</tr></thead><tbody>${bodyHtml}</tbody></table>
+    </div>
+  `;
+
+  area.querySelectorAll("th.sortable").forEach(th => {
+    th.addEventListener("click", () => {
+      const key = th.dataset.key;
+      if(state.sortKey === key){
+        state.sortDir = state.sortDir === "asc" ? "desc" : "asc";
+      } else {
+        state.sortKey = key;
+        state.sortDir = "asc";
+      }
+      renderDailyTable();
+    });
+  });
+}
+
+/* ---------- 傾向インサイト ---------- */
+
+function renderInsights(){
+  const area = document.getElementById("insightArea");
+  const rows = state.filtered;
+  const insights = [];
+
+  if(rows.length === 0){
+    area.innerHTML = `<p class="off-note">この期間のデータがありません。</p>`;
+    return;
+  }
+
+  // 曜日別の完売時刻インサイト
+  const weekdayOrder = ["月","火","水","木","金","土","日"];
+  const soldOutByWeekday = {};
+  weekdayOrder.forEach(w => soldOutByWeekday[w] = []);
+  rows.forEach(r => {
+    const mins = timeToMinutes(r.soldOutTime);
+    if(mins !== null && soldOutByWeekday[r.weekday]) soldOutByWeekday[r.weekday].push(mins);
+  });
+  let earliestWeekday = null, earliestAvg = null;
+  weekdayOrder.forEach(w => {
+    if(soldOutByWeekday[w].length === 0) return;
+    const a = avg(soldOutByWeekday[w]);
+    if(earliestAvg === null || a < earliestAvg){ earliestAvg = a; earliestWeekday = w; }
+  });
+  if(earliestWeekday){
+    insights.push(`🕐 ${earliestWeekday}曜日は平均${minutesToTime(earliestAvg)}に完売しています。`);
+  }
+
+  // 曜日別の売上個数インサイト
+  const totalsByWeekday = {};
+  weekdayOrder.forEach(w => totalsByWeekday[w] = []);
+  rows.forEach(r => {
+    if(r.totalSold !== null && totalsByWeekday[r.weekday]) totalsByWeekday[r.weekday].push(r.totalSold);
+  });
+  let bestWeekday = null, bestAvg = null;
+  weekdayOrder.forEach(w => {
+    if(totalsByWeekday[w].length === 0) return;
+    const a = avg(totalsByWeekday[w]);
+    if(bestAvg === null || a > bestAvg){ bestAvg = a; bestWeekday = w; }
+  });
+  if(bestWeekday){
+    insights.push(`📈 ${bestWeekday}曜日が最も売れています（平均${round1(bestAvg)}個）。`);
+  }
+
+  // 気温相関インサイト
+  const warmTotals = rows.filter(r => r.temp !== null && r.temp >= 25 && r.totalSold !== null).map(r => r.totalSold);
+  const coolTotals = rows.filter(r => r.temp !== null && r.temp < 25 && r.totalSold !== null).map(r => r.totalSold);
+  if(warmTotals.length >= 2 && coolTotals.length >= 2){
+    const warmAvg = avg(warmTotals), coolAvg = avg(coolTotals);
+    const diff = warmAvg - coolAvg;
+    if(Math.abs(diff) >= 3){
+      const dir = diff > 0 ? "多く" : "少なく";
+      insights.push(`🌡️ 気温25度以上の日は平均${Math.abs(round1(diff))}個${dir}売れています。`);
+    }
+  }
+
+  // 天気相関インサイト（晴れ vs 雨）
+  const sunnyTotals = rows.filter(r => weatherCategory(r.weather) === "sunny" && r.totalSold !== null).map(r => r.totalSold);
+  const rainyTotals = rows.filter(r => weatherCategory(r.weather) === "rainy" && r.totalSold !== null).map(r => r.totalSold);
+  if(sunnyTotals.length >= 2 && rainyTotals.length >= 2){
+    const sunnyAvg = avg(sunnyTotals), rainyAvg = avg(rainyTotals);
+    const diff = sunnyAvg - rainyAvg;
+    if(Math.abs(diff) >= 3){
+      const dir = diff > 0 ? "多く" : "少なく";
+      insights.push(`☀️ 晴れの日は雨の日より平均${Math.abs(round1(diff))}個${dir}売れています。`);
+    }
+  }
+
+  if(insights.length === 0){
+    area.innerHTML = `<p class="off-note">傾向を検出するにはデータが不足しています（完売時刻の記録が未実装の可能性があります）。</p>`;
+    return;
+  }
+
+  area.innerHTML = `<ul class="insight-list">${insights.map(t => `<li>${t}</li>`).join("")}</ul>`;
+}
+
+/* ---------- 初期化 ---------- */
+
+function renderAll(){
+  renderSummary();
+  renderHourlyChart();
+  renderDailyTable();
+  renderInsights();
+}
+
+async function init(){
+  state.rawRows = await fetchAnalyticsRows();
+  state.dateRows = aggregateByDate(state.rawRows);
+
+  document.querySelectorAll(".filter-mode-tab").forEach(btn => {
+    btn.addEventListener("click", () => {
+      state.filterMode = btn.dataset.mode;
+      setActiveTab(state.filterMode);
+      renderFilterControls();
+    });
+  });
+  document.querySelectorAll(".filter-quick-btn").forEach(btn => {
+    btn.addEventListener("click", () => setQuickRange(btn.dataset.quick));
+  });
+  document.getElementById("chartByWeekdayToggle").addEventListener("change", (e) => {
+    state.chartByWeekday = e.target.checked;
+    renderHourlyChart();
+  });
+  document.getElementById("tableWeekdayFilter").addEventListener("change", (e) => {
+    state.tableWeekday = e.target.value;
+    renderDailyTable();
+  });
+  document.getElementById("tableWeatherFilter").addEventListener("change", (e) => {
+    state.tableWeather = e.target.value;
+    renderDailyTable();
+  });
+
+  // 初期表示：直近4週間
+  setQuickRange("last4weeks");
+}
+
+init();
+</script>
+</body>
+</html>

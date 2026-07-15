@@ -287,12 +287,11 @@ function handleGetStatus(ss) {
     .setMimeType(ContentService.MimeType.JSON);
 }
 
-function handleGetHourly(ss) {
+// 「時間帯別実績」シートの全行を読み取り、日付・曜日・天気・気温を含む
+// フルフィールドのオブジェクト配列として返す（handleGetHourly / handleGetAnalytics 共通）
+function getHourlySheetRows(ss) {
   var sheet = ss.getSheetByName("時間帯別実績");
-  if (!sheet) {
-    return ContentService.createTextOutput(JSON.stringify({ rows: [] }))
-      .setMimeType(ContentService.MimeType.JSON);
-  }
+  if (!sheet) return [];
   var rows = sheet.getDataRange().getValues();
   var result = [];
   for (var i = 1; i < rows.length; i++) {
@@ -301,6 +300,9 @@ function handleGetHourly(ss) {
     var v = function(idx) { return r[idx] !== "" && r[idx] !== null && r[idx] !== undefined ? r[idx] : ""; };
     result.push({
       date:        normalizeDateCell(r[0]),
+      weekday:     String(r[1] || ""),
+      weather:     String(r[2] || ""),
+      temp:        v(3),
       store:       String(r[4] || ""),
       location:    String(r[5] || ""),
       filling:     String(r[6] || ""),
@@ -312,7 +314,18 @@ function handleGetHourly(ss) {
       note:        String(r[30] || ""),
     });
   }
-  return ContentService.createTextOutput(JSON.stringify({ rows: result }))
+  return result;
+}
+
+function handleGetHourly(ss) {
+  return ContentService.createTextOutput(JSON.stringify({ rows: getHourlySheetRows(ss) }))
+    .setMimeType(ContentService.MimeType.JSON);
+}
+
+// データ分析ページ（analytics.html）向け。時間帯別実績の全行を
+// 日付・曜日・天気・気温を含む形で返す
+function handleGetAnalytics(ss) {
+  return ContentService.createTextOutput(JSON.stringify({ rows: getHourlySheetRows(ss) }))
     .setMimeType(ContentService.MimeType.JSON);
 }
 
@@ -333,6 +346,10 @@ function doGet(e) {
 
   if (e.parameter && e.parameter.type === "hourly") {
     return handleGetHourly(ss);
+  }
+
+  if (e.parameter && e.parameter.type === "analytics") {
+    return handleGetAnalytics(ss);
   }
   var sheet = ss.getSheetByName("シフト回答");
   if (!sheet) {
