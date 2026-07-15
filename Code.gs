@@ -98,6 +98,16 @@ function normalizeDateCell(val) {
   return String(val);
 }
 
+// 時刻セル（例：販売終了時間）はスプレッドシートが自動的にDate型に変換することがあるため、
+// "HH:mm" 形式の文字列に正規化する
+function normalizeTimeCell(val) {
+  if (!val) return "";
+  if (Object.prototype.toString.call(val) === '[object Date]') {
+    return Utilities.formatDate(val, Session.getScriptTimeZone(), "HH:mm");
+  }
+  return String(val);
+}
+
 function handleSaveDraft(ss, data) {
   var sheet = ss.getSheetByName("作業中プラン");
   if (!sheet) {
@@ -310,7 +320,7 @@ function getHourlySheetRows(ss) {
       r12:         v(8),  r13: v(9),  r14: v(10), r15: v(11), r16: v(12), r17: v(13), r18: v(14),
       sold12:      v(15), sold13: v(16), sold14: v(17), sold15: v(18), sold16: v(19), sold17: v(20), sold18: v(21),
       cum12:       v(22), cum13:  v(23), cum14:  v(24), cum15:  v(25), cum16:  v(26), cum17:  v(27), cum18:  v(28),
-      soldOutTime: String(r[29] || ""),
+      soldOutTime: normalizeTimeCell(r[29]),
       note:        String(r[30] || ""),
     });
   }
