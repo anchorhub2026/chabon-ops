@@ -1514,6 +1514,8 @@ async function saveStoreActual(storeKey){
     stores: [{ store: storeKey, location, items, note, soldOutTime }],
   };
 
+  console.log(`【${storeKey}】実績送信payload:`, payload);
+
   const btnId = storeKey === "Zuid" ? "saveZuidBtn" : "saveUvABtn";
   const btn = document.getElementById(btnId);
   if(btn){ btn.disabled = true; btn.textContent = "送信中..."; }
