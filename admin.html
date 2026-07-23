@@ -2769,6 +2769,7 @@ async function refreshAllData(){
       `&forecast_days=16&timezone=Europe%2FAmsterdam`;
 
     const thisYear = new Date().getFullYear();
+    state.cellStatus = {};
     const [weatherRes, chiseJson, shiftJson, holidaysByIso, nsDisruptionsByDate, draftData] = await Promise.all([
       fetch(weatherUrl).then(r => r.json()),
       fetchSheetJson(null).catch(e => { console.error("チセさんシート取得失敗", e); return null; }),
@@ -2776,13 +2777,14 @@ async function refreshAllData(){
       fetchDutchHolidays([thisYear, thisYear + 1]),
       fetchNsDisruptions(),
       fetchDraftData(),
+      // 具材ステータスはstate.cellStatusに直接反映される（戻り値は使わない）ため、
+      // 分割代入では受け取らないが、他の取得と並列で走らせる
+      fetchStatusFromSheet(),
     ]);
 
     state.holidaysByIso = holidaysByIso;
     state.nsDisruptionsByDate = nsDisruptionsByDate;
     state.confirmedByDate = loadConfirmedFromStorage();
-    state.cellStatus = {};
-    await fetchStatusFromSheet();
 
     const hourlyByDate = buildHourlyByDate(weatherRes.hourly);
     state.days = buildDays(weatherRes.daily, hourlyByDate);
@@ -2890,10 +2892,12 @@ function inferYearForPayment(mdStr){
   return cand;
 }
 
-async function initPaymentSection(){
+// paymentPlanJson を渡した場合はそれを使い（init()側でPromise.allにより他の取得と並列fetch済み）、
+// 省略された場合のみここで自前fetchする（単独呼び出し用のフォールバック）
+async function initPaymentSection(paymentPlanJson){
   const tableArea = document.getElementById("paymentTableArea");
   try{
-    const json = await fetchSheetJson("確定プラン", SHIFT_SPREADSHEET_ID);
+    const json = paymentPlanJson || await fetchSheetJson("確定プラン", SHIFT_SPREADSHEET_ID);
     const rows = (json.table && json.table.rows) || [];
 
     // monthly: { "2026-06": { "YUMI": 450, ... }, ... }
@@ -3033,6 +3037,14 @@ function downloadPaymentCsv(monthly, monthKey){
 
 /* ---------- 初期化 ---------- */
 
+// 初期読み込みの進捗を #combinedArea に反映する（各データ取得が並列で走るため、
+// 「何件取得完了したか」のカウンター表示で実際の進捗が分かるようにする）
+let initProgressDone = 0;
+function setInitProgress(done, total){
+  const el = document.getElementById("combinedArea");
+  if(el) el.innerHTML = `<p class="loading">データを取得中... (${done}/${total})</p>`;
+}
+
 async function init(){
   try{
     const weatherUrl = `https://api.open-meteo.com/v1/forecast?latitude=${LAT}&longitude=${LON}` +
@@ -3041,20 +3053,27 @@ async function init(){
       `&forecast_days=16&timezone=Europe%2FAmsterdam`;
 
     const thisYear = new Date().getFullYear();
-    const [weatherRes, chiseJson, shiftJson, holidaysByIso, nsDisruptionsByDate, draftData] = await Promise.all([
-      fetch(weatherUrl).then(r => r.json()),
-      fetchSheetJson(null).catch(e => { console.error("チセさんシート取得失敗", e); return null; }),
-      fetchSheetJson("シフト回答", SHIFT_SPREADSHEET_ID).catch(e => { console.error("シフト回答シート取得失敗", e); return null; }),
-      fetchDutchHolidays([thisYear, thisYear + 1]),
-      fetchNsDisruptions(),
-      fetchDraftData(),
+    initProgressDone = 0;
+    setInitProgress(0, 8);
+    const track = p => p.then(v => { setInitProgress(++initProgressDone, 8); return v; });
+    state.cellStatus = {};
+    const [weatherRes, chiseJson, shiftJson, holidaysByIso, nsDisruptionsByDate, draftData, paymentPlanJson] = await Promise.all([
+      track(fetch(weatherUrl).then(r => r.json())),
+      track(fetchSheetJson(null).catch(e => { console.error("チセさんシート取得失敗", e); return null; })),
+      track(fetchSheetJson("シフト回答", SHIFT_SPREADSHEET_ID).catch(e => { console.error("シフト回答シート取得失敗", e); return null; })),
+      track(fetchDutchHolidays([thisYear, thisYear + 1])),
+      track(fetchNsDisruptions()),
+      track(fetchDraftData()),
+      // 具材ステータスはstate.cellStatusに直接反映される（戻り値は使わない）
+      track(fetchStatusFromSheet()),
+      // 月次支払いセクション用の確定プランも、ここで他の取得と並列fetchしておく
+      // （従来は描画後に別途fetchしていたため、その分だけ表示完了が遅れていた）
+      track(fetchSheetJson("確定プラン", SHIFT_SPREADSHEET_ID).catch(e => { console.error("確定プラン(支払い用)取得失敗", e); return null; })),
     ]);
 
     state.holidaysByIso = holidaysByIso;
     state.nsDisruptionsByDate = nsDisruptionsByDate;
     state.confirmedByDate = loadConfirmedFromStorage();
-    state.cellStatus = {};
-    await fetchStatusFromSheet();
     const hourlyByDate = buildHourlyByDate(weatherRes.hourly);
     state.days = buildDays(weatherRes.daily, hourlyByDate);
     // localStorageから復元（オフライン時フォールバック）→ シートのドラフトで上書き
@@ -3077,7 +3096,7 @@ async function init(){
     renderCombined();
     renderShiftTable();
     renderCellStatusTable();
-    initPaymentSection();
+    initPaymentSection(paymentPlanJson);
 
     const refreshBtn = document.getElementById("refreshShiftBtn");
     if(refreshBtn) refreshBtn.addEventListener("click", refreshShiftData);

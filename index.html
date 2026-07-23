@@ -598,43 +598,17 @@ async function fetchConfirmedPlan(){
   }
 }
 
-// 作業中プランシートから本日の forecast（zuidFillingQty / uvaFillingQty）を取得
-async function fetchTodayDraft(){
+// 作業中プランシートの全件を取得する（今日の分の絞り込みは呼び出し側で行う。
+// 本日日付はまだ天気データが届く前の時点では確定しないため、取得と絞り込みを分離して並列化できるようにしている）
+async function fetchDraftList(){
   try{
     const res = await fetch(`${SCRIPT_URL}?type=draft`, { cache: "no-store" });
-    if(!res.ok) return null;
+    if(!res.ok) return [];
     const json = await res.json();
-    const todayIso = state.dailyResults[0].dateStr;
-    const entry = (json.drafts || []).find(d => d.date === todayIso);
-    return entry ? (entry.forecast || null) : null;
+    return json.drafts || [];
   }catch(e){
     console.warn("ドラフト取得失敗:", e);
-    return null;
-  }
-}
-
-// シフト回答シート（送信日時,名前,日付,曜日,個数,備考,必要物品）から、メンバーごとの最新の必要物品を取得
-async function fetchMemberNeededItems(){
-  try{
-    const url = `https://docs.google.com/spreadsheets/d/${SHIFT_SPREADSHEET_ID}/gviz/tq?tqx=out:json&sheet=${encodeURIComponent("シフト回答")}`;
-    const res = await fetch(url);
-    const text = await res.text();
-    const match = text.match(/setResponse\(([\s\S]*)\);\s*$/);
-    if(!match) return {};
-    const json = JSON.parse(match[1]);
-    const byMember = {};
-    (json.table.rows || []).forEach(r => {
-      const c = r.c;
-      if(!c) return;
-      const name = c[1] && c[1].v;
-      const items = c[6] && c[6].v;
-      if(!name) return;
-      byMember[name] = items || "";
-    });
-    return byMember;
-  }catch(e){
-    console.error("必要物品の取得に失敗しました", e);
-    return {};
+    return [];
   }
 }
 
@@ -645,32 +619,40 @@ function parseQtyNumber(qtyStr){
   return m ? parseInt(m[1], 10) : 0;
 }
 
-// シフト回答シート（送信日時,名前,日付,曜日,個数,備考,必要物品）から、日付ごとのメンバー出勤希望を取得
-async function fetchShiftByDate(){
+// シフト回答シート（送信日時,名前,日付,曜日,個数,備考,必要物品）は1回のfetchで取得し、
+// メンバーごとの必要物品(byMember)と日付ごとの出勤希望(byDate)を同時に組み立てる
+// （旧実装は同じシートを2回fetchしていたため統合した）
+async function fetchShiftSheetData(){
   try{
     const url = `https://docs.google.com/spreadsheets/d/${SHIFT_SPREADSHEET_ID}/gviz/tq?tqx=out:json&sheet=${encodeURIComponent("シフト回答")}`;
     const res = await fetch(url);
     const text = await res.text();
     const match = text.match(/setResponse\(([\s\S]*)\);\s*$/);
-    if(!match) return {};
+    if(!match) return { byMember: {}, byDate: {} };
     const json = JSON.parse(match[1]);
+    const byMember = {};
     const byDate = {};
     (json.table.rows || []).forEach(r => {
       const c = r.c;
       if(!c) return;
       const name = c[1] && c[1].v;
+      if(!name) return;
+      const items = c[6] && c[6].v;
+      byMember[name] = items || "";
+
       const dateCell = c[2];
       // 日付列はシート上で日付型のため、表示用文字列(f)を "6/23" 形式のキーとして使う
       const key = dateCell && (dateCell.f || dateCell.v);
       const qtyRaw = c[4] && c[4].v;
-      if(!name || !key) return;
-      if(!byDate[key]) byDate[key] = {};
-      byDate[key][name] = { qty: parseQtyNumber(qtyRaw), raw: qtyRaw || "" };
+      if(key){
+        if(!byDate[key]) byDate[key] = {};
+        byDate[key][name] = { qty: parseQtyNumber(qtyRaw), raw: qtyRaw || "" };
+      }
     });
-    return byDate;
+    return { byMember, byDate };
   }catch(e){
     console.error("シフト回答の取得に失敗しました", e);
-    return {};
+    return { byMember: {}, byDate: {} };
   }
 }
 
@@ -1679,26 +1661,57 @@ function renderWeeklyStatusTable(){
   });
 }
 
+// 初期読み込みの進捗を #weatherList に反映する（各データ取得が並列で走るため、
+// 「何件取得完了したか」のカウンター表示で実際の進捗が分かるようにする）
+function setLoadingProgress(done, total){
+  const el = document.getElementById("weatherList");
+  if(el) el.innerHTML = `<div class="loading">データを取得中... (${done}/${total})</div>`;
+}
+
 async function loadWeather(){
-  const url = `https://api.open-meteo.com/v1/forecast?latitude=${LAT}&longitude=${LON}` +
+  const t0 = Date.now();
+  const weatherUrl = `https://api.open-meteo.com/v1/forecast?latitude=${LAT}&longitude=${LON}` +
     `&daily=temperature_2m_max,temperature_2m_min,weathercode` +
     `&hourly=temperature_2m,precipitation,weathercode` +
     `&forecast_days=16&timezone=Europe%2FAmsterdam`;
+  const thisYear = new Date().getFullYear();
+
+  // 互いに依存しない取得は全てここでPromise.allにより並列実行する
+  // （NS運休情報は表示に必須ではないため、ここには含めず後段で非同期に取得する）
+  const totalTasks = 6;
+  let doneTasks = 0;
+  setLoadingProgress(doneTasks, totalTasks);
+  const track = p => p.then(v => { doneTasks++; setLoadingProgress(doneTasks, totalTasks); return v; });
+
   try{
-    const res = await fetch(url);
-    const data = await res.json();
-    state.hourlyByDate = buildHourlyByDate(data.hourly);
-    const thisYear = new Date().getFullYear();
-    const [holidaysByIso, nsDisruptionsByDate] = await Promise.all([
-      fetchDutchHolidays([thisYear, thisYear + 1]),
-      fetchNsDisruptions(),
+    const [
+      data,
+      holidaysByIso,
+      confirmedMap,
+      draftList,
+      shiftSheetData,
+    ] = await Promise.all([
+      track(fetch(weatherUrl).then(r => r.json())),
+      track(fetchDutchHolidays([thisYear, thisYear + 1])),
+      track(fetchConfirmedPlan()),
+      track(fetchDraftList()),
+      track(fetchShiftSheetData()),
+      // 具材ステータスは state.cellStatus に直接反映される（戻り値は使わない）ため
+      // 分割代入では受け取らないが、Promise.allに含めて他の取得と並列で走らせる
+      track(fetchStatusFromSheet()),
     ]);
+
+    state.hourlyByDate = buildHourlyByDate(data.hourly);
     state.holidaysByIso = holidaysByIso;
-    state.nsDisruptionsByDate = nsDisruptionsByDate;
+    state.nsDisruptionsByDate = {}; // NS運休情報は後段で取得するため、初期表示時点では空のまま進める
     state.dailyResults = buildDailyResults(data.daily, state.hourlyByDate, state.holidaysByIso, state.nsDisruptionsByDate);
-    const confirmedMap = await fetchConfirmedPlan();
+
     state.confirmedPlanByDate = confirmedMap;
-    state.todayDraft = await fetchTodayDraft();
+
+    const todayIso = state.dailyResults[0].dateStr;
+    const draftEntry = draftList.find(d => d.date === todayIso);
+    state.todayDraft = draftEntry ? (draftEntry.forecast || null) : null;
+
     // 上書き前の「元の推奨」を本日分だけ保存しておく（確定数との比較表示に使う）
     state.todayOriginalRecommendation = {
       zuid: state.dailyResults[0].zuid,
@@ -1707,10 +1720,10 @@ async function loadWeather(){
       nsDisruptions: state.dailyResults[0].nsDisruptions,
     };
     applyConfirmedOverrides(state.dailyResults, confirmedMap);
-    state.memberNeededItems = await fetchMemberNeededItems();
+    state.memberNeededItems = shiftSheetData.byMember;
 
     // 本日のシフト回答（出勤/休み）を実データに反映する
-    state.shiftByDate = await fetchShiftByDate();
+    state.shiftByDate = shiftSheetData.byDate;
     const todayKey = mdLabel(state.dailyResults[0].dateStr);
     const todayShift = state.shiftByDate[todayKey] || {};
     state.members.forEach(m => {
@@ -1724,8 +1737,28 @@ async function loadWeather(){
     renderWeeklyView();
     renderFillings();
     renderActualSales();
-    await fetchStatusFromSheet();
     renderWeeklyStatusTable();
+
+    console.log(`[index.html] 初期データ取得〜描画完了: ${Date.now() - t0}ms`);
+
+    // NS運休・スト情報は表示に必須ではないため、初期表示後にバックグラウンドで取得し、
+    // 取得できた場合のみ推奨数・週間ビューを再計算して反映する（初期表示はブロックしない）
+    fetchNsDisruptions().then(nsMap => {
+      if(!nsMap || Object.keys(nsMap).length === 0) return;
+      state.nsDisruptionsByDate = nsMap;
+      state.dailyResults = buildDailyResults(data.daily, state.hourlyByDate, state.holidaysByIso, nsMap);
+      // renderRecommendation()はtodayOriginalRecommendationを見るため、初回読み込み時と同じ手順で
+      // 上書き前の値をここでも更新しておく（更新し忘れるとNS補正が推奨数カードに反映されない）
+      state.todayOriginalRecommendation = {
+        zuid: state.dailyResults[0].zuid,
+        uva: state.dailyResults[0].uva,
+        holidayName: state.dailyResults[0].holidayName,
+        nsDisruptions: state.dailyResults[0].nsDisruptions,
+      };
+      applyConfirmedOverrides(state.dailyResults, state.confirmedPlanByDate);
+      renderRecommendation();
+      renderWeeklyView();
+    });
   }catch(e){
     document.getElementById("weatherList").innerHTML = "天気情報の取得に失敗しました。";
     document.getElementById("slotCards").innerHTML = "<p class='off-note'>時間別データの取得に失敗しました。</p>";
