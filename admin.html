@@ -961,6 +961,65 @@
     color: var(--main-dark);
   }
   .payment-empty{ color: #999; font-size: 0.88rem; padding: 10px 0; }
+
+  /* ── シフト入力期間設定 ── */
+  .shift-config-controls{
+    display: flex;
+    align-items: flex-end;
+    gap: 16px;
+    flex-wrap: wrap;
+  }
+  .shift-config-field{
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    font-size: 0.82rem;
+    color: var(--main-dark);
+    font-weight: bold;
+  }
+  .shift-config-field input[type="date"]{
+    font-family: inherit;
+    font-size: 0.9rem;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    padding: 7px 10px;
+    background: #fff;
+    color: var(--ink);
+  }
+  .shift-config-checkbox{
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 0.88rem;
+    color: var(--ink);
+    font-weight: normal;
+    padding-bottom: 8px;
+  }
+  .shift-config-checkbox input[type="checkbox"]{
+    width: 18px;
+    height: 18px;
+    accent-color: var(--main);
+  }
+  .shift-config-save-btn{
+    background: var(--main);
+    color: #fff;
+    border: none;
+    border-radius: 100px;
+    padding: 9px 20px;
+    font-size: 0.85rem;
+    font-weight: bold;
+    cursor: pointer;
+    font-family: inherit;
+    white-space: nowrap;
+  }
+  .shift-config-save-btn:hover{ background: var(--main-dark); }
+  .shift-config-save-btn:disabled{ background: #aaa; cursor: default; }
+  .shift-config-status{
+    margin: 10px 0 0;
+    font-size: 0.85rem;
+    color: var(--main-dark);
+  }
+  .shift-config-status.error{ color: var(--accent); }
 </style>
 </head>
 <body>
@@ -971,6 +1030,7 @@
   <nav class="header-nav">
     <a href="index.html">← スタッフ画面</a>
     <a href="shift.html">シフト入力</a>
+    <a href="#shiftConfigSection">シフト期間設定</a>
     <a href="#paymentSection">月次支払い</a>
     <a href="analytics.html">📊 データ分析</a>
   </nav>
@@ -982,6 +1042,26 @@
   <section>
     <h2>販売予測数・生産割り振り<span class="badge">来週・再来週 月〜金</span></h2>
     <div id="combinedArea"><p class="loading">データを読み込み中...</p></div>
+  </section>
+
+  <section id="shiftConfigSection">
+    <h2>シフト入力期間設定</h2>
+    <div class="shift-config-controls">
+      <label class="shift-config-field">
+        開始日
+        <input type="date" id="shiftConfigStart">
+      </label>
+      <label class="shift-config-field">
+        終了日
+        <input type="date" id="shiftConfigEnd">
+      </label>
+      <label class="shift-config-checkbox">
+        <input type="checkbox" id="shiftConfigWeekends">
+        土日を含める
+      </label>
+      <button type="button" class="shift-config-save-btn" id="shiftConfigSaveBtn">設定を保存</button>
+    </div>
+    <p class="shift-config-status" id="shiftConfigStatus"></p>
   </section>
 
   <section>
@@ -2405,6 +2485,78 @@ function applyDraftToDay(day, draft){
   if(draft.prod && Object.keys(draft.prod).length > 0) day.memberFillingQty = { ...draft.prod };
 }
 
+/* ---------- シフト入力期間設定（shift.htmlに反映される） ---------- */
+
+async function fetchShiftConfig(){
+  try{
+    const res = await fetch(`${SCRIPT_URL}?type=shiftConfig`, { cache: "no-store" });
+    if(!res.ok) return null;
+    const json = await res.json();
+    return json.config || null;
+  }catch(e){
+    console.warn("シフト入力期間設定の取得に失敗しました:", e);
+    return null;
+  }
+}
+
+async function saveShiftConfig(startDate, endDate, includeWeekends){
+  const payload = { type: "saveShiftConfig", startDate, endDate, includeWeekends };
+  await fetch(SCRIPT_URL, { method: "POST", mode: "no-cors", body: JSON.stringify(payload) });
+}
+
+function renderShiftConfig(config){
+  const startEl = document.getElementById("shiftConfigStart");
+  const endEl = document.getElementById("shiftConfigEnd");
+  const weekendsEl = document.getElementById("shiftConfigWeekends");
+  if(!startEl || !endEl || !weekendsEl) return;
+  if(config){
+    startEl.value = config.startDate || "";
+    endEl.value = config.endDate || "";
+    weekendsEl.checked = !!config.includeWeekends;
+  }
+}
+
+function initShiftConfigSection(initialConfig){
+  renderShiftConfig(initialConfig);
+
+  const saveBtn = document.getElementById("shiftConfigSaveBtn");
+  const statusEl = document.getElementById("shiftConfigStatus");
+  if(!saveBtn) return;
+
+  saveBtn.addEventListener("click", async () => {
+    const startVal = document.getElementById("shiftConfigStart").value;
+    const endVal = document.getElementById("shiftConfigEnd").value;
+    const includeWeekends = document.getElementById("shiftConfigWeekends").checked;
+
+    if(!startVal || !endVal){
+      statusEl.textContent = "開始日・終了日を入力してください。";
+      statusEl.classList.add("error");
+      return;
+    }
+    if(startVal > endVal){
+      statusEl.textContent = "終了日は開始日以降にしてください。";
+      statusEl.classList.add("error");
+      return;
+    }
+
+    statusEl.classList.remove("error");
+    saveBtn.disabled = true;
+    saveBtn.textContent = "保存中...";
+    try{
+      await saveShiftConfig(startVal, endVal, includeWeekends);
+      statusEl.textContent = `✓ 保存しました（${startVal}〜${endVal}、土日${includeWeekends ? "あり" : "なし"}）`;
+      saveBtn.textContent = "設定を保存";
+    }catch(e){
+      console.error("シフト入力期間設定の保存に失敗しました", e);
+      statusEl.textContent = "保存に失敗しました。";
+      statusEl.classList.add("error");
+      saveBtn.textContent = "設定を保存";
+    }finally{
+      saveBtn.disabled = false;
+    }
+  });
+}
+
 /* ---------- localStorage: 販売予測数・生産割り振り（オフライン時フォールバック） ---------- */
 
 function saveForecast(day){
@@ -3054,10 +3206,10 @@ async function init(){
 
     const thisYear = new Date().getFullYear();
     initProgressDone = 0;
-    setInitProgress(0, 8);
-    const track = p => p.then(v => { setInitProgress(++initProgressDone, 8); return v; });
+    setInitProgress(0, 9);
+    const track = p => p.then(v => { setInitProgress(++initProgressDone, 9); return v; });
     state.cellStatus = {};
-    const [weatherRes, chiseJson, shiftJson, holidaysByIso, nsDisruptionsByDate, draftData, paymentPlanJson] = await Promise.all([
+    const [weatherRes, chiseJson, shiftJson, holidaysByIso, nsDisruptionsByDate, draftData, /* fetchStatusFromSheetの戻り値は使わない */, paymentPlanJson, shiftConfig] = await Promise.all([
       track(fetch(weatherUrl).then(r => r.json())),
       track(fetchSheetJson(null).catch(e => { console.error("チセさんシート取得失敗", e); return null; })),
       track(fetchSheetJson("シフト回答", SHIFT_SPREADSHEET_ID).catch(e => { console.error("シフト回答シート取得失敗", e); return null; })),
@@ -3069,6 +3221,7 @@ async function init(){
       // 月次支払いセクション用の確定プランも、ここで他の取得と並列fetchしておく
       // （従来は描画後に別途fetchしていたため、その分だけ表示完了が遅れていた）
       track(fetchSheetJson("確定プラン", SHIFT_SPREADSHEET_ID).catch(e => { console.error("確定プラン(支払い用)取得失敗", e); return null; })),
+      track(fetchShiftConfig()),
     ]);
 
     state.holidaysByIso = holidaysByIso;
@@ -3097,6 +3250,7 @@ async function init(){
     renderShiftTable();
     renderCellStatusTable();
     initPaymentSection(paymentPlanJson);
+    initShiftConfigSection(shiftConfig);
 
     const refreshBtn = document.getElementById("refreshShiftBtn");
     if(refreshBtn) refreshBtn.addEventListener("click", refreshShiftData);

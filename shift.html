@@ -144,25 +144,13 @@
     border-radius: 100px;
     font-weight: normal;
   }
-  .week-count-selector{
-    display: flex;
-    gap: 4px;
-    margin-left: auto;
-  }
-  .week-count-btn{
-    border: 1px solid var(--line);
-    background: transparent;
-    color: #999;
-    font-weight: normal;
-    font-size: 0.72rem;
-    padding: 3px 8px;
-    border-radius: 100px;
-    cursor: pointer;
-  }
-  .week-count-btn.active{
-    background: #e2ddd0;
-    color: #777;
-    border-color: #e2ddd0;
+  .period-label{
+    font-size: 0.85rem;
+    color: var(--main-dark);
+    background: var(--main-light);
+    padding: 8px 12px;
+    border-radius: 8px;
+    margin: -4px 0 14px;
   }
   .day-row{
     border: 1px solid var(--line);
@@ -299,13 +287,8 @@
     </section>
 
     <section>
-      <h2>
-        参加可能個数の入力
-        <span class="week-count-selector" id="weekCountSelector">
-          <button type="button" class="week-count-btn" data-weeks="2">2週間分</button>
-          <button type="button" class="week-count-btn" data-weeks="3">3週間分</button>
-        </span>
-      </h2>
+      <h2>参加可能個数の入力</h2>
+      <p class="period-label" id="periodLabel">読み込み中...</p>
       <div id="weeksArea"></div>
     </section>
 
@@ -395,20 +378,6 @@ function getNextMonday(date){
   return d;
 }
 
-// weekOffset=0 が「直近の未来の月曜日」から始まる週
-function getWeekDates(weekOffset){
-  const nextMonday = getNextMonday(new Date());
-  const targetMonday = new Date(nextMonday);
-  targetMonday.setDate(nextMonday.getDate() + weekOffset * 7);
-  const dates = [];
-  for(let i = 0; i < 5; i++){
-    const d = new Date(targetMonday);
-    d.setDate(targetMonday.getDate() + i);
-    dates.push(d);
-  }
-  return dates;
-}
-
 function formatDateLabel(d){
   return `${d.getMonth() + 1}/${d.getDate()} ${DAY_NAMES[d.getDay()]}曜日`;
 }
@@ -434,28 +403,99 @@ function qtyOptionsHtml(){
   return QTY_OPTIONS.map(q => `<option value="${q}">${q}</option>`).join("");
 }
 
-let weekCount = 2; // デフォルト2週間分
+function pad2(n){ return String(n).padStart(2, "0"); }
+
+function isoDateStr(d){
+  return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
+}
+
+// "YYYY-MM-DD" をローカル日付として解釈する（new Date("YYYY-MM-DD")のUTC解釈によるズレを避ける）
+function parseIsoDate(s){
+  const [y, m, d] = String(s).split("-").map(Number);
+  return new Date(y, m - 1, d);
+}
+
+// admin.htmlの「シフト入力期間設定」から現在の設定を取得する
+async function fetchShiftConfig(){
+  try{
+    const res = await fetch(`${SCRIPT_URL}?type=shiftConfig`, { cache: "no-store" });
+    if(!res.ok) return null;
+    const json = await res.json();
+    const c = json.config;
+    if(!c || !c.startDate || !c.endDate) return null;
+    return c;
+  }catch(e){
+    console.warn("シフト入力期間設定の取得に失敗しました:", e);
+    return null;
+  }
+}
+
+// 設定が読み込めない場合のフォールバック：次の月曜から2週間分（月〜金）
+function getFallbackConfig(){
+  const start = getNextMonday(new Date());
+  const end = new Date(start);
+  end.setDate(start.getDate() + 13); // 2週間分（土日を含む14日の範囲。表示時に平日だけに絞る）
+  return { startDate: isoDateStr(start), endDate: isoDateStr(end), includeWeekends: false };
+}
+
+// 設定期間内の日付のうち、土日を含めるかどうかでフィルタした一覧を返す
+function buildDayList(config){
+  const start = parseIsoDate(config.startDate);
+  const end = parseIsoDate(config.endDate);
+  const days = [];
+  const cursor = new Date(start);
+  while(cursor <= end){
+    const dow = cursor.getDay();
+    if(config.includeWeekends || (dow >= 1 && dow <= 5)){
+      days.push(new Date(cursor));
+    }
+    cursor.setDate(cursor.getDate() + 1);
+  }
+  return days;
+}
+
+// 月曜始まりの週ごとにグルーピングする（設定の開始日が月曜でなくても正しく週分けできるようにする）
+function groupIntoWeeks(days){
+  const weeks = [];
+  let currentKey = null;
+  days.forEach(d => {
+    const dow = d.getDay();
+    const mondayOffset = dow === 0 ? -6 : 1 - dow;
+    const monday = new Date(d);
+    monday.setDate(d.getDate() + mondayOffset);
+    const key = dateKey(monday);
+    if(key !== currentKey){
+      weeks.push([]);
+      currentKey = key;
+    }
+    weeks[weeks.length - 1].push(d);
+  });
+  return weeks;
+}
+
+let shiftConfig = null;
+
+function renderPeriodLabel(){
+  const el = document.getElementById("periodLabel");
+  if(!el || !shiftConfig) return;
+  const start = parseIsoDate(shiftConfig.startDate);
+  const end = parseIsoDate(shiftConfig.endDate);
+  const weekendNote = shiftConfig.includeWeekends ? "（土日を含む）" : "";
+  el.textContent = `シフト希望入力期間：${start.getMonth() + 1}/${start.getDate()}〜${end.getMonth() + 1}/${end.getDate()}${weekendNote}`;
+}
 
 function renderWeeks(){
   const area = document.getElementById("weeksArea");
+  const dayGroups = groupIntoWeeks(buildDayList(shiftConfig));
 
-  // 起点は「次の月曜日」（直近の未来の月曜日）。選択した週数分、そこから続けて表示する。
-  const weeks = [];
-  for(let i = 0; i < weekCount; i++){
-    const dates = getWeekDates(i);
+  area.innerHTML = dayGroups.map((dates, wi) => {
     const first = dates[0];
     const last = dates[dates.length - 1];
-    weeks.push({
-      title: `第${i + 1}週`,
-      badge: `${first.getMonth() + 1}/${first.getDate()}〜${last.getMonth() + 1}/${last.getDate()}`,
-      dates,
-    });
-  }
-
-  area.innerHTML = weeks.map((week, wi) => `
+    const badge = `${first.getMonth() + 1}/${first.getDate()}〜${last.getMonth() + 1}/${last.getDate()}`;
+    return `
     <div class="week-block">
-      <div class="week-title">${week.title}<span class="badge">${week.badge}</span></div>
-      ${week.dates.map(d => `
+      <div class="week-title">第${wi + 1}週<span class="badge">${badge}</span></div>
+      ${dates.map(d => `
         <div class="day-row">
           <div class="day-date">${shortDateLabel(d)}</div>
           <select class="qty-select" data-week="${wi}" data-date="${dateKey(d)}" data-label="${formatDateLabel(d)}" data-md="${mdLabel(d)}" data-dayname="${dayNameLabel(d)}">
@@ -465,7 +505,8 @@ function renderWeeks(){
         </div>
       `).join("")}
     </div>
-  `).join("");
+  `;
+  }).join("");
 
   area.querySelectorAll(".qty-select").forEach(sel => {
     sel.addEventListener("change", () => {
@@ -480,22 +521,14 @@ function renderWeeks(){
   });
 }
 
-function renderWeekCountButtons(){
-  document.querySelectorAll(".week-count-btn").forEach(btn => {
-    btn.classList.toggle("active", parseInt(btn.dataset.weeks, 10) === weekCount);
-  });
+async function initShiftPeriod(){
+  const fetched = await fetchShiftConfig();
+  shiftConfig = fetched || getFallbackConfig();
+  renderPeriodLabel();
+  renderWeeks();
 }
 
-document.querySelectorAll(".week-count-btn").forEach(btn => {
-  btn.addEventListener("click", () => {
-    weekCount = parseInt(btn.dataset.weeks, 10);
-    renderWeekCountButtons();
-    renderWeeks();
-  });
-});
-
-renderWeekCountButtons();
-renderWeeks();
+initShiftPeriod();
 
 document.querySelectorAll(".item-checkbox").forEach(cb => {
   cb.addEventListener("change", () => {

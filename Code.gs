@@ -17,6 +17,8 @@ function doPost(e) {
     handleSaveActual(ss, data);
   } else if (data.type === "saveHourly") {
     handleSaveHourly(ss, data);
+  } else if (data.type === "saveShiftConfig") {
+    handleSaveShiftConfig(ss, data);
   } else {
     // type が無い場合（旧バージョンのshift.html等）もシフト回答として扱う
     handleShiftSubmit(ss, data);
@@ -156,6 +158,38 @@ function handleGetDraft(ss) {
     } catch (err) {}
   }
   return ContentService.createTextOutput(JSON.stringify({ drafts: drafts }))
+    .setMimeType(ContentService.MimeType.JSON);
+}
+
+// admin.htmlで設定するシフト入力期間（開始日・終了日・土日を含めるか）を1行だけ保持する。
+// 複数行になる必要がない設定なので、2行目を常に上書きする（無ければ追加）。
+function handleSaveShiftConfig(ss, data) {
+  var sheet = ss.getSheetByName("シフト設定");
+  if (!sheet) {
+    sheet = ss.insertSheet("シフト設定");
+    sheet.appendRow(["開始日", "終了日", "土日を含める", "更新日時"]);
+  }
+  var row = [data.startDate, data.endDate, !!data.includeWeekends, new Date()];
+  if (sheet.getLastRow() > 1) {
+    sheet.getRange(2, 1, 1, row.length).setValues([row]);
+  } else {
+    sheet.appendRow(row);
+  }
+}
+
+function handleGetShiftConfig(ss) {
+  var sheet = ss.getSheetByName("シフト設定");
+  if (!sheet || sheet.getLastRow() < 2) {
+    return ContentService.createTextOutput(JSON.stringify({ config: null }))
+      .setMimeType(ContentService.MimeType.JSON);
+  }
+  var row = sheet.getRange(2, 1, 1, 3).getValues()[0];
+  var config = {
+    startDate: normalizeDateCell(row[0]),
+    endDate: normalizeDateCell(row[1]),
+    includeWeekends: row[2] === true,
+  };
+  return ContentService.createTextOutput(JSON.stringify({ config: config }))
     .setMimeType(ContentService.MimeType.JSON);
 }
 
@@ -360,6 +394,10 @@ function doGet(e) {
 
   if (e.parameter && e.parameter.type === "analytics") {
     return handleGetAnalytics(ss);
+  }
+
+  if (e.parameter && e.parameter.type === "shiftConfig") {
+    return handleGetShiftConfig(ss);
   }
   var sheet = ss.getSheetByName("シフト回答");
   if (!sheet) {
