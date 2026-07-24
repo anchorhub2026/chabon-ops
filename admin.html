@@ -1561,6 +1561,18 @@ function buildFillingDefaults(total){
 const ALWAYS_HQ_FILLINGS = ["枝豆", "梅", "うなぎ"];
 const ALLOC_FILLINGS = FILLINGS.filter(f => !ALWAYS_HQ_FILLINGS.includes(f));
 
+// 生産割り振りの優先順位（MARI最優先→CHIKAKO→YUMI→MIKI）。
+// 総生産数が全員分の希望を満たせない場合、最低保証(30個)をこの順で確保する。
+// リストに無いメンバー（YUKARIなど）は最優先度リストの誰よりも後（最下位）として扱う。
+const MEMBER_PRIORITY = ["MARI", "CHIKAKO", "YUMI", "MIKI"];
+const PRODUCTION_FLOOR_QTY = 30;
+const MAX_FILLING_TYPES_PER_MEMBER = 2;
+
+function memberPriorityRank(name){
+  const idx = MEMBER_PRIORITY.indexOf(name);
+  return idx === -1 ? MEMBER_PRIORITY.length : idx;
+}
+
 // 販売予測数カードで入力された具材ごとの必要数（Zuid＋UvA）
 function neededQtyFor(day, filling){
   const chise = state.chiseByDate[mdLabel(day.dateObj)];
@@ -2090,28 +2102,75 @@ function renderDayBlock(day){
 // 必要数（ALLOC_FILLINGS順）を「テープ」として、出勤メンバーの設定生産数(cap)で
 // 順番に切り出していく。1人のメンバーが今の具材で使い切れなければ次の具材に進み、
 // capが先に尽きたら次のメンバーは同じ具材の続きから始める（境界の具材は前後で共有されうる）。
-// これにより「1人1〜2種類に集中」「具材の割り振り数は必要数を超えない」
+// これにより「担当具材は原則2種類まで」「具材の割り振り数は必要数を超えない」
 // 「メンバーの合計はcapを超えない」を同時に満たす。
 // 必要数の多い具材から順に処理する。
-// ・今の残り容量で1人に収まる具材は、その時点で合計が最も少ない人にまとめて割り振る（分散させない）
-// ・1人に収まらない具材は、容量に余裕がある人のうち合計が最も少ない人から順に詰めていく
-// これにより「1人で担当できる具材は1人に集中」「全員の合計がなるべく均等」を両立する。
+//
+// 人選（pickLeastLoaded）の優先順位：
+// 1) 最低保証(30個)にまだ達していない人がいれば、その中で優先順位(MARI→CHIKAKO→YUMI→MIKI)が
+//    高い人を優先する（総生産数が全員分に足りない場合、優先順位の低いYUMI・MIKIは
+//    30個を下回ってもよい＝MARI・CHIKAKOが優先的に確保される）
+// 2) 全員が最低保証を達成済み（または自身のcapで頭打ち）なら、現在の合計が最も少ない人を優先する
+//    （＝残りの生産数をなるべく均等に配る、既存ロジック）
+// 3) 同点の場合は、既にその具材を担当している人 → 担当具材数が2種類未満の人、の順で優先し、
+//    「担当具材は原則2種類まで」を可能な限り守る
+// 最低保証未達の人がいない（全員済み・対象外）状態では、選ばれた人の残り容量をまるごと渡すため、
+// 「1人に収まる具材は1人に集中させる」という既存の挙動も結果的に保たれる
 function buildProductionPlan(day, working, memberCaps){
   const totals = working.map(() => 0);
   const remaining = working.map((_, i) => memberCaps[i]);
   const memberBreakdowns = working.map(() => ({}));
+  const fillingTypeCount = working.map(() => 0);
   const hqBreakdown = {};
 
-  function pickLeastLoaded(minRoom){
+  // iがjより優先されるべきならtrue
+  function isBetterCandidate(i, j, f){
+    const iBelowFloor = totals[i] < PRODUCTION_FLOOR_QTY;
+    const jBelowFloor = totals[j] < PRODUCTION_FLOOR_QTY;
+    if(iBelowFloor !== jBelowFloor) return iBelowFloor;
+
+    if(iBelowFloor && jBelowFloor){
+      const pi = memberPriorityRank(working[i]), pj = memberPriorityRank(working[j]);
+      if(pi !== pj) return pi < pj;
+    } else if(totals[i] !== totals[j]){
+      return totals[i] < totals[j];
+    }
+
+    // 担当具材の集中度で同点を解消（原則2種類までルール）
+    const iHasFilling = !!memberBreakdowns[i][f];
+    const jHasFilling = !!memberBreakdowns[j][f];
+    if(iHasFilling !== jHasFilling) return iHasFilling;
+    const iUnder2 = fillingTypeCount[i] < MAX_FILLING_TYPES_PER_MEMBER;
+    const jUnder2 = fillingTypeCount[j] < MAX_FILLING_TYPES_PER_MEMBER;
+    if(iUnder2 !== jUnder2) return iUnder2;
+    if(totals[i] !== totals[j]) return totals[i] < totals[j];
+    // それでも同点なら優先順位で確定させる（working配列の並び順に依存させない）
+    return memberPriorityRank(working[i]) < memberPriorityRank(working[j]);
+  }
+
+  // 「担当具材は原則2種類まで」を尊重した候補（respectTypeCap=true）で探し、
+  // 該当者がいなければ制約を緩めて全候補から探す（供給を無駄にしないため）
+  function pickLeastLoaded(minRoom, f, respectTypeCap){
     let best = -1;
     for(let i = 0; i < working.length; i++){
-      if(remaining[i] >= minRoom && (best === -1 || totals[i] < totals[best])) best = i;
+      if(remaining[i] < minRoom) continue;
+      if(respectTypeCap){
+        const hasFilling = !!memberBreakdowns[i][f];
+        if(!hasFilling && fillingTypeCount[i] >= MAX_FILLING_TYPES_PER_MEMBER) continue;
+      }
+      if(best === -1 || isBetterCandidate(i, best, f)) best = i;
     }
     return best;
   }
 
+  function pickBest(minRoom, f){
+    const idx = pickLeastLoaded(minRoom, f, true);
+    return idx !== -1 ? idx : pickLeastLoaded(minRoom, f, false);
+  }
+
   function give(mi, f, qty){
     if(qty <= 0) return;
+    if(!memberBreakdowns[mi][f]) fillingTypeCount[mi]++;
     memberBreakdowns[mi][f] = (memberBreakdowns[mi][f] || 0) + qty;
     totals[mi] += qty;
     remaining[mi] -= qty;
@@ -2125,21 +2184,20 @@ function buildProductionPlan(day, working, memberCaps){
     let left = need;
     if(left <= 0) return;
 
-    // 今の残り容量で1人に収まるなら、その人だけに集中させる
-    const singleIdx = pickLeastLoaded(left);
-    if(singleIdx !== -1){
-      const floored = Math.floor(left / 3) * 3;
-      give(singleIdx, f, floored);
-      left -= floored;
-      if(left > 0) hqBreakdown[f] = (hqBreakdown[f] || 0) + left;
-      return;
-    }
-
-    // 1人に収まらない → 容量に余裕がある人から順に、合計が少ない人優先で詰める
+    // 優先順位に従って人を選び、詰めていく。
+    // ・最低保証(30個)未達の人には、その場でcapを使い切らせず「30に届く分」だけ渡してから
+    //   次の優先順位の人に回す（そうしないと上位優先者がcapを独占し、下位優先者が
+    //   総生産数的には足りているはずの最低保証にすら届かなくなってしまう）
+    // ・全員が最低保証済み（または対象外）になれば、1回のpickで残り容量をまるごと渡すため、
+    //   結果的に「1人に収まる具材は1人に集中させる」という既存の挙動も保たれる
     while(left > 0){
-      const idx = pickLeastLoaded(3);
+      const idx = pickBest(3, f);
       if(idx === -1) break;
-      const take = Math.min(left, remaining[idx]);
+      let cap = remaining[idx];
+      if(totals[idx] < PRODUCTION_FLOOR_QTY){
+        cap = Math.min(cap, PRODUCTION_FLOOR_QTY - totals[idx]);
+      }
+      const take = Math.min(left, cap);
       const floored = Math.floor(take / 3) * 3;
       if(floored <= 0) break;
       give(idx, f, floored);
