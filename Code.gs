@@ -91,6 +91,59 @@ function handleConfirmPlan(ss, data) {
   }
 }
 
+// 「確定プラン」シートの全行を、analytics.htmlの「過去の確定プラン履歴」表示用に返す。
+// 「日付」列はDate型（自動変換済み）と"M/D"形式の文字列が混在しうる。文字列の場合は年情報が
+// 無いため、同じ行の「確定日時」（実際にconfirmPlanが呼ばれた時刻＝本物のDate）の年を採用する
+// （「今日から近い方の年」という推測ではなく、記録された実際の年を使うことで真に過去のデータでも正しく年を復元できる）。
+function handleGetConfirmedPlans(ss) {
+  var sheet = ss.getSheetByName("確定プラン");
+  if (!sheet) {
+    return ContentService.createTextOutput(JSON.stringify({ plans: [] }))
+      .setMimeType(ContentService.MimeType.JSON);
+  }
+  var rows = sheet.getDataRange().getValues();
+  var plans = [];
+  for (var i = 1; i < rows.length; i++) {
+    if (!rows[i][0]) continue;
+    var r = rows[i];
+    var dateVal = r[0];
+    var confirmedAt = r[8];
+    var iso;
+    if (Object.prototype.toString.call(dateVal) === '[object Date]') {
+      iso = Utilities.formatDate(dateVal, Session.getScriptTimeZone(), "yyyy-MM-dd");
+    } else {
+      var parts = String(dateVal).split("/");
+      var year = (Object.prototype.toString.call(confirmedAt) === '[object Date]')
+        ? confirmedAt.getFullYear()
+        : new Date().getFullYear();
+      if (parts.length === 2) {
+        var mm = ("0" + parts[0]).slice(-2);
+        var dd = ("0" + parts[1]).slice(-2);
+        iso = year + "-" + mm + "-" + dd;
+      } else {
+        iso = String(dateVal);
+      }
+    }
+    var zuid = Number(r[2]) || 0;
+    var uva = Number(r[3]) || 0;
+    var chise = Number(r[4]) || 0;
+    var hqQty = Number(r[6]) || 0;
+    plans.push({
+      date: iso,
+      weekday: String(r[1] || ""),
+      zuid: zuid,
+      uva: uva,
+      chise: chise,
+      hqQty: hqQty,
+      // 総生産数＝Zuid＋UvA＋チセ（本部製造数はこの内訳の一部であり、別途加算しない）
+      total: zuid + uva + chise,
+    });
+  }
+  plans.sort(function(a, b) { return a.date < b.date ? 1 : (a.date > b.date ? -1 : 0); });
+  return ContentService.createTextOutput(JSON.stringify({ plans: plans }))
+    .setMimeType(ContentService.MimeType.JSON);
+}
+
 // Date オブジェクト（スプレッドシートが自動変換した場合）をISO形式(yyyy-MM-dd)に正規化
 // スクリプトのタイムゾーンを使うことで "2026-07-01" → Date → "2026-07-01" と正しく往復できる
 function normalizeDateCell(val) {
@@ -401,6 +454,10 @@ function doGet(e) {
 
   if (e.parameter && e.parameter.type === "shiftConfig") {
     return handleGetShiftConfig(ss);
+  }
+
+  if (e.parameter && e.parameter.type === "confirmedPlans") {
+    return handleGetConfirmedPlans(ss);
   }
   var sheet = ss.getSheetByName("シフト回答");
   if (!sheet) {
