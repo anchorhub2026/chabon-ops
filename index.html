@@ -450,6 +450,7 @@
   .soldout-time-row{ margin-bottom: 6px; font-size: 0.88rem; }
   .soldout-time-row input{ border: 1px solid #ccc; border-radius: 4px; padding: 3px 6px; font-size: 0.88rem; margin-left: 4px; }
   .made-input{ width: 52px !important; }
+  .given-input{ width: 40px !important; color: #a35; }
   .total-row td{ background: #f5f2ec; font-weight: bold; font-size: 0.8rem; color: #555; border-top: 2px solid #d0c8b8; }
   .total-cell{ min-width: 52px; }
   .notes-area{ margin-top: 8px; }
@@ -1257,6 +1258,9 @@ function buildStoreTable(storeKey, fillings, totals){
       <td><input type="number" class="made-input"
                  data-store="${storeKey}" data-filling="${f}"
                  value="${totals[f]}" min="0"></td>
+      <td><input type="number" class="given-input"
+                 data-store="${storeKey}" data-filling="${f}"
+                 value="0" min="0"></td>
       ${slotCells}
     </tr>`;
   }).join("");
@@ -1265,11 +1269,11 @@ function buildStoreTable(storeKey, fillings, totals){
   const soldCells = HOURLY_SLOTS.map((h, si) =>
     `<td class="total-cell"><span id="total-sold-${storeKey}-${si}"></span></td>`).join("");
   return `<table class="hourly-table">
-    <thead><tr><th class="col-name">具材</th><th>作った数</th>${slotHeaders}</tr></thead>
+    <thead><tr><th class="col-name">具材</th><th>作った数</th><th>あげた数</th>${slotHeaders}</tr></thead>
     <tbody>
       ${rows}
-      <tr class="total-row"><td class="col-name">残り合計</td><td class="total-cell"><span id="total-made-${storeKey}"></span></td>${remainCells}</tr>
-      <tr class="total-row"><td class="col-name">売った合計</td><td>—</td>${soldCells}</tr>
+      <tr class="total-row"><td class="col-name">残り合計</td><td class="total-cell"><span id="total-made-${storeKey}"></span></td><td class="total-cell"><span id="total-given-${storeKey}"></span></td>${remainCells}</tr>
+      <tr class="total-row"><td class="col-name">売った合計</td><td>—</td><td>—</td>${soldCells}</tr>
     </tbody>
   </table>`;
 }
@@ -1318,7 +1322,7 @@ function renderActualSales(){
     </div>
   `;
 
-  area.querySelectorAll(".hourly-input, .made-input").forEach(inp =>
+  area.querySelectorAll(".hourly-input, .made-input, .given-input").forEach(inp =>
     inp.addEventListener("input", () => updateSoldDisplay(fillings))
   );
   document.getElementById("saveZuidBtn").addEventListener("click", () => saveStoreActual("Zuid"));
@@ -1362,11 +1366,17 @@ function updateSoldDisplay(fillings){
     const remainCount = new Array(nSlots).fill(0);
     const soldCount = new Array(nSlots).fill(0);
     let madeTotal = 0;
+    let givenTotal = 0;
 
     fillings.forEach((f, fi) => {
       const madeEl = document.querySelector(`.made-input[data-store="${storeKey}"][data-filling="${f}"]`);
       const made = madeEl ? (parseInt(madeEl.value, 10) || 0) : 0;
       madeTotal += made;
+
+      const givenEl = document.querySelector(`.given-input[data-store="${storeKey}"][data-filling="${f}"]`);
+      const given = givenEl ? (parseInt(givenEl.value, 10) || 0) : 0;
+      givenTotal += given;
+      const netMade = made - given; // 実質の販売可能数（作った数－あげた数）
 
       // 完売後の自動ゼロ入力：残数が0になったら以降の空欄に0を入力
       let hitZero = false;
@@ -1390,7 +1400,7 @@ function updateSoldDisplay(fillings){
           remainCount[si]++;
         }
         if(curr === null){ if(soldEl) soldEl.textContent = ""; return; }
-        const prev = si === 0 ? made : vals[si - 1];
+        const prev = si === 0 ? netMade : vals[si - 1];
         if(prev === null){ if(soldEl) soldEl.textContent = ""; return; }
         const sold = prev - curr;
         if(soldEl){
@@ -1405,6 +1415,8 @@ function updateSoldDisplay(fillings){
     // 合計行を更新
     const mEl = document.getElementById(`total-made-${storeKey}`);
     if(mEl) mEl.textContent = String(madeTotal);
+    const gEl = document.getElementById(`total-given-${storeKey}`);
+    if(gEl) gEl.textContent = String(givenTotal);
     HOURLY_SLOTS.forEach((h, si) => {
       const rEl = document.getElementById(`total-remain-${storeKey}-${si}`);
       const sEl = document.getElementById(`total-sold-${storeKey}-${si}`);
@@ -1436,6 +1448,10 @@ function restoreHourlyInputs(rows, todayIso){
     const madeEl = document.querySelector(`.made-input[data-store="${sk}"][data-filling="${f}"]`);
     if(madeEl && row.total !== "" && row.total !== null && row.total !== undefined)
       madeEl.value = row.total;
+    // あげた数を復元
+    const givenEl = document.querySelector(`.given-input[data-store="${sk}"][data-filling="${f}"]`);
+    if(givenEl && row.given !== "" && row.given !== null && row.given !== undefined)
+      givenEl.value = row.given;
     // 時間帯残数を復元
     slotKeys.forEach((key, si) => {
       const v = row[key];
@@ -1481,11 +1497,13 @@ async function saveStoreActual(storeKey){
   const items = fillings.map(f => {
     const madeEl = document.querySelector(`.made-input[data-store="${storeKey}"][data-filling="${f}"]`);
     const made = madeEl ? (parseInt(madeEl.value, 10) || 0) : 0;
+    const givenEl = document.querySelector(`.given-input[data-store="${storeKey}"][data-filling="${f}"]`);
+    const given = givenEl ? (parseInt(givenEl.value, 10) || 0) : 0;
     const sv = HOURLY_SLOTS.map((h, si) => {
       const el = document.querySelector(`.hourly-input[data-store="${storeKey}"][data-filling="${f}"][data-slot="${si}"]`);
       return (el && el.value !== "") ? parseInt(el.value, 10) : "";
     });
-    return { filling: f, total: made,
+    return { filling: f, total: made, given: given,
       r12: sv[0], r13: sv[1], r14: sv[2], r15: sv[3], r16: sv[4], r17: sv[5], r18: sv[6] };
   });
 

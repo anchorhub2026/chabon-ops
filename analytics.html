@@ -404,6 +404,7 @@ function aggregateByDate(rows){
         weather: row.weather || "",
         temps: [],
         totalMade: 0,
+        totalGiven: 0,
         remainSum: [0,0,0,0,0,0,0],
         remainCount: [0,0,0,0,0,0,0],
         soldOutTimes: [], // { store, time }
@@ -412,6 +413,7 @@ function aggregateByDate(rows){
     }
     const agg = map[row.date];
     agg.totalMade += Number(row.total) || 0;
+    agg.totalGiven += Number(row.given) || 0;
     if(!agg.weather && row.weather) agg.weather = row.weather;
     if(row.temp !== "" && row.temp !== null && row.temp !== undefined) agg.temps.push(Number(row.temp));
     if(row.store) agg.stores.add(row.store);
@@ -429,7 +431,9 @@ function aggregateByDate(rows){
 
   return Object.values(map).map(agg => {
     const remains = agg.remainSum.map((sum, i) => agg.remainCount[i] > 0 ? sum : "");
-    const sold = calcSoldFromRemains(agg.totalMade, remains);
+    // 実質の販売可能数（作った数 − あげた数）を基準に売れた数を算出する
+    const netMade = agg.totalMade - agg.totalGiven;
+    const sold = calcSoldFromRemains(netMade, remains);
     const totalSold = sold.some(v => v !== null) ? sold.reduce((s,v) => s + (v || 0), 0) : null;
     const temp = agg.temps.length ? avg(agg.temps) : null;
     const soldOutMinutesList = agg.soldOutTimes.map(s => timeToMinutes(s.time)).filter(v => v !== null);
