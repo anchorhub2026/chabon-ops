@@ -299,22 +299,33 @@ var HOURLY_SHEET_HEADER = ["日付", "曜日", "天気", "気温", "店舗", "�
   "12時残り", "13時残り", "14時残り", "15時残り", "16時残り", "17時残り", "18時残り",
   "12時売上", "13時売上", "14時売上", "15時売上", "16時売上", "17時売上", "18時売上",
   "12時累計", "13時累計", "14時累計", "15時累計", "16時累計", "17時累計", "18時累計",
-  "販売終了時間", "備考", "あげた数"];
+  "販売終了時間", "備考", "あげた数",
+  "12時ランチ", "12時スタンプ", "13時ランチ", "13時スタンプ", "14時ランチ", "14時スタンプ",
+  "15時ランチ", "15時スタンプ", "16時ランチ", "16時スタンプ", "17時ランチ", "17時スタンプ",
+  "18時ランチ", "18時スタンプ"];
+// 「あげた数」列は時間帯別のランチ・スタンプ入力に置き換えられたため以後は書き込まない
+// （既存行の後方互換のため列自体は残す）
 
-// 実質の販売可能数（作った数－あげた数）と各時間帯残数から、時間帯ごとの売れた数・累計売上を算出する
-// 売れた数[i] = (i==0 ? 実質の販売可能数 : 直前の残数) - 残数[i]（前後どちらかが未入力なら空欄）
-// 累計売上[i] = 実質の販売可能数 - 残数[i]（残数が未入力なら空欄）
-function calcHourlySoldAndCumulative(made, given, remains) {
-  var netMade = Number(made || 0) - Number(given || 0);
+// 各時間帯残数と、その時間帯のランチ・スタンプ個数から、時間帯ごとの売れた数・累計売上を算出する。
+// ランチ・スタンプはその時間帯で実際に減った分から除外し、「純粋な販売数」を算出する。
+// 売れた数[i] = (i==0 ? 作った数 : 直前の残数) - 残数[i] - ランチ[i] - スタンプ[i]
+//              （残数の前後どちらかが未入力なら空欄）
+// 累計売上[i] = 作った数 - 残数[i] - (0〜iのランチ・スタンプの累計)（残数が未入力なら空欄）
+function calcHourlySoldAndCumulative(made, remains, lunches, stamps) {
   var sold = [];
   var cumulative = [];
-  var prev = netMade;
+  var prev = made;
+  var lunchStampSum = 0;
   for (var i = 0; i < remains.length; i++) {
     var curr = remains[i];
     var hasCurr = curr !== "" && curr !== null && curr !== undefined;
     var hasPrev = prev !== "" && prev !== null && prev !== undefined;
-    sold.push(hasCurr && hasPrev ? (Number(prev) - Number(curr)) : "");
-    cumulative.push(hasCurr ? (netMade - Number(curr)) : "");
+    var lunch = Number(lunches[i] || 0);
+    var stamp = Number(stamps[i] || 0);
+    sold.push(hasCurr && hasPrev ? (Number(prev) - Number(curr) - lunch - stamp) : "");
+    lunchStampSum += lunch + stamp;
+    var hasMade = made !== "" && made !== null && made !== undefined;
+    cumulative.push(hasCurr && hasMade ? (Number(made) - Number(curr) - lunchStampSum) : "");
     prev = curr;
   }
   return { sold: sold, cumulative: cumulative };
@@ -340,10 +351,13 @@ function handleSaveHourly(ss, data) {
           break;
         }
       }
-      var given = Number(item.given || 0);
       var remains = [item.r12, item.r13, item.r14, item.r15, item.r16, item.r17, item.r18]
         .map(function(v) { return v === "" ? "" : v; });
-      var calc = calcHourlySoldAndCumulative(item.total, given, remains);
+      var lunches = [item.lunch12, item.lunch13, item.lunch14, item.lunch15, item.lunch16, item.lunch17, item.lunch18]
+        .map(function(v) { return Number(v || 0); });
+      var stamps = [item.stamp12, item.stamp13, item.stamp14, item.stamp15, item.stamp16, item.stamp17, item.stamp18]
+        .map(function(v) { return Number(v || 0); });
+      var calc = calcHourlySoldAndCumulative(item.total, remains, lunches, stamps);
       var row = [
         data.date, data.weekday, data.weather, data.temp,
         storeData.store, storeData.location,
@@ -353,7 +367,9 @@ function handleSaveHourly(ss, data) {
         calc.cumulative[0], calc.cumulative[1], calc.cumulative[2], calc.cumulative[3], calc.cumulative[4], calc.cumulative[5], calc.cumulative[6],
         storeData.soldOutTime || "",
         storeData.note || "",
-        given
+        "", // あげた数（廃止・後方互換のため列のみ維持）
+        lunches[0], stamps[0], lunches[1], stamps[1], lunches[2], stamps[2], lunches[3], stamps[3],
+        lunches[4], stamps[4], lunches[5], stamps[5], lunches[6], stamps[6]
       ];
       if (foundRow > 0) {
         sheet.getRange(foundRow, 1, 1, row.length).setValues([row]);
@@ -412,6 +428,10 @@ function getHourlySheetRows(ss) {
       soldOutTime: normalizeTimeCell(r[29]),
       note:        String(r[30] || ""),
       given:       v(31),
+      lunch12:     v(32), stamp12: v(33), lunch13: v(34), stamp13: v(35),
+      lunch14:     v(36), stamp14: v(37), lunch15: v(38), stamp15: v(39),
+      lunch16:     v(40), stamp16: v(41), lunch17: v(42), stamp17: v(43),
+      lunch18:     v(44), stamp18: v(45),
     });
   }
   return result;

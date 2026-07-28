@@ -366,13 +366,15 @@ function tempBucket(temp){
 
 // 作った数と各時間帯残数から、隣接差分で時間帯ごとの売れた数を算出する
 // （Code.gsのcalcHourlySoldAndCumulativeと同じロジックをクライアント側でも使用）
-function calcSoldFromRemains(made, remains){
+// lunchStamps[i] が渡された場合、その時間帯のランチ・スタンプ分を売れた数から除外する
+function calcSoldFromRemains(made, remains, lunchStamps){
   const sold = [];
   let prev = made;
-  remains.forEach(curr => {
+  remains.forEach((curr, i) => {
     const hasCurr = curr !== "" && curr !== null && curr !== undefined;
     const hasPrev = prev !== "" && prev !== null && prev !== undefined;
-    sold.push(hasCurr && hasPrev ? (Number(prev) - Number(curr)) : null);
+    const deduction = (lunchStamps && lunchStamps[i]) || 0;
+    sold.push(hasCurr && hasPrev ? (Number(prev) - Number(curr) - deduction) : null);
     prev = curr;
   });
   return sold;
@@ -433,16 +435,15 @@ function aggregateByDate(rows){
         weather: row.weather || "",
         temps: [],
         totalMade: 0,
-        totalGiven: 0,
         remainSum: [0,0,0,0,0,0,0],
         remainCount: [0,0,0,0,0,0,0],
+        lunchStampSum: [0,0,0,0,0,0,0],
         soldOutTimes: [], // { store, time }
         stores: new Set(),
       };
     }
     const agg = map[row.date];
     agg.totalMade += Number(row.total) || 0;
-    agg.totalGiven += Number(row.given) || 0;
     if(!agg.weather && row.weather) agg.weather = row.weather;
     if(row.temp !== "" && row.temp !== null && row.temp !== undefined) agg.temps.push(Number(row.temp));
     if(row.store) agg.stores.add(row.store);
@@ -455,14 +456,13 @@ function aggregateByDate(rows){
         agg.remainSum[i] += Number(v);
         agg.remainCount[i]++;
       }
+      agg.lunchStampSum[i] += (Number(row[`lunch${h}`]) || 0) + (Number(row[`stamp${h}`]) || 0);
     });
   });
 
   return Object.values(map).map(agg => {
     const remains = agg.remainSum.map((sum, i) => agg.remainCount[i] > 0 ? sum : "");
-    // 実質の販売可能数（作った数 − あげた数）を基準に売れた数を算出する
-    const netMade = agg.totalMade - agg.totalGiven;
-    const sold = calcSoldFromRemains(netMade, remains);
+    const sold = calcSoldFromRemains(agg.totalMade, remains, agg.lunchStampSum);
     const totalSold = sold.some(v => v !== null) ? sold.reduce((s,v) => s + (v || 0), 0) : null;
     const temp = agg.temps.length ? avg(agg.temps) : null;
     const soldOutMinutesList = agg.soldOutTimes.map(s => timeToMinutes(s.time)).filter(v => v !== null);

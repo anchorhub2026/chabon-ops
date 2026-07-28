@@ -450,7 +450,9 @@
   .soldout-time-row{ margin-bottom: 6px; font-size: 0.88rem; }
   .soldout-time-row input{ border: 1px solid #ccc; border-radius: 4px; padding: 3px 6px; font-size: 0.88rem; margin-left: 4px; }
   .made-input{ width: 52px !important; }
-  .given-input{ width: 40px !important; color: #a35; }
+  .slot-subhead{ font-weight: normal; font-size: 0.6rem; opacity: 0.75; }
+  .slot-extra-row{ display: flex; gap: 2px; justify-content: center; margin-top: 2px; }
+  .lunch-input, .stamp-input{ width: 24px !important; font-size: 0.68rem !important; padding: 2px 1px !important; color: #a35; }
   .total-row td{ background: #f5f2ec; font-weight: bold; font-size: 0.8rem; color: #555; border-top: 2px solid #d0c8b8; }
   .total-cell{ min-width: 52px; }
   .notes-area{ margin-top: 8px; }
@@ -1244,13 +1246,21 @@ function getStoreTotals(plan, draftForecast){
 }
 
 function buildStoreTable(storeKey, fillings, totals){
-  const slotHeaders = HOURLY_SLOTS.map(h => `<th>${h}時残り</th>`).join("");
+  const slotHeaders = HOURLY_SLOTS.map(h => `<th>${h}時<br><span class="slot-subhead">残り／昼／ス</span></th>`).join("");
   const rows = fillings.map((f, fi) => {
     const slotCells = HOURLY_SLOTS.map((h, si) => `
       <td>
         <input type="number" class="hourly-input"
                data-store="${storeKey}" data-filling="${f}" data-slot="${si}"
                min="0" placeholder="—">
+        <div class="slot-extra-row">
+          <input type="number" class="lunch-input" title="ランチ"
+                 data-store="${storeKey}" data-filling="${f}" data-slot="${si}"
+                 min="0" placeholder="昼" value="0">
+          <input type="number" class="stamp-input" title="スタンプ"
+                 data-store="${storeKey}" data-filling="${f}" data-slot="${si}"
+                 min="0" placeholder="ス" value="0">
+        </div>
         <div class="sold-display" id="sold-${storeKey}-${fi}-${si}"></div>
       </td>`).join("");
     return `<tr>
@@ -1258,9 +1268,6 @@ function buildStoreTable(storeKey, fillings, totals){
       <td><input type="number" class="made-input"
                  data-store="${storeKey}" data-filling="${f}"
                  value="${totals[f]}" min="0"></td>
-      <td><input type="number" class="given-input"
-                 data-store="${storeKey}" data-filling="${f}"
-                 value="0" min="0"></td>
       ${slotCells}
     </tr>`;
   }).join("");
@@ -1269,11 +1276,11 @@ function buildStoreTable(storeKey, fillings, totals){
   const soldCells = HOURLY_SLOTS.map((h, si) =>
     `<td class="total-cell"><span id="total-sold-${storeKey}-${si}"></span></td>`).join("");
   return `<table class="hourly-table">
-    <thead><tr><th class="col-name">具材</th><th>作った数</th><th>あげた数</th>${slotHeaders}</tr></thead>
+    <thead><tr><th class="col-name">具材</th><th>作った数</th>${slotHeaders}</tr></thead>
     <tbody>
       ${rows}
-      <tr class="total-row"><td class="col-name">残り合計</td><td class="total-cell"><span id="total-made-${storeKey}"></span></td><td class="total-cell"><span id="total-given-${storeKey}"></span></td>${remainCells}</tr>
-      <tr class="total-row"><td class="col-name">売った合計</td><td>—</td><td>—</td>${soldCells}</tr>
+      <tr class="total-row"><td class="col-name">残り合計</td><td class="total-cell"><span id="total-made-${storeKey}"></span></td>${remainCells}</tr>
+      <tr class="total-row"><td class="col-name">売った合計</td><td>—</td>${soldCells}</tr>
     </tbody>
   </table>`;
 }
@@ -1322,7 +1329,7 @@ function renderActualSales(){
     </div>
   `;
 
-  area.querySelectorAll(".hourly-input, .made-input, .given-input").forEach(inp =>
+  area.querySelectorAll(".hourly-input, .made-input, .lunch-input, .stamp-input").forEach(inp =>
     inp.addEventListener("input", () => updateSoldDisplay(fillings))
   );
   document.getElementById("saveZuidBtn").addEventListener("click", () => saveStoreActual("Zuid"));
@@ -1366,17 +1373,11 @@ function updateSoldDisplay(fillings){
     const remainCount = new Array(nSlots).fill(0);
     const soldCount = new Array(nSlots).fill(0);
     let madeTotal = 0;
-    let givenTotal = 0;
 
     fillings.forEach((f, fi) => {
       const madeEl = document.querySelector(`.made-input[data-store="${storeKey}"][data-filling="${f}"]`);
       const made = madeEl ? (parseInt(madeEl.value, 10) || 0) : 0;
       madeTotal += made;
-
-      const givenEl = document.querySelector(`.given-input[data-store="${storeKey}"][data-filling="${f}"]`);
-      const given = givenEl ? (parseInt(givenEl.value, 10) || 0) : 0;
-      givenTotal += given;
-      const netMade = made - given; // 実質の販売可能数（作った数－あげた数）
 
       // 完売後の自動ゼロ入力：残数が0になったら以降の空欄に0を入力
       let hitZero = false;
@@ -1400,9 +1401,14 @@ function updateSoldDisplay(fillings){
           remainCount[si]++;
         }
         if(curr === null){ if(soldEl) soldEl.textContent = ""; return; }
-        const prev = si === 0 ? netMade : vals[si - 1];
+        const prev = si === 0 ? made : vals[si - 1];
         if(prev === null){ if(soldEl) soldEl.textContent = ""; return; }
-        const sold = prev - curr;
+        const lunchEl = document.querySelector(`.lunch-input[data-store="${storeKey}"][data-filling="${f}"][data-slot="${si}"]`);
+        const stampEl = document.querySelector(`.stamp-input[data-store="${storeKey}"][data-filling="${f}"][data-slot="${si}"]`);
+        const lunch = lunchEl ? (parseInt(lunchEl.value, 10) || 0) : 0;
+        const stamp = stampEl ? (parseInt(stampEl.value, 10) || 0) : 0;
+        // ランチ・スタンプはその時間帯で実際に減った分から除外し、純粋な販売数を算出する
+        const sold = (prev - curr) - lunch - stamp;
         if(soldEl){
           soldEl.textContent = `売:${sold}`;
           soldEl.className = sold < 0 ? "sold-display sold-neg" : "sold-display";
@@ -1415,8 +1421,6 @@ function updateSoldDisplay(fillings){
     // 合計行を更新
     const mEl = document.getElementById(`total-made-${storeKey}`);
     if(mEl) mEl.textContent = String(madeTotal);
-    const gEl = document.getElementById(`total-given-${storeKey}`);
-    if(gEl) gEl.textContent = String(givenTotal);
     HOURLY_SLOTS.forEach((h, si) => {
       const rEl = document.getElementById(`total-remain-${storeKey}-${si}`);
       const sEl = document.getElementById(`total-sold-${storeKey}-${si}`);
@@ -1439,6 +1443,8 @@ async function fetchHourlyData(){
 
 function restoreHourlyInputs(rows, todayIso){
   const slotKeys = ["r12","r13","r14","r15","r16","r17","r18"];
+  const lunchKeys = ["lunch12","lunch13","lunch14","lunch15","lunch16","lunch17","lunch18"];
+  const stampKeys = ["stamp12","stamp13","stamp14","stamp15","stamp16","stamp17","stamp18"];
   const noteRestored = {};
   const soldOutRestored = {};
   rows.filter(r => r.date === todayIso).forEach(row => {
@@ -1448,16 +1454,22 @@ function restoreHourlyInputs(rows, todayIso){
     const madeEl = document.querySelector(`.made-input[data-store="${sk}"][data-filling="${f}"]`);
     if(madeEl && row.total !== "" && row.total !== null && row.total !== undefined)
       madeEl.value = row.total;
-    // あげた数を復元
-    const givenEl = document.querySelector(`.given-input[data-store="${sk}"][data-filling="${f}"]`);
-    if(givenEl && row.given !== "" && row.given !== null && row.given !== undefined)
-      givenEl.value = row.given;
-    // 時間帯残数を復元
+    // 時間帯残数・ランチ・スタンプを復元
     slotKeys.forEach((key, si) => {
       const v = row[key];
       if(v !== "" && v !== null && v !== undefined){
         const el = document.querySelector(`.hourly-input[data-store="${sk}"][data-filling="${f}"][data-slot="${si}"]`);
         if(el) el.value = String(v);
+      }
+      const lunchV = row[lunchKeys[si]];
+      if(lunchV !== "" && lunchV !== null && lunchV !== undefined){
+        const lunchEl = document.querySelector(`.lunch-input[data-store="${sk}"][data-filling="${f}"][data-slot="${si}"]`);
+        if(lunchEl) lunchEl.value = String(lunchV);
+      }
+      const stampV = row[stampKeys[si]];
+      if(stampV !== "" && stampV !== null && stampV !== undefined){
+        const stampEl = document.querySelector(`.stamp-input[data-store="${sk}"][data-filling="${f}"][data-slot="${si}"]`);
+        if(stampEl) stampEl.value = String(stampV);
       }
     });
     // 備考を復元（店舗ごとに1回）
@@ -1497,14 +1509,22 @@ async function saveStoreActual(storeKey){
   const items = fillings.map(f => {
     const madeEl = document.querySelector(`.made-input[data-store="${storeKey}"][data-filling="${f}"]`);
     const made = madeEl ? (parseInt(madeEl.value, 10) || 0) : 0;
-    const givenEl = document.querySelector(`.given-input[data-store="${storeKey}"][data-filling="${f}"]`);
-    const given = givenEl ? (parseInt(givenEl.value, 10) || 0) : 0;
     const sv = HOURLY_SLOTS.map((h, si) => {
       const el = document.querySelector(`.hourly-input[data-store="${storeKey}"][data-filling="${f}"][data-slot="${si}"]`);
       return (el && el.value !== "") ? parseInt(el.value, 10) : "";
     });
-    return { filling: f, total: made, given: given,
-      r12: sv[0], r13: sv[1], r14: sv[2], r15: sv[3], r16: sv[4], r17: sv[5], r18: sv[6] };
+    const lv = HOURLY_SLOTS.map((h, si) => {
+      const el = document.querySelector(`.lunch-input[data-store="${storeKey}"][data-filling="${f}"][data-slot="${si}"]`);
+      return el ? (parseInt(el.value, 10) || 0) : 0;
+    });
+    const st = HOURLY_SLOTS.map((h, si) => {
+      const el = document.querySelector(`.stamp-input[data-store="${storeKey}"][data-filling="${f}"][data-slot="${si}"]`);
+      return el ? (parseInt(el.value, 10) || 0) : 0;
+    });
+    return { filling: f, total: made,
+      r12: sv[0], r13: sv[1], r14: sv[2], r15: sv[3], r16: sv[4], r17: sv[5], r18: sv[6],
+      lunch12: lv[0], lunch13: lv[1], lunch14: lv[2], lunch15: lv[3], lunch16: lv[4], lunch17: lv[5], lunch18: lv[6],
+      stamp12: st[0], stamp13: st[1], stamp14: st[2], stamp15: st[3], stamp16: st[4], stamp17: st[5], stamp18: st[6] };
   });
 
   const payload = {
