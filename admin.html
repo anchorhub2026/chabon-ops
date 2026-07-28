@@ -2546,20 +2546,27 @@ function applyDraftToDay(day, draft){
 /* ---------- シフト入力期間設定（shift.htmlに反映される） ---------- */
 
 async function fetchShiftConfig(){
+  const url = `${SCRIPT_URL}?type=shiftConfig`;
   try{
-    const res = await fetch(`${SCRIPT_URL}?type=shiftConfig`, { cache: "no-store" });
+    const res = await fetch(url, { cache: "no-store" });
+    console.log("[admin.html] シフト設定GETリクエスト:", url, "status:", res.status, res.ok);
     if(!res.ok) return null;
     const json = await res.json();
+    console.log("[admin.html] シフト設定GETレスポンス body:", JSON.stringify(json));
     return json.config || null;
   }catch(e){
-    console.warn("シフト入力期間設定の取得に失敗しました:", e);
+    console.warn("[admin.html] シフト入力期間設定の取得に失敗しました:", e);
     return null;
   }
 }
 
 async function saveShiftConfig(startDate, endDate, includeWeekends){
   const payload = { type: "saveShiftConfig", startDate, endDate, includeWeekends };
+  console.log("[admin.html] シフト設定POSTリクエスト:", SCRIPT_URL, "payload:", JSON.stringify(payload));
+  // mode:"no-cors"のため、レスポンス内容（成功/失敗）はJS側から読み取れない点に注意
+  // （このアプリの他の保存処理:saveHourly/confirmPlan等も同じ制約）
   await fetch(SCRIPT_URL, { method: "POST", mode: "no-cors", body: JSON.stringify(payload) });
+  console.log("[admin.html] シフト設定POST送信完了（no-corsのためレスポンス内容は確認不可）");
 }
 
 function renderShiftConfig(config){

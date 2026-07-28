@@ -417,15 +417,21 @@ function parseIsoDate(s){
 
 // admin.htmlの「シフト入力期間設定」から現在の設定を取得する
 async function fetchShiftConfig(){
+  const url = `${SCRIPT_URL}?type=shiftConfig`;
   try{
-    const res = await fetch(`${SCRIPT_URL}?type=shiftConfig`, { cache: "no-store" });
+    const res = await fetch(url, { cache: "no-store" });
+    console.log("[shift.html] シフト設定GETリクエスト:", url, "status:", res.status, res.ok);
     if(!res.ok) return null;
     const json = await res.json();
+    console.log("[shift.html] シフト設定GETレスポンス body:", JSON.stringify(json));
     const c = json.config;
-    if(!c || !c.startDate || !c.endDate) return null;
+    if(!c || !c.startDate || !c.endDate){
+      console.warn("[shift.html] configが空/不正のためフォールバックを使用します。受け取った値:", c);
+      return null;
+    }
     return c;
   }catch(e){
-    console.warn("シフト入力期間設定の取得に失敗しました:", e);
+    console.warn("[shift.html] シフト入力期間設定の取得に失敗しました:", e);
     return null;
   }
 }
@@ -524,6 +530,8 @@ function renderWeeks(){
 async function initShiftPeriod(){
   const fetched = await fetchShiftConfig();
   shiftConfig = fetched || getFallbackConfig();
+  console.log("[shift.html] 使用するシフト設定:", JSON.stringify(shiftConfig),
+    fetched ? "(admin.htmlの保存設定を使用)" : "(取得できなかったためフォールバックを使用)");
   renderPeriodLabel();
   renderWeeks();
 }
