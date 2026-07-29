@@ -529,6 +529,7 @@ function renderWeeks(){
 
 async function initShiftPeriod(){
   const fetched = await fetchShiftConfig();
+  console.log("shiftConfig取得結果:", fetched);
   shiftConfig = fetched || getFallbackConfig();
   console.log("[shift.html] 使用するシフト設定:", JSON.stringify(shiftConfig),
     fetched ? "(admin.htmlの保存設定を使用)" : "(取得できなかったためフォールバックを使用)");
