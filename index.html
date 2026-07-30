@@ -1283,7 +1283,7 @@ function buildStoreTable(storeKey, fillings, totals){
     <tbody>
       ${rows}
       <tr class="total-row"><td class="col-name">残り合計</td><td class="total-cell"><span id="total-made-${storeKey}"></span></td>${remainCells}</tr>
-      <tr class="total-row"><td class="col-name">売った合計</td><td>—</td>${soldCells}</tr>
+      <tr class="total-row"><td class="col-name">売った合計</td><td class="total-cell"><span id="total-sold-grand-${storeKey}"></span></td>${soldCells}</tr>
       <tr class="total-row"><td class="col-name">全具材累計売上</td><td>—</td>${cumCells}</tr>
     </tbody>
   </table>`;
@@ -1438,6 +1438,8 @@ function updateSoldDisplay(fillings){
     // 合計行を更新
     const mEl = document.getElementById(`total-made-${storeKey}`);
     if(mEl) mEl.textContent = String(madeTotal);
+    let soldGrandTotal = 0;
+    let soldGrandCount = 0;
     HOURLY_SLOTS.forEach((h, si) => {
       const rEl = document.getElementById(`total-remain-${storeKey}-${si}`);
       const sEl = document.getElementById(`total-sold-${storeKey}-${si}`);
@@ -1445,7 +1447,11 @@ function updateSoldDisplay(fillings){
       if(rEl) rEl.textContent = remainCount[si] > 0 ? String(remainTotals[si]) : "";
       if(sEl) sEl.textContent = soldCount[si] > 0 ? String(soldTotals[si]) : "";
       if(cEl) cEl.textContent = cumCount[si] > 0 ? String(cumTotals[si]) : "";
+      if(soldCount[si] > 0){ soldGrandTotal += soldTotals[si]; soldGrandCount++; }
     });
+    // 「作った数」列の位置に、全時間帯・全具材を通した売った合計数を表示する
+    const sgEl = document.getElementById(`total-sold-grand-${storeKey}`);
+    if(sgEl) sgEl.textContent = soldGrandCount > 0 ? String(soldGrandTotal) : "";
   });
 }
 
