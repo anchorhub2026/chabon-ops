@@ -302,30 +302,32 @@ var HOURLY_SHEET_HEADER = ["日付", "曜日", "天気", "気温", "店舗", "�
   "販売終了時間", "備考", "あげた数",
   "12時ランチ", "12時スタンプ", "13時ランチ", "13時スタンプ", "14時ランチ", "14時スタンプ",
   "15時ランチ", "15時スタンプ", "16時ランチ", "16時スタンプ", "17時ランチ", "17時スタンプ",
-  "18時ランチ", "18時スタンプ"];
-// 「あげた数」列は時間帯別のランチ・スタンプ入力に置き換えられたため以後は書き込まない
-// （既存行の後方互換のため列自体は残す）
+  "18時ランチ", "18時スタンプ",
+  "12時あげた数", "13時あげた数", "14時あげた数", "15時あげた数", "16時あげた数", "17時あげた数", "18時あげた数"];
+// 「あげた数」列（単一）・「〇時ランチ」「〇時スタンプ」列は、時間帯ごとの
+// 「〇時あげた数」列（ランチ・スタンプ統合）に置き換えられたため以後は書き込まない
+// （既存行の後方互換のため列自体は残す。過去データの読み取り時はgetHourlySheetRowsで
+// 　新列が空なら旧ランチ・スタンプ列の合計にフォールバックする）
 
-// 各時間帯残数と、その時間帯のランチ・スタンプ個数から、時間帯ごとの売れた数・累計売上を算出する。
-// ランチ・スタンプはその時間帯で実際に減った分から除外し、「純粋な販売数」を算出する。
-// 売れた数[i] = (i==0 ? 作った数 : 直前の残数) - 残数[i] - ランチ[i] - スタンプ[i]
+// 各時間帯残数と、その時間帯の「あげた数」から、時間帯ごとの売れた数・累計売上を算出する。
+// あげた数はその時間帯で実際に減った分から除外し、「純粋な販売数」を算出する。
+// 売れた数[i] = (i==0 ? 作った数 : 直前の残数) - 残数[i] - あげた数[i]
 //              （残数の前後どちらかが未入力なら空欄）
-// 累計売上[i] = 作った数 - 残数[i] - (0〜iのランチ・スタンプの累計)（残数が未入力なら空欄）
-function calcHourlySoldAndCumulative(made, remains, lunches, stamps) {
+// 累計売上[i] = 作った数 - 残数[i] - (0〜iのあげた数の累計)（残数が未入力なら空欄）
+function calcHourlySoldAndCumulative(made, remains, givens) {
   var sold = [];
   var cumulative = [];
   var prev = made;
-  var lunchStampSum = 0;
+  var givenSum = 0;
   for (var i = 0; i < remains.length; i++) {
     var curr = remains[i];
     var hasCurr = curr !== "" && curr !== null && curr !== undefined;
     var hasPrev = prev !== "" && prev !== null && prev !== undefined;
-    var lunch = Number(lunches[i] || 0);
-    var stamp = Number(stamps[i] || 0);
-    sold.push(hasCurr && hasPrev ? (Number(prev) - Number(curr) - lunch - stamp) : "");
-    lunchStampSum += lunch + stamp;
+    var given = Number(givens[i] || 0);
+    sold.push(hasCurr && hasPrev ? (Number(prev) - Number(curr) - given) : "");
+    givenSum += given;
     var hasMade = made !== "" && made !== null && made !== undefined;
-    cumulative.push(hasCurr && hasMade ? (Number(made) - Number(curr) - lunchStampSum) : "");
+    cumulative.push(hasCurr && hasMade ? (Number(made) - Number(curr) - givenSum) : "");
     prev = curr;
   }
   return { sold: sold, cumulative: cumulative };
@@ -353,11 +355,9 @@ function handleSaveHourly(ss, data) {
       }
       var remains = [item.r12, item.r13, item.r14, item.r15, item.r16, item.r17, item.r18]
         .map(function(v) { return v === "" ? "" : v; });
-      var lunches = [item.lunch12, item.lunch13, item.lunch14, item.lunch15, item.lunch16, item.lunch17, item.lunch18]
+      var givens = [item.given12, item.given13, item.given14, item.given15, item.given16, item.given17, item.given18]
         .map(function(v) { return Number(v || 0); });
-      var stamps = [item.stamp12, item.stamp13, item.stamp14, item.stamp15, item.stamp16, item.stamp17, item.stamp18]
-        .map(function(v) { return Number(v || 0); });
-      var calc = calcHourlySoldAndCumulative(item.total, remains, lunches, stamps);
+      var calc = calcHourlySoldAndCumulative(item.total, remains, givens);
       var row = [
         data.date, data.weekday, data.weather, data.temp,
         storeData.store, storeData.location,
@@ -367,9 +367,9 @@ function handleSaveHourly(ss, data) {
         calc.cumulative[0], calc.cumulative[1], calc.cumulative[2], calc.cumulative[3], calc.cumulative[4], calc.cumulative[5], calc.cumulative[6],
         storeData.soldOutTime || "",
         storeData.note || "",
-        "", // あげた数（廃止・後方互換のため列のみ維持）
-        lunches[0], stamps[0], lunches[1], stamps[1], lunches[2], stamps[2], lunches[3], stamps[3],
-        lunches[4], stamps[4], lunches[5], stamps[5], lunches[6], stamps[6]
+        "", // あげた数（単一・廃止、後方互換のため列のみ維持）
+        "", "", "", "", "", "", "", "", "", "", "", "", "", "", // 〇時ランチ・〇時スタンプ（廃止、後方互換のため列のみ維持）
+        givens[0], givens[1], givens[2], givens[3], givens[4], givens[5], givens[6]
       ];
       if (foundRow > 0) {
         sheet.getRange(foundRow, 1, 1, row.length).setValues([row]);
@@ -402,6 +402,15 @@ function handleGetStatus(ss) {
     .setMimeType(ContentService.MimeType.JSON);
 }
 
+// 新形式の「〇時あげた数」の値があればそれを使い、空（未入力）の場合のみ
+// 旧形式の「〇時ランチ」＋「〇時スタンプ」の合計にフォールバックする
+function givenOrLegacySum(newVal, legacyLunch, legacyStamp) {
+  if (newVal !== "") return newVal;
+  var lunch = (legacyLunch !== "" && legacyLunch !== null && legacyLunch !== undefined) ? Number(legacyLunch) : 0;
+  var stamp = (legacyStamp !== "" && legacyStamp !== null && legacyStamp !== undefined) ? Number(legacyStamp) : 0;
+  return (lunch || stamp) ? (lunch + stamp) : "";
+}
+
 // 「時間帯別実績」シートの全行を読み取り、日付・曜日・天気・気温を含む
 // フルフィールドのオブジェクト配列として返す（handleGetHourly / handleGetAnalytics 共通）
 function getHourlySheetRows(ss) {
@@ -432,6 +441,15 @@ function getHourlySheetRows(ss) {
       lunch14:     v(36), stamp14: v(37), lunch15: v(38), stamp15: v(39),
       lunch16:     v(40), stamp16: v(41), lunch17: v(42), stamp17: v(43),
       lunch18:     v(44), stamp18: v(45),
+      // 新形式の「〇時あげた数」（v(46)〜v(52)）が空の古い行は、
+      // 旧形式の「〇時ランチ」＋「〇時スタンプ」の合計にフォールバックする
+      given12: givenOrLegacySum(v(46), r[32], r[33]),
+      given13: givenOrLegacySum(v(47), r[34], r[35]),
+      given14: givenOrLegacySum(v(48), r[36], r[37]),
+      given15: givenOrLegacySum(v(49), r[38], r[39]),
+      given16: givenOrLegacySum(v(50), r[40], r[41]),
+      given17: givenOrLegacySum(v(51), r[42], r[43]),
+      given18: givenOrLegacySum(v(52), r[44], r[45]),
     });
   }
   return result;

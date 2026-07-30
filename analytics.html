@@ -366,14 +366,14 @@ function tempBucket(temp){
 
 // 作った数と各時間帯残数から、隣接差分で時間帯ごとの売れた数を算出する
 // （Code.gsのcalcHourlySoldAndCumulativeと同じロジックをクライアント側でも使用）
-// lunchStamps[i] が渡された場合、その時間帯のランチ・スタンプ分を売れた数から除外する
-function calcSoldFromRemains(made, remains, lunchStamps){
+// givens[i] が渡された場合、その時間帯の「あげた数」分を売れた数から除外する
+function calcSoldFromRemains(made, remains, givens){
   const sold = [];
   let prev = made;
   remains.forEach((curr, i) => {
     const hasCurr = curr !== "" && curr !== null && curr !== undefined;
     const hasPrev = prev !== "" && prev !== null && prev !== undefined;
-    const deduction = (lunchStamps && lunchStamps[i]) || 0;
+    const deduction = (givens && givens[i]) || 0;
     sold.push(hasCurr && hasPrev ? (Number(prev) - Number(curr) - deduction) : null);
     prev = curr;
   });
@@ -437,7 +437,7 @@ function aggregateByDate(rows){
         totalMade: 0,
         remainSum: [0,0,0,0,0,0,0],
         remainCount: [0,0,0,0,0,0,0],
-        lunchStampSum: [0,0,0,0,0,0,0],
+        givenSum: [0,0,0,0,0,0,0],
         soldOutTimes: [], // { store, time }
         stores: new Set(),
       };
@@ -456,13 +456,13 @@ function aggregateByDate(rows){
         agg.remainSum[i] += Number(v);
         agg.remainCount[i]++;
       }
-      agg.lunchStampSum[i] += (Number(row[`lunch${h}`]) || 0) + (Number(row[`stamp${h}`]) || 0);
+      agg.givenSum[i] += Number(row[`given${h}`]) || 0;
     });
   });
 
   return Object.values(map).map(agg => {
     const remains = agg.remainSum.map((sum, i) => agg.remainCount[i] > 0 ? sum : "");
-    const sold = calcSoldFromRemains(agg.totalMade, remains, agg.lunchStampSum);
+    const sold = calcSoldFromRemains(agg.totalMade, remains, agg.givenSum);
     const totalSold = sold.some(v => v !== null) ? sold.reduce((s,v) => s + (v || 0), 0) : null;
     const temp = agg.temps.length ? avg(agg.temps) : null;
     const soldOutMinutesList = agg.soldOutTimes.map(s => timeToMinutes(s.time)).filter(v => v !== null);
