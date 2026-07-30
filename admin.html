@@ -1577,7 +1577,9 @@ function memberPriorityRank(name){
 function neededQtyFor(day, filling){
   const chise = state.chiseByDate[mdLabel(day.dateObj)];
   const chiseAmount = (chise && chise.breakdown[filling]) || 0;
-  return (day.zuidFillingQty[filling] || 0) + (day.uvaFillingQty[filling] || 0) + chiseAmount;
+  const zuidQty = day.zuidOpen ? (day.zuidFillingQty[filling] || 0) : 0;
+  const uvaQty = day.uvaOpen ? (day.uvaFillingQty[filling] || 0) : 0;
+  return zuidQty + uvaQty + chiseAmount;
 }
 
 // 必要数を超えないよう3の倍数に切り捨てる。端数は呼び出し側で本部に加算する
@@ -1607,8 +1609,8 @@ function sumQtyMap(map){
   return map ? Object.values(map).reduce((s, v) => s + v, 0) : null;
 }
 
-function zuidFinal(day){ return sumQtyMap(day.zuidFillingQty); }
-function uvaFinal(day){ return sumQtyMap(day.uvaFillingQty); }
+function zuidFinal(day){ return day.zuidOpen ? sumQtyMap(day.zuidFillingQty) : 0; }
+function uvaFinal(day){ return day.uvaOpen ? sumQtyMap(day.uvaFillingQty) : 0; }
 
 function getManualQty(day, name){
   const key = mdLabel(day.dateObj);
@@ -1765,7 +1767,8 @@ function forecastTableHtml(day){
     const zuidQty = day.zuidFillingQty[f] || 0;
     const uvaQty = showUva ? (day.uvaFillingQty[f] || 0) : 0;
     const chiseQtyForFilling = chiseBreakdown[f] || 0;
-    const rowTotal = zuidQty + uvaQty + chiseQtyForFilling;
+    // 販売計は「営業中」の店舗のみ合算する（休みにした店舗の入力値が残っていても計算には含めない）
+    const rowTotal = (day.zuidOpen ? zuidQty : 0) + (day.uvaOpen ? uvaQty : 0) + chiseQtyForFilling;
 
     return `
       <tr>
@@ -1778,8 +1781,8 @@ function forecastTableHtml(day){
     `;
   }).join("");
 
-  const zuidTotal = sumQtyMap(day.zuidFillingQty);
-  const uvaTotal = showUva ? sumQtyMap(day.uvaFillingQty) : 0;
+  const zuidTotal = day.zuidOpen ? sumQtyMap(day.zuidFillingQty) : 0;
+  const uvaTotal = (showUva && day.uvaOpen) ? sumQtyMap(day.uvaFillingQty) : 0;
   const grandTotal = zuidTotal + uvaTotal + chiseQty;
 
   const hasSavedForecast = !!localStorage.getItem(`chabon_forecast_${mdLabel(day.dateObj)}`);
@@ -1847,7 +1850,7 @@ function bindForecastTableEvents(day){
       const uvaQty = showUva ? (day.uvaFillingQty[filling] || 0) : 0;
 
       const rowTotalEl = document.getElementById(`rowTotal-${day.dateKey}-${filling}`);
-      if(rowTotalEl) rowTotalEl.textContent = zuidQty + uvaQty + chiseQtyForFilling;
+      if(rowTotalEl) rowTotalEl.textContent = (day.zuidOpen ? zuidQty : 0) + (day.uvaOpen ? uvaQty : 0) + chiseQtyForFilling;
 
       const storeTotalEl = document.getElementById(`storeTotal-${store}-${day.dateKey}`);
       if(storeTotalEl) storeTotalEl.textContent = sumQtyMap(qtyMap);
@@ -1855,7 +1858,7 @@ function bindForecastTableEvents(day){
       const chiseQty = chise ? chise.subtotal : 0;
       const grandTotalEl = document.getElementById(`forecastGrandTotal-${day.dateKey}`);
       if(grandTotalEl){
-        grandTotalEl.textContent = sumQtyMap(day.zuidFillingQty) + (showUva ? sumQtyMap(day.uvaFillingQty) : 0) + chiseQty;
+        grandTotalEl.textContent = (day.zuidOpen ? sumQtyMap(day.zuidFillingQty) : 0) + ((showUva && day.uvaOpen) ? sumQtyMap(day.uvaFillingQty) : 0) + chiseQty;
       }
 
       saveForecast(day);
@@ -1927,7 +1930,8 @@ function splitForecastTableHtml(day){
     const zuidQty = day.zuidFillingQty[f] || 0;
     const uvaQty = showUva ? (day.uvaFillingQty[f] || 0) : 0;
     const chiseQtyForFilling = chiseBreakdown[f] || 0;
-    const forecastRowTotal = zuidQty + uvaQty + chiseQtyForFilling;
+    // 販売計は「営業中」の店舗のみ合算する（休みにした店舗の入力値が残っていても計算には含めない）
+    const forecastRowTotal = (day.zuidOpen ? zuidQty : 0) + (day.uvaOpen ? uvaQty : 0) + chiseQtyForFilling;
     return `<tr>
         <td class="f-name">${f}</td>
         <td>${qtyStepperHtml(day, "zuid", f, zuidQty, day.zuidOpen)}</td>
@@ -1937,8 +1941,8 @@ function splitForecastTableHtml(day){
       </tr>`;
   }).join("");
 
-  const zuidTotal = sumQtyMap(day.zuidFillingQty);
-  const uvaTotal = showUva ? sumQtyMap(day.uvaFillingQty) : 0;
+  const zuidTotal = day.zuidOpen ? sumQtyMap(day.zuidFillingQty) : 0;
+  const uvaTotal = (showUva && day.uvaOpen) ? sumQtyMap(day.uvaFillingQty) : 0;
   const forecastGrandTotal = zuidTotal + uvaTotal + chiseQty;
 
   return `<table class="day-sub-table">
