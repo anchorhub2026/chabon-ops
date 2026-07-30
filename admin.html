@@ -1586,11 +1586,14 @@ function floorToMultipleOf3(qty){
 }
 
 // メンバー×具材の個数（テーブルの各セル）を松木さんが手動編集できるようにするための編集状態を確保する。
-// 既に値が入っているメンバーには触れない（自動割り振りの初期値は1回だけ適用する）。
+// 手動編集済み（day.prodManuallyEdited[name] === true）のメンバーには触れない。
+// 未編集のメンバーは、希望数や必要数が変わるたびに常に最新の自動割り振り結果と同期させる
+// （手動編集前の値を放置すると、希望数を後から変更しても合計が古い値のままずれて表示されるバグになるため）。
 function ensureMemberFillingQty(day, working, memberBreakdowns){
   if(!day.memberFillingQty) day.memberFillingQty = {};
+  if(!day.prodManuallyEdited) day.prodManuallyEdited = {};
   working.forEach((name, i) => {
-    if(!day.memberFillingQty[name]){
+    if(!day.memberFillingQty[name] || !day.prodManuallyEdited[name]){
       const qtyMap = {};
       FILLINGS.forEach(f => { qtyMap[f] = (memberBreakdowns[i] && memberBreakdowns[i][f]) || 0; });
       day.memberFillingQty[name] = qtyMap;
@@ -2348,10 +2351,12 @@ function applyBulkValue(day, val){
   const caps = working.map(() => val);
   const { memberBreakdowns } = buildProductionPlan(day, working, caps);
   day.memberFillingQty = {};
+  if(!day.prodManuallyEdited) day.prodManuallyEdited = {};
   working.forEach((name, i) => {
     const qtyMap = {};
     FILLINGS.forEach(f => { qtyMap[f] = (memberBreakdowns[i] && memberBreakdowns[i][f]) || 0; });
     day.memberFillingQty[name] = qtyMap;
+    day.prodManuallyEdited[name] = true;
   });
   day.bulkValue = val;
 }
@@ -2430,6 +2435,8 @@ function bindProductionDayEvents(day){
       const filling = input.dataset.filling;
       if(!day.memberFillingQty[name]) day.memberFillingQty[name] = {};
       day.memberFillingQty[name][filling] = Math.max(0, parseInt(input.value, 10) || 0);
+      if(!day.prodManuallyEdited) day.prodManuallyEdited = {};
+      day.prodManuallyEdited[name] = true;
       saveProdAlloc(day);
       refreshProductionCellDerived(day);
     });
@@ -2454,7 +2461,11 @@ function bindProductionDayEvents(day){
       const working = MEMBERS.filter(name => getManualQty(day, name) > 0);
       if(working.length === 0) return;
 
-      day.undoSnapshot = { memberFillingQty: snapshotMemberFillingQty(day), bulkValue: day.bulkValue };
+      day.undoSnapshot = {
+        memberFillingQty: snapshotMemberFillingQty(day),
+        prodManuallyEdited: JSON.parse(JSON.stringify(day.prodManuallyEdited || {})),
+        bulkValue: day.bulkValue,
+      };
       applyBulkValue(day, val);
       saveProdAlloc(day);
       renderDayBlock(day);
@@ -2465,6 +2476,7 @@ function bindProductionDayEvents(day){
     btn.addEventListener("click", () => {
       if(!day.undoSnapshot) return;
       day.memberFillingQty = day.undoSnapshot.memberFillingQty;
+      day.prodManuallyEdited = day.undoSnapshot.prodManuallyEdited || {};
       day.bulkValue = day.undoSnapshot.bulkValue;
       day.undoSnapshot = null;
       saveProdAlloc(day);
@@ -2481,6 +2493,7 @@ function bindProductionDayEvents(day){
         day.bulkValue = null;
         day.undoSnapshot = null;
         day.memberFillingQty = {};
+        day.prodManuallyEdited = {};
         renderDayBlock(day);
         renderCellStatusTable();
       });
@@ -2540,7 +2553,11 @@ function applyDraftToDay(day, draft){
   if(fc.uvaFillingQty)  day.uvaFillingQty  = { ...buildFillingDefaults(0), ...fc.uvaFillingQty };
   if(fc.zuidOpen !== undefined) day.zuidOpen = fc.zuidOpen;
   if(fc.uvaOpen  !== undefined) day.uvaOpen  = fc.uvaOpen;
-  if(draft.prod && Object.keys(draft.prod).length > 0) day.memberFillingQty = { ...draft.prod };
+  if(draft.prod && Object.keys(draft.prod).length > 0){
+    day.memberFillingQty = { ...draft.prod };
+    if(!day.prodManuallyEdited) day.prodManuallyEdited = {};
+    Object.keys(draft.prod).forEach(name => { day.prodManuallyEdited[name] = true; });
+  }
 }
 
 /* ---------- シフト入力期間設定（shift.htmlに反映される） ---------- */
@@ -2658,6 +2675,8 @@ function loadProdAllocData(day){
     const raw = localStorage.getItem(`chabon_prod_${mdLabel(day.dateObj)}`);
     if(!raw) return false;
     day.memberFillingQty = JSON.parse(raw);
+    if(!day.prodManuallyEdited) day.prodManuallyEdited = {};
+    Object.keys(day.memberFillingQty).forEach(name => { day.prodManuallyEdited[name] = true; });
     return true;
   }catch(e){ return false; }
 }
@@ -2673,6 +2692,7 @@ function resetDayData(day){
   day.bulkValue = null;
   day.undoSnapshot = null;
   day.memberFillingQty = {};
+  day.prodManuallyEdited = {};
   saveDraftToSheet(day);  // シートのドラフトもリセット状態で上書き
   renderDayBlock(day);
   renderCellStatusTable();
