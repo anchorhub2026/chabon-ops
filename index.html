@@ -443,6 +443,7 @@
   }
   .sold-display{ font-size: 0.7rem; color: #888; margin-top: 2px; min-height: 14px; }
   .sold-neg{ color: #e53; }
+  .cum-display{ font-size: 0.7rem; color: #4a7; margin-top: 1px; min-height: 14px; }
   .store-section{ margin-bottom: 20px; }
   .store-heading{ font-size: 1rem; font-weight: bold; color: var(--main-dark); margin: 12px 0 6px; }
   .location-input-row{ margin-bottom: 6px; font-size: 0.88rem; }
@@ -1261,6 +1262,7 @@ function buildStoreTable(storeKey, fillings, totals){
                  min="0" placeholder="あげ" value="0">
         </div>
         <div class="sold-display" id="sold-${storeKey}-${fi}-${si}"></div>
+        <div class="cum-display" id="cum-${storeKey}-${fi}-${si}"></div>
       </td>`).join("");
     return `<tr>
       <td class="col-name">${f}</td>
@@ -1392,18 +1394,24 @@ function updateSoldDisplay(fillings){
         return (el && el.value !== "") ? parseInt(el.value, 10) : null;
       });
 
+      let givenSum = 0;
       HOURLY_SLOTS.forEach((h, si) => {
         const soldEl = document.getElementById(`sold-${storeKey}-${fi}-${si}`);
+        const cumEl = document.getElementById(`cum-${storeKey}-${fi}-${si}`);
         const curr = vals[si];
+        const givenEl = document.querySelector(`.given-input[data-store="${storeKey}"][data-filling="${f}"][data-slot="${si}"]`);
+        const given = givenEl ? (parseInt(givenEl.value, 10) || 0) : 0;
         if(curr !== null){
           remainTotals[si] += curr;
           remainCount[si]++;
         }
+        givenSum += given;
+        // 累計売上 = 作った数 − その時点の残り個数 −（0〜今の時間帯までのあげた数の累計）
+        // （Code.gsのcalcHourlySoldAndCumulativeと同じ計算式）
+        if(cumEl) cumEl.textContent = curr !== null ? `累計:${made - curr - givenSum}` : "";
         if(curr === null){ if(soldEl) soldEl.textContent = ""; return; }
         const prev = si === 0 ? made : vals[si - 1];
         if(prev === null){ if(soldEl) soldEl.textContent = ""; return; }
-        const givenEl = document.querySelector(`.given-input[data-store="${storeKey}"][data-filling="${f}"][data-slot="${si}"]`);
-        const given = givenEl ? (parseInt(givenEl.value, 10) || 0) : 0;
         // あげた数はその時間帯で実際に減った分から除外し、純粋な販売数を算出する
         const sold = (prev - curr) - given;
         if(soldEl){
