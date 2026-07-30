@@ -1276,12 +1276,15 @@ function buildStoreTable(storeKey, fillings, totals){
     `<td class="total-cell"><span id="total-remain-${storeKey}-${si}"></span></td>`).join("");
   const soldCells = HOURLY_SLOTS.map((h, si) =>
     `<td class="total-cell"><span id="total-sold-${storeKey}-${si}"></span></td>`).join("");
+  const cumCells = HOURLY_SLOTS.map((h, si) =>
+    `<td class="total-cell"><span id="total-cum-${storeKey}-${si}"></span></td>`).join("");
   return `<table class="hourly-table">
     <thead><tr><th class="col-name">具材</th><th>作った数</th>${slotHeaders}</tr></thead>
     <tbody>
       ${rows}
       <tr class="total-row"><td class="col-name">残り合計</td><td class="total-cell"><span id="total-made-${storeKey}"></span></td>${remainCells}</tr>
       <tr class="total-row"><td class="col-name">売った合計</td><td>—</td>${soldCells}</tr>
+      <tr class="total-row"><td class="col-name">全具材累計売上</td><td>—</td>${cumCells}</tr>
     </tbody>
   </table>`;
 }
@@ -1371,8 +1374,10 @@ function updateSoldDisplay(fillings){
     const nSlots = HOURLY_SLOTS.length;
     const remainTotals = new Array(nSlots).fill(0);
     const soldTotals = new Array(nSlots).fill(0);
+    const cumTotals = new Array(nSlots).fill(0);
     const remainCount = new Array(nSlots).fill(0);
     const soldCount = new Array(nSlots).fill(0);
+    const cumCount = new Array(nSlots).fill(0);
     let madeTotal = 0;
 
     fillings.forEach((f, fi) => {
@@ -1408,7 +1413,14 @@ function updateSoldDisplay(fillings){
         givenSum += given;
         // 累計売上 = 作った数 − その時点の残り個数 −（0〜今の時間帯までのあげた数の累計）
         // （Code.gsのcalcHourlySoldAndCumulativeと同じ計算式）
-        if(cumEl) cumEl.textContent = curr !== null ? `累計:${made - curr - givenSum}` : "";
+        if(curr !== null){
+          const cum = made - curr - givenSum;
+          if(cumEl) cumEl.textContent = `累計:${cum}`;
+          cumTotals[si] += cum;
+          cumCount[si]++;
+        } else if(cumEl){
+          cumEl.textContent = "";
+        }
         if(curr === null){ if(soldEl) soldEl.textContent = ""; return; }
         const prev = si === 0 ? made : vals[si - 1];
         if(prev === null){ if(soldEl) soldEl.textContent = ""; return; }
@@ -1429,8 +1441,10 @@ function updateSoldDisplay(fillings){
     HOURLY_SLOTS.forEach((h, si) => {
       const rEl = document.getElementById(`total-remain-${storeKey}-${si}`);
       const sEl = document.getElementById(`total-sold-${storeKey}-${si}`);
+      const cEl = document.getElementById(`total-cum-${storeKey}-${si}`);
       if(rEl) rEl.textContent = remainCount[si] > 0 ? String(remainTotals[si]) : "";
       if(sEl) sEl.textContent = soldCount[si] > 0 ? String(soldTotals[si]) : "";
+      if(cEl) cEl.textContent = cumCount[si] > 0 ? String(cumTotals[si]) : "";
     });
   });
 }
