@@ -192,16 +192,30 @@ function handleSaveDraft(ss, data) {
   }
 }
 
-function getDraftsData(ss) {
+// dateStr（yyyy-MM-dd）が[startIso, endIso]の範囲内かを判定する。
+// startIso/endIsoの両方が未指定なら常にtrue（全件対象）を返す。
+// yyyy-MM-dd形式同士は文字列比較がそのまま日付順の比較になる。
+function isWithinDateWindow(dateStr, startIso, endIso) {
+  if (!startIso && !endIso) return true;
+  if (startIso && dateStr < startIso) return false;
+  if (endIso && dateStr > endIso) return false;
+  return true;
+}
+
+// startIso/endIso（yyyy-MM-dd）を指定すると、その範囲内の日付の行だけを返す。
+// 指定しない場合は全件返す（handleGetDraft単体呼び出し時の後方互換用）。
+function getDraftsData(ss, startIso, endIso) {
   var sheet = ss.getSheetByName("作業中プラン");
   if (!sheet) return [];
   var rows = sheet.getDataRange().getValues();
   var drafts = [];
   for (var i = 1; i < rows.length; i++) {
     if (!rows[i][0]) continue;
+    var dateStr = normalizeDateCell(rows[i][0]);
+    if (!isWithinDateWindow(dateStr, startIso, endIso)) continue;
     try {
       drafts.push({
-        date: normalizeDateCell(rows[i][0]),
+        date: dateStr,
         forecast: JSON.parse(rows[i][1] || "{}"),
         prod: JSON.parse(rows[i][2] || "{}"),
       });
@@ -251,10 +265,23 @@ function handleGetShiftConfig(ss) {
 // シフト設定）をまとめて1回のリクエストで返す。個別にtype=draft/status/shiftConfigを
 // 呼ぶと、SpreadsheetApp.openById()のオーバーヘッドやApps Script Web Appの同時実行数を
 // 呼び出し回数分だけ余分に消費してしまうため、初期表示の高速化のために統合した。
+//
+// 作業中プラン・具材ステータスは、admin.html/index.htmlが画面に表示する日付範囲
+// （今日の少し前〜3週間ほど先まで）だけに絞って返す。この2シートには運用の中で
+// 古い日付・大幅に未来の日付（テスト投入データ等）が積み重なっていくため、
+// 表示に無関係な行までレスポンスに含めてしまうとペイロードが際限なく肥大化する。
 function handleGetBootstrap(ss) {
+  var today = new Date();
+  var windowStart = new Date(today.getTime());
+  windowStart.setDate(windowStart.getDate() - 3);
+  var windowEnd = new Date(today.getTime());
+  windowEnd.setDate(windowEnd.getDate() + 25);
+  var startIso = Utilities.formatDate(windowStart, Session.getScriptTimeZone(), "yyyy-MM-dd");
+  var endIso = Utilities.formatDate(windowEnd, Session.getScriptTimeZone(), "yyyy-MM-dd");
+
   return ContentService.createTextOutput(JSON.stringify({
-    drafts: getDraftsData(ss),
-    statuses: getStatusesData(ss),
+    drafts: getDraftsData(ss, startIso, endIso),
+    statuses: getStatusesData(ss, startIso, endIso),
     shiftConfig: getShiftConfigData(ss),
   })).setMimeType(ContentService.MimeType.JSON);
 }
@@ -393,15 +420,19 @@ function handleSaveHourly(ss, data) {
   });
 }
 
-function getStatusesData(ss) {
+// startIso/endIso（yyyy-MM-dd）を指定すると、その範囲内の日付の行だけを返す。
+// 指定しない場合は全件返す（handleGetStatus単体呼び出し時の後方互換用）。
+function getStatusesData(ss, startIso, endIso) {
   var sheet = ss.getSheetByName("具材ステータス");
   if (!sheet) return [];
   var rows = sheet.getDataRange().getValues();
   var statuses = [];
   for (var i = 1; i < rows.length; i++) {
     if (!rows[i][0]) continue;
+    var dateStr = normalizeDateCell(rows[i][0]);
+    if (!isWithinDateWindow(dateStr, startIso, endIso)) continue;
     statuses.push({
-      date: normalizeDateCell(rows[i][0]),
+      date: dateStr,
       member: String(rows[i][1]),
       filling: String(rows[i][2] || ""),
       handed: rows[i][3] === true,
