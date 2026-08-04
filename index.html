@@ -970,11 +970,23 @@ function applyHolidayPenalty(result, minGuarantee){
 
 const NS_PENALTY = 50;
 
+const NS_API_UNAVAILABLE_KEY = "chabon_ns_api_unavailable";
+
 async function fetchNsDisruptions(){
+  // NS_API_KEYが未設定であることが分かっている間は、タブを開き直しても
+  // 無駄なリクエストを送らないようにする（sessionStorageに前回の結果をキャッシュ）
+  try{
+    if(sessionStorage.getItem(NS_API_UNAVAILABLE_KEY) === "1") return {};
+  }catch(e){}
+
   try{
     const res = await fetch(`${SCRIPT_URL}?type=disruptions`);
     const json = await res.json();
-    if(json.error) console.warn("NS運休・スト情報の取得で警告:", json.error);
+    if(json.error){
+      console.warn("NS運休・スト情報の取得で警告（NS_API_KEY未設定のためスキップ扱いにします）:", json.error);
+      try{ sessionStorage.setItem(NS_API_UNAVAILABLE_KEY, "1"); }catch(e){}
+      return {};
+    }
     return json.disruptionsByDate || {};
   }catch(e){
     console.error("NS運休・スト情報の取得に失敗しました", e);
@@ -1733,12 +1745,27 @@ async function loadWeather(){
     `&forecast_days=16&timezone=Europe%2FAmsterdam`;
   const thisYear = new Date().getFullYear();
 
+  // NS運休情報は表示に必須ではないため、ここで直ちに（awaitせず）リクエストを開始し、
+  // 下の必須データ取得（Promise.all）とは完全に切り離して並行に走らせる。
+  // 初期表示の完了はこのPromiseの完了を一切待たない。
+  const nsDisruptionsPromise = fetchNsDisruptions();
+
   // 互いに依存しない取得は全てここでPromise.allにより並列実行する
   // （NS運休情報は表示に必須ではないため、ここには含めず後段で非同期に取得する）
   const totalTasks = 5;
   let doneTasks = 0;
   setLoadingProgress(doneTasks, totalTasks);
-  const track = p => p.then(v => { doneTasks++; setLoadingProgress(doneTasks, totalTasks); return v; });
+  // 各取得の所要時間を個別にログ出力する（次に初期表示が遅くなった際、
+  // どのAPI/エンドポイントが原因かをコンソールだけで特定できるようにするため）
+  const track = (p, label) => {
+    const start = Date.now();
+    return p.then(v => {
+      doneTasks++;
+      setLoadingProgress(doneTasks, totalTasks);
+      console.log(`[index.html] ${label}: ${Date.now() - start}ms`);
+      return v;
+    });
+  };
 
   try{
     const [
@@ -1748,13 +1775,13 @@ async function loadWeather(){
       bootstrap,
       shiftSheetData,
     ] = await Promise.all([
-      track(fetch(weatherUrl).then(r => r.json())),
-      track(fetchDutchHolidays([thisYear, thisYear + 1])),
-      track(fetchConfirmedPlan()),
+      track(fetch(weatherUrl).then(r => r.json()), "天気予報(open-meteo)"),
+      track(fetchDutchHolidays([thisYear, thisYear + 1]), "祝日データ(date.nager.at)"),
+      track(fetchConfirmedPlan(), "確定プラン"),
       // 作業中プラン・具材ステータスをまとめて1回のリクエストで取得する
       // （具材ステータスはstate.cellStatusに直接反映されるため分割代入では受け取らない）
-      track(fetchBootstrap()),
-      track(fetchShiftSheetData()),
+      track(fetchBootstrap(), "bootstrap(作業中プラン+具材ステータス)"),
+      track(fetchShiftSheetData(), "シフト回答"),
     ]);
     const draftList = bootstrap.drafts;
     applyStatusesToState(bootstrap.statuses);
@@ -1799,9 +1826,9 @@ async function loadWeather(){
 
     console.log(`[index.html] 初期データ取得〜描画完了: ${Date.now() - t0}ms`);
 
-    // NS運休・スト情報は表示に必須ではないため、初期表示後にバックグラウンドで取得し、
-    // 取得できた場合のみ推奨数・週間ビューを再計算して反映する（初期表示はブロックしない）
-    fetchNsDisruptions().then(nsMap => {
+    // NS運休・スト情報は表示開始時点から並行して取得済み（上のnsDisruptionsPromise）。
+    // 取得できた場合のみ推奨数・週間ビューを再計算して反映する（初期表示は一切ブロックしない）
+    nsDisruptionsPromise.then(nsMap => {
       if(!nsMap || Object.keys(nsMap).length === 0) return;
       state.nsDisruptionsByDate = nsMap;
       state.dailyResults = buildDailyResults(data.daily, state.hourlyByDate, state.holidaysByIso, nsMap);
