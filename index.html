@@ -602,20 +602,6 @@ async function fetchConfirmedPlan(){
   }
 }
 
-// 作業中プランシートの全件を取得する（今日の分の絞り込みは呼び出し側で行う。
-// 本日日付はまだ天気データが届く前の時点では確定しないため、取得と絞り込みを分離して並列化できるようにしている）
-async function fetchDraftList(){
-  try{
-    const res = await fetch(`${SCRIPT_URL}?type=draft`, { cache: "no-store" });
-    if(!res.ok) return [];
-    const json = await res.json();
-    return json.drafts || [];
-  }catch(e){
-    console.warn("ドラフト取得失敗:", e);
-    return [];
-  }
-}
-
 function parseQtyNumber(qtyStr){
   if(!qtyStr) return 0;
   if(qtyStr === "希望しない") return 0;
@@ -679,21 +665,29 @@ function isoToMdLabel(isoStr){
   return `${parseInt(parts[1], 10)}/${parseInt(parts[2], 10)}`;
 }
 
-async function fetchStatusFromSheet(){
+// 作業中プラン・具材ステータスをまとめて1回のリクエストで取得する
+// （type=draft/statusを個別に叩くとApps Script側のSpreadsheetApp.openById()
+// 　コストが呼び出し回数分だけ重複するため統合した）
+async function fetchBootstrap(){
   try{
-    const res = await fetch(`${SCRIPT_URL}?type=status`, { cache: "no-store" });
-    if(!res.ok) return;
+    const res = await fetch(`${SCRIPT_URL}?type=bootstrap`, { cache: "no-store" });
+    if(!res.ok) return { drafts: [], statuses: [] };
     const json = await res.json();
-    (json.statuses || []).forEach(s => {
-      const key = isoToMdLabel(s.date);
-      if(!key) return;
-      if(!state.cellStatus[key]) state.cellStatus[key] = {};
-      if(!state.cellStatus[key][s.member]) state.cellStatus[key][s.member] = {};
-      state.cellStatus[key][s.member][s.filling] = { handed: !!s.handed, cooked: !!s.cooked };
-    });
+    return { drafts: json.drafts || [], statuses: json.statuses || [] };
   }catch(e){
-    console.warn("ステータス読み込み失敗:", e);
+    console.warn("bootstrapデータの取得に失敗しました:", e);
+    return { drafts: [], statuses: [] };
   }
+}
+
+function applyStatusesToState(statuses){
+  (statuses || []).forEach(s => {
+    const key = isoToMdLabel(s.date);
+    if(!key) return;
+    if(!state.cellStatus[key]) state.cellStatus[key] = {};
+    if(!state.cellStatus[key][s.member]) state.cellStatus[key][s.member] = {};
+    state.cellStatus[key][s.member][s.filling] = { handed: !!s.handed, cooked: !!s.cooked };
+  });
 }
 
 async function saveStatusToSheet(isoDate, member, filling, handed, cooked){
@@ -1354,7 +1348,7 @@ async function refreshHourlyRecords(){
   const fillings = FILLINGS.filter(f => (zuidTotals[f] || 0) > 0 || (uvaTotals[f] || 0) > 0);
   if(fillings.length === 0) return;
 
-  const rows = await fetchHourlyData();
+  const rows = await fetchHourlyData(today.dateStr);
   restoreHourlyInputs(rows, today.dateStr);
   updateSoldDisplay(fillings);
 }
@@ -1455,9 +1449,12 @@ function updateSoldDisplay(fillings){
   });
 }
 
-async function fetchHourlyData(){
+// dateIso（yyyy-MM-dd）を指定すると、Apps Script側でその日付の行だけに絞って
+// 返すため、実績シートの行数が増えてもレスポンスが肥大化しない
+async function fetchHourlyData(dateIso){
   try{
-    const res = await fetch(`${SCRIPT_URL}?type=hourly`, { cache: "no-store" });
+    const url = `${SCRIPT_URL}?type=hourly${dateIso ? `&date=${encodeURIComponent(dateIso)}` : ""}`;
+    const res = await fetch(url, { cache: "no-store" });
     const json = await res.json();
     return json.rows || [];
   }catch(e){
@@ -1738,7 +1735,7 @@ async function loadWeather(){
 
   // 互いに依存しない取得は全てここでPromise.allにより並列実行する
   // （NS運休情報は表示に必須ではないため、ここには含めず後段で非同期に取得する）
-  const totalTasks = 6;
+  const totalTasks = 5;
   let doneTasks = 0;
   setLoadingProgress(doneTasks, totalTasks);
   const track = p => p.then(v => { doneTasks++; setLoadingProgress(doneTasks, totalTasks); return v; });
@@ -1748,18 +1745,19 @@ async function loadWeather(){
       data,
       holidaysByIso,
       confirmedMap,
-      draftList,
+      bootstrap,
       shiftSheetData,
     ] = await Promise.all([
       track(fetch(weatherUrl).then(r => r.json())),
       track(fetchDutchHolidays([thisYear, thisYear + 1])),
       track(fetchConfirmedPlan()),
-      track(fetchDraftList()),
+      // 作業中プラン・具材ステータスをまとめて1回のリクエストで取得する
+      // （具材ステータスはstate.cellStatusに直接反映されるため分割代入では受け取らない）
+      track(fetchBootstrap()),
       track(fetchShiftSheetData()),
-      // 具材ステータスは state.cellStatus に直接反映される（戻り値は使わない）ため
-      // 分割代入では受け取らないが、Promise.allに含めて他の取得と並列で走らせる
-      track(fetchStatusFromSheet()),
     ]);
+    const draftList = bootstrap.drafts;
+    applyStatusesToState(bootstrap.statuses);
 
     state.hourlyByDate = buildHourlyByDate(data.hourly);
     state.holidaysByIso = holidaysByIso;

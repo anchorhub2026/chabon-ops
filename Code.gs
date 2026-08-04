@@ -192,12 +192,9 @@ function handleSaveDraft(ss, data) {
   }
 }
 
-function handleGetDraft(ss) {
+function getDraftsData(ss) {
   var sheet = ss.getSheetByName("作業中プラン");
-  if (!sheet) {
-    return ContentService.createTextOutput(JSON.stringify({ drafts: [] }))
-      .setMimeType(ContentService.MimeType.JSON);
-  }
+  if (!sheet) return [];
   var rows = sheet.getDataRange().getValues();
   var drafts = [];
   for (var i = 1; i < rows.length; i++) {
@@ -210,7 +207,11 @@ function handleGetDraft(ss) {
       });
     } catch (err) {}
   }
-  return ContentService.createTextOutput(JSON.stringify({ drafts: drafts }))
+  return drafts;
+}
+
+function handleGetDraft(ss) {
+  return ContentService.createTextOutput(JSON.stringify({ drafts: getDraftsData(ss) }))
     .setMimeType(ContentService.MimeType.JSON);
 }
 
@@ -230,20 +231,32 @@ function handleSaveShiftConfig(ss, data) {
   }
 }
 
-function handleGetShiftConfig(ss) {
+function getShiftConfigData(ss) {
   var sheet = ss.getSheetByName("シフト設定");
-  if (!sheet || sheet.getLastRow() < 2) {
-    return ContentService.createTextOutput(JSON.stringify({ config: null }))
-      .setMimeType(ContentService.MimeType.JSON);
-  }
+  if (!sheet || sheet.getLastRow() < 2) return null;
   var row = sheet.getRange(2, 1, 1, 3).getValues()[0];
-  var config = {
+  return {
     startDate: normalizeDateCell(row[0]),
     endDate: normalizeDateCell(row[1]),
     includeWeekends: row[2] === true,
   };
-  return ContentService.createTextOutput(JSON.stringify({ config: config }))
+}
+
+function handleGetShiftConfig(ss) {
+  return ContentService.createTextOutput(JSON.stringify({ config: getShiftConfigData(ss) }))
     .setMimeType(ContentService.MimeType.JSON);
+}
+
+// admin.html/index.htmlの初期表示で必要な小さめのシート（作業中プラン・具材ステータス・
+// シフト設定）をまとめて1回のリクエストで返す。個別にtype=draft/status/shiftConfigを
+// 呼ぶと、SpreadsheetApp.openById()のオーバーヘッドやApps Script Web Appの同時実行数を
+// 呼び出し回数分だけ余分に消費してしまうため、初期表示の高速化のために統合した。
+function handleGetBootstrap(ss) {
+  return ContentService.createTextOutput(JSON.stringify({
+    drafts: getDraftsData(ss),
+    statuses: getStatusesData(ss),
+    shiftConfig: getShiftConfigData(ss),
+  })).setMimeType(ContentService.MimeType.JSON);
 }
 
 function handleSaveStatus(ss, data) {
@@ -380,12 +393,9 @@ function handleSaveHourly(ss, data) {
   });
 }
 
-function handleGetStatus(ss) {
+function getStatusesData(ss) {
   var sheet = ss.getSheetByName("具材ステータス");
-  if (!sheet) {
-    return ContentService.createTextOutput(JSON.stringify({ statuses: [] }))
-      .setMimeType(ContentService.MimeType.JSON);
-  }
+  if (!sheet) return [];
   var rows = sheet.getDataRange().getValues();
   var statuses = [];
   for (var i = 1; i < rows.length; i++) {
@@ -398,7 +408,11 @@ function handleGetStatus(ss) {
       cooked: rows[i][4] === true,
     });
   }
-  return ContentService.createTextOutput(JSON.stringify({ statuses: statuses }))
+  return statuses;
+}
+
+function handleGetStatus(ss) {
+  return ContentService.createTextOutput(JSON.stringify({ statuses: getStatusesData(ss) }))
     .setMimeType(ContentService.MimeType.JSON);
 }
 
@@ -411,16 +425,36 @@ function givenOrLegacySum(newVal, legacyLunch, legacyStamp) {
   return (lunch || stamp) ? (lunch + stamp) : "";
 }
 
-// 「時間帯別実績」シートの全行を読み取り、日付・曜日・天気・気温を含む
-// フルフィールドのオブジェクト配列として返す（handleGetHourly / handleGetAnalytics 共通）
-function getHourlySheetRows(ss) {
+// 「時間帯別実績」シートの行を読み取り、日付・曜日・天気・気温を含む
+// フルフィールドのオブジェクト配列として返す（handleGetHourly / handleGetAnalytics 共通）。
+// dateFilter（yyyy-MM-dd）を指定すると、実績シートの行数が増えても影響を受けにくいよう
+// まずA列（日付）だけを読んで該当行番号を特定し、一致した行だけを読み込む。
+// dateFilterを指定しない場合（analytics.html向け）は従来通り全行を読み取る。
+function getHourlySheetRows(ss, dateFilter) {
   var sheet = ss.getSheetByName("時間帯別実績");
   if (!sheet) return [];
-  var rows = sheet.getDataRange().getValues();
+  var lastRow = sheet.getLastRow();
+  if (lastRow < 2) return [];
+  var lastCol = Math.max(sheet.getLastColumn(), HOURLY_SHEET_HEADER.length);
+
+  var dataRows;
+  if (dateFilter) {
+    var dateCol = sheet.getRange(2, 1, lastRow - 1, 1).getValues();
+    var matchedRowNumbers = [];
+    for (var i = 0; i < dateCol.length; i++) {
+      if (dateCol[i][0] && normalizeDateCell(dateCol[i][0]) === dateFilter) matchedRowNumbers.push(i + 2);
+    }
+    dataRows = matchedRowNumbers.map(function(rowNum) {
+      return sheet.getRange(rowNum, 1, 1, lastCol).getValues()[0];
+    });
+  } else {
+    dataRows = sheet.getRange(2, 1, lastRow - 1, lastCol).getValues();
+  }
+
   var result = [];
-  for (var i = 1; i < rows.length; i++) {
-    if (!rows[i][0]) continue;
-    var r = rows[i];
+  for (var j = 0; j < dataRows.length; j++) {
+    if (!dataRows[j][0]) continue;
+    var r = dataRows[j];
     var v = function(idx) { return r[idx] !== "" && r[idx] !== null && r[idx] !== undefined ? r[idx] : ""; };
     result.push({
       date:        normalizeDateCell(r[0]),
@@ -455,8 +489,8 @@ function getHourlySheetRows(ss) {
   return result;
 }
 
-function handleGetHourly(ss) {
-  return ContentService.createTextOutput(JSON.stringify({ rows: getHourlySheetRows(ss) }))
+function handleGetHourly(ss, dateFilter) {
+  return ContentService.createTextOutput(JSON.stringify({ rows: getHourlySheetRows(ss, dateFilter) }))
     .setMimeType(ContentService.MimeType.JSON);
 }
 
@@ -474,6 +508,10 @@ function doGet(e) {
 
   var ss = SpreadsheetApp.openById(SHEET_ID);
 
+  if (e.parameter && e.parameter.type === "bootstrap") {
+    return handleGetBootstrap(ss);
+  }
+
   if (e.parameter && e.parameter.type === "draft") {
     return handleGetDraft(ss);
   }
@@ -483,7 +521,10 @@ function doGet(e) {
   }
 
   if (e.parameter && e.parameter.type === "hourly") {
-    return handleGetHourly(ss);
+    // dateパラメータ（yyyy-MM-dd）が指定された場合はその日付の行だけを返す。
+    // 実績シートは行数が増え続けるため、当日分の表示だけが目的のindex.htmlは
+    // dateを指定して読み取り範囲を絞る（analytics.htmlは全件が必要なので指定しない）
+    return handleGetHourly(ss, e.parameter.date);
   }
 
   if (e.parameter && e.parameter.type === "analytics") {

@@ -2558,19 +2558,33 @@ async function saveDraftToSheet(day){
   }catch(e){ console.warn("ドラフト保存失敗:", e); }
 }
 
-async function fetchDraftData(){
+// admin.html初期表示に必要な小さめのシート（作業中プラン・具材ステータス・シフト設定）を
+// まとめて1回のリクエストで取得する（type=draft/status/shiftConfigを個別に叩くと
+// Apps Script側のSpreadsheetApp.openById()コストが呼び出し回数分だけ重複するため統合した）
+async function fetchBootstrap(){
   try{
-    console.log("ドラフト取得開始:", `${SCRIPT_URL}?type=draft`);
-    const res = await fetch(`${SCRIPT_URL}?type=draft`, { cache: "no-store" });
-    console.log("ドラフトGETレスポンス status:", res.status, res.ok);
-    if(!res.ok) return null;
+    const url = `${SCRIPT_URL}?type=bootstrap`;
+    const res = await fetch(url, { cache: "no-store" });
+    console.log("[admin.html] bootstrap GETリクエスト:", url, "status:", res.status, res.ok);
+    if(!res.ok) return { drafts: null, statuses: [], shiftConfig: null };
     const json = await res.json();
-    console.log("ドラフトGETレスポンス body:", json);
-    return json.drafts || [];
+    return { drafts: json.drafts || [], statuses: json.statuses || [], shiftConfig: json.shiftConfig || null };
   }catch(e){
-    console.warn("ドラフト読み込み失敗:", e);
-    return null;
+    console.warn("[admin.html] bootstrapデータの取得に失敗しました:", e);
+    return { drafts: null, statuses: [], shiftConfig: null };
   }
+}
+
+// 具材ステータス一覧をstate.cellStatusに反映する
+function applyStatusesToState(statuses){
+  (statuses || []).forEach(s => {
+    const parts = String(s.date || "").split("-");
+    if(parts.length < 3) return;
+    const key = `${parseInt(parts[1], 10)}/${parseInt(parts[2], 10)}`;
+    if(!state.cellStatus[key]) state.cellStatus[key] = {};
+    if(!state.cellStatus[key][s.member]) state.cellStatus[key][s.member] = {};
+    state.cellStatus[key][s.member][s.filling] = { handed: !!s.handed, cooked: !!s.cooked };
+  });
 }
 
 function applyDraftToDay(day, draft){
@@ -2587,21 +2601,6 @@ function applyDraftToDay(day, draft){
 }
 
 /* ---------- シフト入力期間設定（shift.htmlに反映される） ---------- */
-
-async function fetchShiftConfig(){
-  const url = `${SCRIPT_URL}?type=shiftConfig`;
-  try{
-    const res = await fetch(url, { cache: "no-store" });
-    console.log("[admin.html] シフト設定GETリクエスト:", url, "status:", res.status, res.ok);
-    if(!res.ok) return null;
-    const json = await res.json();
-    console.log("[admin.html] シフト設定GETレスポンス body:", JSON.stringify(json));
-    return json.config || null;
-  }catch(e){
-    console.warn("[admin.html] シフト入力期間設定の取得に失敗しました:", e);
-    return null;
-  }
-}
 
 async function saveShiftConfig(startDate, endDate, includeWeekends){
   const payload = { type: "saveShiftConfig", startDate, endDate, includeWeekends };
@@ -2780,24 +2779,6 @@ function ensureCellStatus(dateKey, name, filling){
   if(!state.cellStatus[dateKey]) state.cellStatus[dateKey] = {};
   if(!state.cellStatus[dateKey][name]) state.cellStatus[dateKey][name] = {};
   if(!state.cellStatus[dateKey][name][filling]) state.cellStatus[dateKey][name][filling] = { handed: false, cooked: false };
-}
-
-async function fetchStatusFromSheet(){
-  try{
-    const res = await fetch(`${SCRIPT_URL}?type=status`, { cache: "no-store" });
-    if(!res.ok) return;
-    const json = await res.json();
-    (json.statuses || []).forEach(s => {
-      const parts = String(s.date || "").split("-");
-      if(parts.length < 3) return;
-      const key = `${parseInt(parts[1], 10)}/${parseInt(parts[2], 10)}`;
-      if(!state.cellStatus[key]) state.cellStatus[key] = {};
-      if(!state.cellStatus[key][s.member]) state.cellStatus[key][s.member] = {};
-      state.cellStatus[key][s.member][s.filling] = { handed: !!s.handed, cooked: !!s.cooked };
-    });
-  }catch(e){
-    console.warn("ステータス読み込み失敗:", e);
-  }
 }
 
 async function saveStatusToSheet(isoDateStr, member, filling, handed, cooked){
@@ -3033,17 +3014,17 @@ async function refreshAllData(){
 
     const thisYear = new Date().getFullYear();
     state.cellStatus = {};
-    const [weatherRes, chiseJson, shiftJson, holidaysByIso, nsDisruptionsByDate, draftData] = await Promise.all([
+    const [weatherRes, chiseJson, shiftJson, holidaysByIso, nsDisruptionsByDate, bootstrap] = await Promise.all([
       fetch(weatherUrl).then(r => r.json()),
       fetchSheetJson(null).catch(e => { console.error("チセさんシート取得失敗", e); return null; }),
       fetchSheetJson("シフト回答", SHIFT_SPREADSHEET_ID).catch(e => { console.error("シフト回答シート取得失敗", e); return null; }),
       fetchDutchHolidays([thisYear, thisYear + 1]),
       fetchNsDisruptions(),
-      fetchDraftData(),
-      // 具材ステータスはstate.cellStatusに直接反映される（戻り値は使わない）ため、
-      // 分割代入では受け取らないが、他の取得と並列で走らせる
-      fetchStatusFromSheet(),
+      // 作業中プラン・具材ステータスをまとめて1回のリクエストで取得する
+      fetchBootstrap(),
     ]);
+    const draftData = bootstrap.drafts;
+    applyStatusesToState(bootstrap.statuses);
 
     state.holidaysByIso = holidaysByIso;
     state.nsDisruptionsByDate = nsDisruptionsByDate;
@@ -3318,23 +3299,26 @@ async function init(){
 
     const thisYear = new Date().getFullYear();
     initProgressDone = 0;
-    setInitProgress(0, 9);
-    const track = p => p.then(v => { setInitProgress(++initProgressDone, 9); return v; });
+    setInitProgress(0, 7);
+    const track = p => p.then(v => { setInitProgress(++initProgressDone, 7); return v; });
     state.cellStatus = {};
-    const [weatherRes, chiseJson, shiftJson, holidaysByIso, nsDisruptionsByDate, draftData, /* fetchStatusFromSheetの戻り値は使わない */, paymentPlanJson, shiftConfig] = await Promise.all([
+    const [weatherRes, chiseJson, shiftJson, holidaysByIso, nsDisruptionsByDate, bootstrap, paymentPlanJson] = await Promise.all([
       track(fetch(weatherUrl).then(r => r.json())),
       track(fetchSheetJson(null).catch(e => { console.error("チセさんシート取得失敗", e); return null; })),
       track(fetchSheetJson("シフト回答", SHIFT_SPREADSHEET_ID).catch(e => { console.error("シフト回答シート取得失敗", e); return null; })),
       track(fetchDutchHolidays([thisYear, thisYear + 1])),
       track(fetchNsDisruptions()),
-      track(fetchDraftData()),
-      // 具材ステータスはstate.cellStatusに直接反映される（戻り値は使わない）
-      track(fetchStatusFromSheet()),
+      // 作業中プラン・具材ステータス・シフト設定をまとめて1回のリクエストで取得する
+      // （個別にtype=draft/status/shiftConfigを叩くとApps Script側の
+      // 　SpreadsheetApp.openById()コストが呼び出し回数分だけ重複するため統合した）
+      track(fetchBootstrap()),
       // 月次支払いセクション用の確定プランも、ここで他の取得と並列fetchしておく
       // （従来は描画後に別途fetchしていたため、その分だけ表示完了が遅れていた）
       track(fetchSheetJson("確定プラン", SHIFT_SPREADSHEET_ID).catch(e => { console.error("確定プラン(支払い用)取得失敗", e); return null; })),
-      track(fetchShiftConfig()),
     ]);
+    const draftData = bootstrap.drafts;
+    applyStatusesToState(bootstrap.statuses);
+    const shiftConfig = bootstrap.shiftConfig;
 
     state.holidaysByIso = holidaysByIso;
     state.nsDisruptionsByDate = nsDisruptionsByDate;
