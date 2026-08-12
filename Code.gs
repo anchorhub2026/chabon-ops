@@ -393,15 +393,40 @@ function handleSaveHourly(ss, data) {
           break;
         }
       }
+      var existing = foundRow > 0 ? values[foundRow - 1] : null;
+
       var remains = [item.r12, item.r13, item.r14, item.r15, item.r16, item.r17, item.r18]
         .map(function(v) { return v === "" ? "" : v; });
       var givens = [item.given12, item.given13, item.given14, item.given15, item.given16, item.given17, item.given18]
         .map(function(v) { return Number(v || 0); });
-      var calc = calcHourlySoldAndCumulative(item.total, remains, givens);
+
+      // 既存行がある場合、今回の送信で空欄（未入力）になっているスロットは
+      // 保存済みデータの復元がまだ完了していないタイミングで保存ボタンが押された
+      // 可能性がある。その場合でも過去に保存済みの実績を空欄で上書きして消してしまわないよう、
+      // 送信側が空欄のスロットに限りシート上の既存値を保持する。
+      if (existing) {
+        for (var k = 0; k < remains.length; k++) {
+          if (remains[k] === "") {
+            var existingRemain = existing[8 + k];
+            if (existingRemain !== "" && existingRemain !== null && existingRemain !== undefined) {
+              remains[k] = existingRemain;
+              givens[k] = givenOrLegacySum(existing[46 + k], existing[32 + k * 2], existing[33 + k * 2]) || 0;
+            }
+          }
+        }
+      }
+
+      var total = item.total;
+      if ((total === "" || total === null || total === undefined || Number(total) === 0) &&
+          existing && Number(existing[7] || 0) > 0) {
+        total = existing[7];
+      }
+
+      var calc = calcHourlySoldAndCumulative(total, remains, givens);
       var row = [
         data.date, data.weekday, data.weather, data.temp,
         storeData.store, storeData.location,
-        item.filling, item.total,
+        item.filling, total,
         remains[0], remains[1], remains[2], remains[3], remains[4], remains[5], remains[6],
         calc.sold[0], calc.sold[1], calc.sold[2], calc.sold[3], calc.sold[4], calc.sold[5], calc.sold[6],
         calc.cumulative[0], calc.cumulative[1], calc.cumulative[2], calc.cumulative[3], calc.cumulative[4], calc.cumulative[5], calc.cumulative[6],

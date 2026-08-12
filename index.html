@@ -1342,11 +1342,26 @@ function renderActualSales(){
   area.querySelectorAll(".hourly-input, .made-input, .given-input").forEach(inp =>
     inp.addEventListener("input", () => updateSoldDisplay(fillings))
   );
-  document.getElementById("saveZuidBtn").addEventListener("click", () => saveStoreActual("Zuid"));
-  document.getElementById("saveUvABtn").addEventListener("click", () => saveStoreActual("UvA"));
+  const saveZuidBtn = document.getElementById("saveZuidBtn");
+  const saveUvABtn = document.getElementById("saveUvABtn");
+  saveZuidBtn.addEventListener("click", () => saveStoreActual("Zuid"));
+  saveUvABtn.addEventListener("click", () => saveStoreActual("UvA"));
 
-  // 保存済みデータを読み込んで入力欄を復元する
-  refreshHourlyRecords();
+  // 保存済みデータを読み込んで入力欄を復元する。復元が完了する前に保存ボタンが押されると、
+  // まだ空のままの入力欄の値（空欄）が送信され、既に保存済みの実績を上書きして消してしまう
+  // 事故につながるため、復元が完了するまで保存ボタンを一時的に無効化する。
+  const zuidOriginalLabel = saveZuidBtn.textContent;
+  const uvaOriginalLabel = saveUvABtn.textContent;
+  saveZuidBtn.disabled = true;
+  saveUvABtn.disabled = true;
+  saveZuidBtn.textContent = "読み込み中...";
+  saveUvABtn.textContent = "読み込み中...";
+  refreshHourlyRecords().finally(() => {
+    saveZuidBtn.disabled = false;
+    saveUvABtn.disabled = false;
+    saveZuidBtn.textContent = zuidOriginalLabel;
+    saveUvABtn.textContent = uvaOriginalLabel;
+  });
 }
 
 // 他端末で入力された最新の時間帯別実績を取得し、入力欄に反映する
