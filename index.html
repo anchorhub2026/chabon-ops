@@ -665,15 +665,90 @@ function isoToMdLabel(isoStr){
   return `${parseInt(parts[1], 10)}/${parseInt(parts[2], 10)}`;
 }
 
-// 作業中プラン・具材ステータスをまとめて1回のリクエストで取得する
-// （type=draft/statusを個別に叩くとApps Script側のSpreadsheetApp.openById()
-// 　コストが呼び出し回数分だけ重複するため統合した）
+// gvizの日付型セルを "yyyy-MM-dd" のISO文字列に変換する。
+// Apps Scriptが書き込んだ日付文字列はGoogleスプレッドシート側で自動的に日付型セルに
+// 変換されるため、cell.v は "Date(y,m,d)" 形式の文字列になる（月は0始まり）。
+// プレーンテキストとして保存されていた場合（"yyyy-MM-dd"形式）はそのまま使う。
+// どちらの形式でもない場合はnullを返し、呼び出し側でその行を除外する
+// （日付が特定できない行を誤った日付として扱わないようにするため）。
+function parseGvizDateCell(cell){
+  if(!cell || cell.v === null || cell.v === undefined) return null;
+  const v = cell.v;
+  if(typeof v === "string"){
+    const m = v.match(/^Date\((\d+),(\d+),(\d+)\)/);
+    if(m){
+      const y = parseInt(m[1], 10), mo = parseInt(m[2], 10) + 1, d = parseInt(m[3], 10);
+      return `${y}-${String(mo).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
+    }
+    if(/^\d{4}-\d{2}-\d{2}$/.test(v)) return v;
+  }
+  return null;
+}
+
+async function fetchGvizSheet(sheetName){
+  const url = `https://docs.google.com/spreadsheets/d/${SHIFT_SPREADSHEET_ID}/gviz/tq?tqx=out:json&sheet=${encodeURIComponent(sheetName)}`;
+  const res = await fetch(url, { cache: "no-store" });
+  const text = await res.text();
+  const match = text.match(/setResponse\(([\s\S]*)\);\s*$/);
+  if(!match) throw new Error("シートの解析に失敗しました: " + sheetName);
+  return JSON.parse(match[1]);
+}
+
+// 作業中プラン・具材ステータスをgviz経由で取得する。
+// Apps Script Web App経由（type=bootstrap）はApps Script内部処理自体は1秒程度で
+// 完了するにもかかわらず、Web App側のレスポンス配信の仕組みにより実測10秒以上
+// かかっていたため、既に高速なことが確認済みのgviz経由（確定プラン・シフト回答と同じ方式）
+// に切り替えて初期表示を高速化する。
+// 保存（saveDraft/saveStatus）は従来通りApps Script経由のまま変更しない。
 async function fetchBootstrap(){
   try{
-    const res = await fetch(`${SCRIPT_URL}?type=bootstrap`, { cache: "no-store" });
-    if(!res.ok) return { drafts: [], statuses: [] };
-    const json = await res.json();
-    return { drafts: json.drafts || [], statuses: json.statuses || [] };
+    const today = new Date();
+    const pad = n => String(n).padStart(2, "0");
+    const isoOffset = days => {
+      const d = new Date(today); d.setDate(d.getDate() + days);
+      return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+    };
+    // Code.gs側のhandleGetBootstrapが従来適用していた表示対象範囲（今日の3日前〜25日後）
+    // と同じ絞り込みをクライアント側でも適用し、古い/大幅に未来のテストデータ等を除外する
+    const startIso = isoOffset(-3);
+    const endIso = isoOffset(25);
+
+    const [draftJson, statusJson] = await Promise.all([
+      fetchGvizSheet("作業中プラン"),
+      fetchGvizSheet("具材ステータス"),
+    ]);
+
+    const drafts = [];
+    (draftJson.table.rows || []).forEach(r => {
+      const c = r.c;
+      if(!c || !c[0]) return;
+      const dateStr = parseGvizDateCell(c[0]);
+      if(!dateStr || dateStr < startIso || dateStr > endIso) return;
+      try{
+        drafts.push({
+          date: dateStr,
+          forecast: JSON.parse((c[1] && c[1].v) || "{}"),
+          prod: JSON.parse((c[2] && c[2].v) || "{}"),
+        });
+      }catch(e){ /* 壊れたJSON行は無視する */ }
+    });
+
+    const statuses = [];
+    (statusJson.table.rows || []).forEach(r => {
+      const c = r.c;
+      if(!c || !c[0]) return;
+      const dateStr = parseGvizDateCell(c[0]);
+      if(!dateStr || dateStr < startIso || dateStr > endIso) return;
+      statuses.push({
+        date: dateStr,
+        member: String((c[1] && c[1].v) || ""),
+        filling: String((c[2] && c[2].v) || ""),
+        handed: !!(c[3] && c[3].v === true),
+        cooked: !!(c[4] && c[4].v === true),
+      });
+    });
+
+    return { drafts, statuses };
   }catch(e){
     console.warn("bootstrapデータの取得に失敗しました:", e);
     return { drafts: [], statuses: [] };
