@@ -692,8 +692,10 @@ function applyStatusesToState(statuses){
 
 async function saveStatusToSheet(isoDate, member, filling, handed, cooked){
   const payload = { type: "saveStatus", date: isoDate, member, filling, handed, cooked };
+  const t0 = Date.now();
   try{
     await fetch(SCRIPT_URL, { method: "POST", mode: "no-cors", body: JSON.stringify(payload) });
+    console.log(`[index.html] saveStatus 保存: ${Date.now() - t0}ms`);
   }catch(e){
     console.warn("ステータス保存失敗:", e);
   }
@@ -1587,14 +1589,16 @@ async function saveStoreActual(storeKey){
   const btnId = storeKey === "Zuid" ? "saveZuidBtn" : "saveUvABtn";
   const btn = document.getElementById(btnId);
   if(btn){ btn.disabled = true; btn.textContent = "送信中..."; }
+  const t0 = Date.now();
   try{
     await fetch(SCRIPT_URL, { method: "POST", mode: "no-cors", body: JSON.stringify(payload) });
+    console.log(`[index.html] saveStoreActual(${storeKey}) 保存: ${Date.now() - t0}ms`);
     if(btn){ btn.textContent = "✓ 記録しました"; }
     setTimeout(() => {
       if(btn){ btn.textContent = `${storeKey}の実績を記録する`; btn.disabled = false; }
     }, 3000);
   }catch(e){
-    console.error("実績記録失敗:", e);
+    console.error(`実績記録失敗（${Date.now() - t0}ms経過後にエラー）:`, e);
     if(btn){ btn.textContent = `${storeKey}の実績を記録する`; btn.disabled = false; }
   }
 }

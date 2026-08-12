@@ -7,21 +7,32 @@ function doPost(e) {
   var ss = SpreadsheetApp.openById(SHEET_ID);
   var data = JSON.parse(e.postData.contents);
 
-  if (data.type === "confirmPlan") {
-    handleConfirmPlan(ss, data);
-  } else if (data.type === "saveDraft") {
-    handleSaveDraft(ss, data);
-  } else if (data.type === "saveStatus") {
-    handleSaveStatus(ss, data);
-  } else if (data.type === "saveActual") {
-    handleSaveActual(ss, data);
-  } else if (data.type === "saveHourly") {
-    handleSaveHourly(ss, data);
-  } else if (data.type === "saveShiftConfig") {
-    handleSaveShiftConfig(ss, data);
-  } else {
-    // type が無い場合（旧バージョンのshift.html等）もシフト回答として扱う
-    handleShiftSubmit(ss, data);
+  // Zuid保存とUvA保存の同時実行や、保存ボタンの連打（多重送信）が発生した場合、
+  // 「既存行を探して上書き、無ければ追加」という読み取り→書き込みの処理が並行に走ると、
+  // どちらのリクエストも「見つからない」と判定して重複行を作ってしまったり、
+  // 片方の書き込みが後続の読み取りに反映されず実質的にデータが失われる恐れがある。
+  // これを防ぐため、書き込み処理全体をスクリプトロックで直列化する。
+  var lock = LockService.getScriptLock();
+  lock.waitLock(30000);
+  try {
+    if (data.type === "confirmPlan") {
+      handleConfirmPlan(ss, data);
+    } else if (data.type === "saveDraft") {
+      handleSaveDraft(ss, data);
+    } else if (data.type === "saveStatus") {
+      handleSaveStatus(ss, data);
+    } else if (data.type === "saveActual") {
+      handleSaveActual(ss, data);
+    } else if (data.type === "saveHourly") {
+      handleSaveHourly(ss, data);
+    } else if (data.type === "saveShiftConfig") {
+      handleSaveShiftConfig(ss, data);
+    } else {
+      // type が無い場合（旧バージョンのshift.html等）もシフト回答として扱う
+      handleShiftSubmit(ss, data);
+    }
+  } finally {
+    lock.releaseLock();
   }
 
   return ContentService.createTextOutput('{"status":"ok"}').setMimeType(ContentService.MimeType.JSON);
@@ -381,19 +392,24 @@ function handleSaveHourly(ss, data) {
   } else if (sheet.getLastColumn() < HOURLY_SHEET_HEADER.length) {
     sheet.getRange(1, 1, 1, HOURLY_SHEET_HEADER.length).setValues([HOURLY_SHEET_HEADER]);
   }
-  var values = sheet.getDataRange().getValues();
+  var lastRow = sheet.getLastRow();
+  var lastCol = Math.max(sheet.getLastColumn(), HOURLY_SHEET_HEADER.length);
+  // 実績シートの行数が増えても保存処理が遅くならないよう、まず日付・店舗・具材名の
+  // 3列（A・E・G列）だけを読み取って該当行を特定し、既存値の保持が必要な行だけを
+  // 全列読み取る（getHourlySheetRowsの読み取り範囲限定と同じ方針）。
+  var keyCols = lastRow >= 2 ? sheet.getRange(2, 1, lastRow - 1, 7).getValues() : [];
   (data.stores || []).forEach(function(storeData) {
     (storeData.items || []).forEach(function(item) {
       var foundRow = -1;
-      for (var r = 1; r < values.length; r++) {
-        if (normalizeDateCell(values[r][0]) === String(data.date) &&
-            String(values[r][4]) === String(storeData.store) &&
-            String(values[r][6]) === String(item.filling)) {
-          foundRow = r + 1;
+      for (var r = 0; r < keyCols.length; r++) {
+        if (normalizeDateCell(keyCols[r][0]) === String(data.date) &&
+            String(keyCols[r][4]) === String(storeData.store) &&
+            String(keyCols[r][6]) === String(item.filling)) {
+          foundRow = r + 2;
           break;
         }
       }
-      var existing = foundRow > 0 ? values[foundRow - 1] : null;
+      var existing = foundRow > 0 ? sheet.getRange(foundRow, 1, 1, lastCol).getValues()[0] : null;
 
       var remains = [item.r12, item.r13, item.r14, item.r15, item.r16, item.r17, item.r18]
         .map(function(v) { return v === "" ? "" : v; });
