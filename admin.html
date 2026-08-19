@@ -247,15 +247,17 @@
     white-space: nowrap;
   }
   .store-item.closed .store-item-name{ color: #999; }
+  /* 推奨数（予測値）は参考情報のため控えめなサイズにする（実際の確定値は具材テーブルの
+     合計行で大きく表示するため、ここは小さくてよい） */
   .store-item-num{
-    font-size: 1.1rem;
+    font-size: 0.8rem;
     font-weight: bold;
     color: var(--main);
     white-space: nowrap;
     line-height: 1;
   }
   .store-item.closed .store-item-num{
-    font-size: 0.9rem;
+    font-size: 0.72rem;
     font-weight: normal;
     color: #999;
   }
@@ -714,10 +716,13 @@
   table.day-sub-table th.sub-prod-head{ background: #dde6ee; color: #2c5272; }
   table.day-sub-table td.cell-readonly{ color: #666; }
   table.day-sub-table td.cell-row-total{ font-weight: bold; color: var(--main-dark); }
+  /* 具材テーブルの合計行（実際に確定・入力されている値）は、推奨数カードのヘッダーより
+     目立つよう大きめのフォントサイズにする */
   table.day-sub-table tfoot td{
     border-bottom: none;
     border-top: 2px solid var(--main-light);
     font-weight: bold;
+    font-size: 1.05rem;
     color: var(--main-dark);
     background: rgba(242,247,243,0.8);
   }
@@ -866,7 +871,7 @@
 
   /* ── 店舗ボックス ── */
   .store-item{ transition: background 0.14s, border-color 0.14s; }
-  .store-item-num{ font-size: 1.15rem; }
+  .store-item-num{ font-size: 0.85rem; }
 
   /* .day-pair-col-head は unified-table に統合済み */
 
@@ -1346,6 +1351,16 @@ const ZUID_MIN_GUARANTEE = 100;
 const UVA_MIN_GUARANTEE = 25;
 const HOLIDAY_PENALTY = 30;
 
+// 期間限定の特別会場設定：2026/8/24〜9/11の月〜金はUvAの代わりにCTHで固定50個販売する。
+// 天気・曜日による自動計算は行わず、対象期間外は従来通りcalcUvA()の自動計算のまま。
+const CTH_SPECIAL_START = "2026-08-24";
+const CTH_SPECIAL_END = "2026-09-11";
+const CTH_SPECIAL_QTY = 50;
+const CTH_VENUE_NAME = "CTH";
+function isCthSpecialDay(iso, dow){
+  return dow >= 1 && dow <= 5 && iso >= CTH_SPECIAL_START && iso <= CTH_SPECIAL_END;
+}
+
 // 無料・APIキー不要のオランダ祝日API。CORS対応済みでブラウザから直接fetch可能
 async function fetchDutchHolidays(years){
   const lists = await Promise.all(years.map(async year => {
@@ -1539,14 +1554,19 @@ function buildDays(daily, hourlyByDate){
     const holidayName = (state.holidaysByIso && state.holidaysByIso[iso]) || null;
     const nsDisruptions = (state.nsDisruptionsByDate && state.nsDisruptionsByDate[iso]) || null;
     const zuid = calcZuid(dow, d.getMonth() + 1, salesWeather);
-    const uva = calcUvA(dow, salesWeather);
+    let uva = calcUvA(dow, salesWeather);
+    const cthSpecial = isCthSpecialDay(iso, dow);
+    if(cthSpecial){
+      // 期間限定特別会場：天気・曜日補正なしで固定50個
+      uva = { total: CTH_SPECIAL_QTY, reasons: [`${CTH_VENUE_NAME}固定 ${CTH_SPECIAL_QTY}個`] };
+    }
     if(holidayName){
       applyHolidayPenalty(zuid, ZUID_MIN_GUARANTEE);
-      applyHolidayPenalty(uva, UVA_MIN_GUARANTEE);
+      if(!cthSpecial) applyHolidayPenalty(uva, UVA_MIN_GUARANTEE);
     }
     if(nsDisruptions && nsDisruptions.length){
       applyNsPenalty(zuid, ZUID_MIN_GUARANTEE);
-      applyNsPenalty(uva, UVA_MIN_GUARANTEE);
+      if(!cthSpecial) applyNsPenalty(uva, UVA_MIN_GUARANTEE);
     }
 
     return {
@@ -1563,6 +1583,7 @@ function buildDays(daily, hourlyByDate){
       nsDisruptions,
       zuid,
       uva,
+      uvaVenueLabel: cthSpecial ? CTH_VENUE_NAME : "UvA",
     };
   }).map(day => {
     day.zuidOpen = day.zuid !== null;
@@ -1687,7 +1708,7 @@ function recommendReasonHtml(day){
   return `
     <div class="store-stack">
       ${storeBoxHtml("Zuid", day.zuid, isConfirmed)}
-      ${storeBoxHtml("UvA", day.uva, isConfirmed)}
+      ${storeBoxHtml(day.uvaVenueLabel, day.uva, isConfirmed)}
     </div>
   `;
 }
@@ -1867,7 +1888,7 @@ function bindForecastTableEvents(day){
       // 入力欄自体は再生成せず、行・列・全体の合計セルだけを更新する（フォーカスを失わない）
       const chise = state.chiseByDate[mdLabel(day.dateObj)];
       const chiseQtyForFilling = (chise && chise.breakdown[filling]) || 0;
-      const showUva = [1, 2, 4].includes(day.dow);
+      const showUva = day.uva !== null;
       const zuidQty = day.zuidFillingQty[filling] || 0;
       const uvaQty = showUva ? (day.uvaFillingQty[filling] || 0) : 0;
 
@@ -1943,7 +1964,7 @@ function renderProductionSection(){ renderCombined(); }
 /* ---------- 統合テーブル：1日分を1つの<table>で描画 ---------- */
 
 function splitForecastTableHtml(day){
-  const showUva = [1, 2, 4].includes(day.dow);
+  const showUva = day.uva !== null;
   const chise = state.chiseByDate[mdLabel(day.dateObj)];
   const chiseBreakdown = chise ? chise.breakdown : {};
   const chiseQty = chise ? chise.subtotal : 0;
@@ -1972,7 +1993,7 @@ function splitForecastTableHtml(day){
         <tr>
           <th class="f-name">具材</th>
           <th class="sub-forecast-head">Zuid</th>
-          <th class="sub-forecast-head">UvA</th>
+          <th class="sub-forecast-head">${day.uvaVenueLabel}</th>
           <th class="sub-forecast-head">チセ</th>
           <th class="sub-forecast-head">販売計</th>
         </tr>
@@ -2070,7 +2091,7 @@ function storeBoxWithToggleHtml(day, store, label, result, isConfirmed){
 
 function dayBlockHtml(day){
   const snap = computeDaySnapshot(day);
-  const showUva = [1, 2, 4].includes(day.dow);
+  const showUva = day.uva !== null;
   const isConfirmed = !!(state.confirmedByDate && state.confirmedByDate[mdLabel(day.dateObj)]);
   const hasSavedForecast = !!localStorage.getItem(`chabon_forecast_${mdLabel(day.dateObj)}`);
   const hasSavedProd = !!localStorage.getItem(`chabon_prod_${mdLabel(day.dateObj)}`);
@@ -2087,7 +2108,7 @@ function dayBlockHtml(day){
           ${(day.holidayName || (day.nsDisruptions && day.nsDisruptions.length) || isConfirmed) ? `<div class="day-badges">${day.holidayName ? `<span class="holiday-badge">🎉 祝日：${day.holidayName}</span>` : ""}${day.nsDisruptions && day.nsDisruptions.length ? `<span class="ns-badge">🚆 NSストライキ/運休</span>` : ""}${isConfirmed ? `<span class="confirmed-badge">✓ 確定済み</span>` : ""}</div>` : ""}
           <div class="store-stack-with-toggle">
             ${storeBoxWithToggleHtml(day, "zuid", "Zuid", day.zuid, isConfirmed)}
-            ${showUva ? storeBoxWithToggleHtml(day, "uva", "UvA", day.uva, isConfirmed) : ""}
+            ${showUva ? storeBoxWithToggleHtml(day, "uva", day.uvaVenueLabel, day.uva, isConfirmed) : ""}
           </div>
         </div>
         <div class="day-col-prod-head">

@@ -205,34 +205,55 @@
   .recommend-box{
     display: flex;
     align-items: center;
-    gap: 18px;
+    gap: 10px;
     flex-wrap: wrap;
   }
+  /* 予測数（推奨値）は参考情報のため控えめなサイズにする（実際の確定数を優先して大きく見せる） */
   .recommend-num{
-    font-size: 2.4rem;
+    font-size: 1.25rem;
     font-weight: bold;
     color: var(--main-dark);
     background: var(--main-light);
-    border-radius: 12px;
-    padding: 10px 22px;
+    border-radius: 8px;
+    padding: 4px 10px;
     text-align: center;
+    line-height: 1.2;
   }
-  .recommend-num span{ font-size: 0.9rem; display:block; font-weight:normal; color:#666; }
+  .recommend-num span{ font-size: 0.68rem; display:inline; font-weight:normal; color:#666; margin-left: 1px; }
   .recommend-note{
     flex: 1;
     min-width: 160px;
-    font-size: 0.85rem;
-    color: #555;
+    font-size: 0.76rem;
+    color: #777;
   }
   .recommend-note ul{ margin: 0; padding-left: 18px; }
   .confirm-compare{
     margin-top: 10px;
-    padding-top: 8px;
+    padding-top: 10px;
     border-top: 1px dashed var(--line);
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    flex-wrap: wrap;
+  }
+  .confirm-compare-note{
     font-size: 0.85rem;
     color: var(--main-dark);
     font-weight: bold;
+    line-height: 1.4;
   }
+  /* 確定数（実際に確定した値）は最も参照頻度が高いため、最も目立つサイズ・配色にする */
+  .confirm-num{
+    font-size: 2.6rem;
+    font-weight: bold;
+    color: #fff;
+    background: var(--main);
+    border-radius: 12px;
+    padding: 8px 22px;
+    text-align: center;
+    line-height: 1;
+  }
+  .confirm-num span{ font-size: 0.9rem; display: block; font-weight: normal; color: #eef3ee; margin-top: 2px; }
   .off-day-note{
     color: #999;
     font-size: 0.88rem;
@@ -653,7 +674,7 @@ function applyConfirmedOverrides(results, confirmedMap){
     if(r.zuid && override.zuid != null){
       r.zuid = { total: override.zuid, reasons: ["管理画面で確定済み"] };
     }
-    if([1, 2, 4].includes(r.dow) && override.uva != null){
+    if(r.uva && override.uva != null){
       r.uva = { total: override.uva, reasons: ["管理画面で確定済み"] };
     }
   });
@@ -1019,6 +1040,16 @@ const ZUID_MIN_GUARANTEE = 100;
 const UVA_MIN_GUARANTEE = 25;
 const HOLIDAY_PENALTY = 30;
 
+// 期間限定の特別会場設定：2026/8/24〜9/11の月〜金はUvAの代わりにCTHで固定50個販売する。
+// admin.htmlと同じ条件（管理画面での確定・入力ロジックと表示を一致させるため）。
+const CTH_SPECIAL_START = "2026-08-24";
+const CTH_SPECIAL_END = "2026-09-11";
+const CTH_SPECIAL_QTY = 50;
+const CTH_VENUE_NAME = "CTH";
+function isCthSpecialDay(iso, dow){
+  return dow >= 1 && dow <= 5 && iso >= CTH_SPECIAL_START && iso <= CTH_SPECIAL_END;
+}
+
 // 無料・APIキー不要のオランダ祝日API。CORS対応済みでブラウザから直接fetch可能
 async function fetchDutchHolidays(years){
   const lists = await Promise.all(years.map(async year => {
@@ -1078,19 +1109,25 @@ function applyNsPenalty(result, minGuarantee){
   result.reasons.push(`NSスト -${NS_PENALTY}`);
 }
 
-// 推奨数と確定プランの比較表示（「Zuid：推奨110個 → 確定102個」のような行）
+// 推奨数と確定プランの比較表示。実際に確定した数（確定数）は、参考値である推奨数よりも
+// 大きく目立つように表示する（現場で最も参照頻度が高いのは確定数のため）。
 function confirmCompareHtml(storeKey, recommendedTotal, plan){
   if(!plan){
-    return `<div class="confirm-compare">まだ確定されていません</div>`;
+    return `<div class="confirm-compare"><span class="confirm-compare-note">まだ確定されていません</span></div>`;
   }
   const confirmedVal = plan[storeKey];
   if(confirmedVal === null || confirmedVal === undefined){
-    return `<div class="confirm-compare">まだ確定されていません</div>`;
+    return `<div class="confirm-compare"><span class="confirm-compare-note">まだ確定されていません</span></div>`;
   }
   if(confirmedVal === 0){
-    return `<div class="confirm-compare">推奨${recommendedTotal}個 → 本日休み</div>`;
+    return `<div class="confirm-compare"><span class="confirm-compare-note">推奨${recommendedTotal}個 → 本日休み</span></div>`;
   }
-  return `<div class="confirm-compare">推奨${recommendedTotal}個 → 確定${confirmedVal}個</div>`;
+  return `
+    <div class="confirm-compare">
+      <div class="confirm-num">${confirmedVal}<span>個</span></div>
+      <div class="confirm-compare-note">確定数<br>（参考：推奨${recommendedTotal}個）</div>
+    </div>
+  `;
 }
 
 function storeCardHtml(title, result, storeKey, plan, holidayName, nsDisruptions){
@@ -1132,18 +1169,23 @@ function buildDailyResults(daily, hourlyByDate, holidaysByIso, nsDisruptionsByDa
     const holidayName = (holidaysByIso && holidaysByIso[dateStr]) || null;
     const nsDisruptions = (nsDisruptionsByDate && nsDisruptionsByDate[dateStr]) || null;
     const zuid = calcZuid(dow, month, salesWeather);
-    const uva = calcUvA(dow, salesWeather);
+    let uva = calcUvA(dow, salesWeather);
+    const cthSpecial = isCthSpecialDay(dateStr, dow);
+    if(cthSpecial){
+      uva = { total: CTH_SPECIAL_QTY, reasons: [`${CTH_VENUE_NAME}固定 ${CTH_SPECIAL_QTY}個`] };
+    }
     if(holidayName){
       applyHolidayPenalty(zuid, ZUID_MIN_GUARANTEE);
-      applyHolidayPenalty(uva, UVA_MIN_GUARANTEE);
+      if(!cthSpecial) applyHolidayPenalty(uva, UVA_MIN_GUARANTEE);
     }
     if(nsDisruptions && nsDisruptions.length){
       applyNsPenalty(zuid, ZUID_MIN_GUARANTEE);
-      applyNsPenalty(uva, UVA_MIN_GUARANTEE);
+      if(!cthSpecial) applyNsPenalty(uva, UVA_MIN_GUARANTEE);
     }
     return {
       dateStr, dow, maxTemp, minTemp, code, salesWeather, holidayName, nsDisruptions,
       zuid, uva,
+      uvaVenueLabel: cthSpecial ? CTH_VENUE_NAME : "UvA",
     };
   });
 }
@@ -1188,14 +1230,13 @@ function renderSalesTimeSlots(){
 function renderRecommendation(){
   const box = document.getElementById("storeCards");
   const today = state.todayOriginalRecommendation || state.dailyResults[0];
-  const todayDow = state.dailyResults[0].dow;
   const todayKey = mdLabel(state.dailyResults[0].dateStr);
   const plan = state.confirmedPlanByDate[todayKey];
 
   state.todayTotal = (today.zuid ? today.zuid.total : 0) + (today.uva ? today.uva.total : 0);
 
   let html = storeCardHtml("Zuid（1号店）", today.zuid, "zuid", plan, today.holidayName, today.nsDisruptions);
-  if([1, 2, 4].includes(todayDow)) html += storeCardHtml("UvA", today.uva, "uva", plan, today.holidayName, today.nsDisruptions);
+  if(today.uva !== null) html += storeCardHtml(today.uvaVenueLabel || "UvA", today.uva, "uva", plan, today.holidayName, today.nsDisruptions);
   box.innerHTML = html;
 }
 
@@ -1226,7 +1267,7 @@ function renderWeeklyView(){
         ${r.nsDisruptions && r.nsDisruptions.length ? `<div class="ns-badge">🚆 NSストライキ/運休</div>` : ""}
         <div class="week-weather">${w.icon} ${Math.round(r.maxTemp)}° / ${Math.round(r.minTemp)}°</div>
         <div class="week-store">Zuid: <strong>${r.zuid ? r.zuid.total + "個" : "—"}</strong></div>
-        <div class="week-store">UvA: <strong>${r.uva ? r.uva.total + "個" : "—"}</strong></div>
+        <div class="week-store">${r.uvaVenueLabel || "UvA"}: <strong>${r.uva ? r.uva.total + "個" : "—"}</strong></div>
       </div>
     `;
   }).join("");
@@ -1895,6 +1936,7 @@ async function loadWeather(){
     state.todayOriginalRecommendation = {
       zuid: state.dailyResults[0].zuid,
       uva: state.dailyResults[0].uva,
+      uvaVenueLabel: state.dailyResults[0].uvaVenueLabel,
       holidayName: state.dailyResults[0].holidayName,
       nsDisruptions: state.dailyResults[0].nsDisruptions,
     };
@@ -1931,6 +1973,7 @@ async function loadWeather(){
       state.todayOriginalRecommendation = {
         zuid: state.dailyResults[0].zuid,
         uva: state.dailyResults[0].uva,
+        uvaVenueLabel: state.dailyResults[0].uvaVenueLabel,
         holidayName: state.dailyResults[0].holidayName,
         nsDisruptions: state.dailyResults[0].nsDisruptions,
       };
