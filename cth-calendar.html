@@ -1,0 +1,316 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>CTHカレンダー | Chabon Ops</title>
+<style>
+  :root{
+    --main: #4a7c59;
+    --main-dark: #335c3e;
+    --main-light: #e9f1ea;
+    --accent: #c9533f;
+    --bg: #faf8f3;
+    --card: #ffffff;
+    --ink: #2b2b28;
+    --line: #e2ddd0;
+  }
+  *{ box-sizing: border-box; }
+  body{
+    margin: 0;
+    font-family: "Hiragino Sans", "Yu Gothic", "Noto Sans JP", sans-serif;
+    background: var(--bg);
+    color: var(--ink);
+  }
+  header{
+    background: var(--main-dark);
+    color: #fff;
+    padding: 22px 16px;
+    text-align: center;
+  }
+  header h1{ margin: 0; font-size: 1.2rem; letter-spacing: 0.05em; }
+  header p{ margin: 6px 0 0; font-size: 0.8rem; opacity: 0.85; }
+  main{
+    max-width: 640px;
+    margin: 0 auto;
+    padding: 16px 14px 50px;
+  }
+  .day-card{
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: 14px;
+    padding: 16px;
+    margin-bottom: 16px;
+    box-shadow: 0 2px 6px rgba(0,0,0,0.03);
+  }
+  .day-card-header{
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    margin-bottom: 12px;
+    padding-bottom: 8px;
+    border-bottom: 2px solid var(--main-light);
+  }
+  .day-date{ font-size: 1.1rem; font-weight: bold; color: var(--main-dark); }
+  .day-dow{ font-size: 0.85rem; color: #888; }
+  .menu-block{ margin-bottom: 14px; }
+  .menu-block:last-child{ margin-bottom: 0; }
+  .menu-title{
+    font-size: 0.85rem;
+    font-weight: bold;
+    color: var(--main-dark);
+    margin-bottom: 6px;
+  }
+  .menu-title .total-badge{
+    font-weight: normal;
+    color: #888;
+    font-size: 0.78rem;
+    margin-left: 4px;
+  }
+  .filling-grid{
+    display: grid;
+    grid-template-columns: 1fr auto;
+    gap: 3px 12px;
+    font-size: 0.82rem;
+    background: rgba(242,247,243,0.6);
+    border-radius: 8px;
+    padding: 8px 12px;
+  }
+  .filling-name{ color: var(--ink); }
+  .filling-qty{ text-align: right; font-weight: bold; color: var(--main-dark); }
+  .fixed-item-row{
+    display: flex;
+    justify-content: space-between;
+    font-size: 0.85rem;
+    padding: 6px 12px;
+    background: rgba(242,247,243,0.6);
+    border-radius: 8px;
+  }
+  .fixed-item-qty{ font-weight: bold; color: var(--main-dark); }
+  .no-qty-note{
+    font-size: 0.8rem;
+    color: #888;
+    margin: 0;
+    padding: 6px 12px;
+    background: rgba(242,247,243,0.6);
+    border-radius: 8px;
+  }
+  .staff-list{
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+  .staff-chip{
+    background: var(--main-light);
+    color: var(--main-dark);
+    border-radius: 100px;
+    padding: 5px 14px;
+    font-size: 0.82rem;
+    font-weight: bold;
+    white-space: nowrap;
+  }
+  .staff-chip .time{ font-weight: normal; color: #556b5c; margin-left: 6px; }
+  .no-staff-note{
+    font-size: 0.82rem;
+    color: #999;
+    margin: 0;
+    padding: 6px 12px;
+  }
+  .loading{ text-align: center; color: #999; padding: 50px 0; }
+  .off-note{ text-align: center; color: #999; padding: 20px 0; }
+
+  @media (max-width: 480px){
+    main{ padding: 12px 8px 40px; }
+    .day-card{ padding: 12px; }
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>🍙 CTH 特別会場カレンダー</h1>
+  <p>2026/8/24〜9/11（月〜金限定）</p>
+</header>
+
+<main>
+  <div id="calendarArea"><p class="loading">読み込み中...</p></div>
+</main>
+
+<script>
+const SHIFT_SPREADSHEET_ID = "1PHf1o3smqIQdeFkhBHjBZUEub7VtRcynQLllmSR7w-s";
+const CTH_SPECIAL_START = "2026-08-24";
+const CTH_SPECIAL_END = "2026-09-11";
+const CTH_SPECIAL_QTY = 50;
+const DAY_NAMES = ["日","月","火","水","木","金","土"];
+const FILLINGS = ["ツナマヨ","スパイシーツナマヨ","テリヤキチキン","サーモン","スパイシー味噌","枝豆","梅","うなぎ","今月のおにぎり"];
+const FILLING_RATIOS = {
+  "スパイシーツナマヨ": 0.2234,
+  "テリヤキチキン": 0.1966,
+  "サーモン": 0.1966,
+  "ツナマヨ": 0.1340,
+  "スパイシー味噌": 0.0894,
+  "枝豆": 0.04,
+  "梅": 0.02,
+  "うなぎ": 0.05,
+  "今月のおにぎり": 0.05,
+};
+
+function buildFillingDefaults(total){
+  const obj = {};
+  FILLINGS.forEach(f => { obj[f] = Math.round(total * FILLING_RATIOS[f]); });
+  return obj;
+}
+
+// CTH特別期間内（8/24〜9/11）の月〜金の日付一覧を返す
+function getCthWeekdayDates(){
+  const pad = n => String(n).padStart(2, "0");
+  const dates = [];
+  const cursor = new Date(`${CTH_SPECIAL_START}T00:00:00`);
+  const end = new Date(`${CTH_SPECIAL_END}T00:00:00`);
+  while(cursor <= end){
+    const dow = cursor.getDay();
+    if(dow >= 1 && dow <= 5){
+      const iso = `${cursor.getFullYear()}-${pad(cursor.getMonth() + 1)}-${pad(cursor.getDate())}`;
+      dates.push({ iso, dow, dateObj: new Date(cursor) });
+    }
+    cursor.setDate(cursor.getDate() + 1);
+  }
+  return dates;
+}
+
+// gvizの日付型セルを "yyyy-MM-dd" のISO文字列に変換する（admin.html/index.htmlと同じ方式）
+function parseGvizDateCell(cell){
+  if(!cell || cell.v === null || cell.v === undefined) return null;
+  const v = cell.v;
+  if(typeof v === "string"){
+    const m = v.match(/^Date\((\d+),(\d+),(\d+)\)/);
+    if(m){
+      const y = parseInt(m[1], 10), mo = parseInt(m[2], 10) + 1, d = parseInt(m[3], 10);
+      return `${y}-${String(mo).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
+    }
+    if(/^\d{4}-\d{2}-\d{2}$/.test(v)) return v;
+  }
+  return null;
+}
+
+async function fetchGvizSheet(sheetName){
+  const url = `https://docs.google.com/spreadsheets/d/${SHIFT_SPREADSHEET_ID}/gviz/tq?tqx=out:json&sheet=${encodeURIComponent(sheetName)}`;
+  const res = await fetch(url, { cache: "no-store" });
+  const text = await res.text();
+  const match = text.match(/setResponse\(([\s\S]*)\);\s*$/);
+  if(!match) throw new Error("シートの解析に失敗しました: " + sheetName);
+  return JSON.parse(match[1]);
+}
+
+// 作業中プランからCTH（UvA枠）の具材内訳を日付ごとに取り出す。
+// 管理画面（admin.html）でその日のCTH配分を編集・確定していけば、ここにも連動して反映される。
+function parseDraftFillingsByDate(json){
+  const result = {};
+  if(!json || !json.table || !json.table.rows) return result;
+  json.table.rows.forEach(r => {
+    const c = r.c;
+    if(!c || !c[0]) return;
+    const dateStr = parseGvizDateCell(c[0]);
+    if(!dateStr) return;
+    try{
+      const forecast = JSON.parse((c[1] && c[1].v) || "{}");
+      if(forecast && forecast.uvaFillingQty) result[dateStr] = forecast.uvaFillingQty;
+    }catch(e){ /* 壊れたJSON行は無視する */ }
+  });
+  return result;
+}
+
+// CTHシフトシートから日付ごとの出勤スタッフ一覧を取り出す（時間帯が未入力の行は出勤なし扱い）
+function parseCthShiftByDate(json){
+  const result = {};
+  if(!json || !json.table || !json.table.rows) return result;
+  json.table.rows.forEach(r => {
+    const c = r.c;
+    if(!c || !c[0] || !c[1]) return;
+    const dateStr = parseGvizDateCell(c[0]);
+    const name = String((c[1] && c[1].v) || "").trim();
+    const time = c[2] ? String(c[2].v || "").trim() : "";
+    if(!dateStr || !name || !time) return;
+    if(!result[dateStr]) result[dateStr] = [];
+    result[dateStr].push({ name, time });
+  });
+  return result;
+}
+
+function escapeHtml(str){
+  return String(str || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
+function renderCalendar(uvaFillingByDate, shiftByDate){
+  const area = document.getElementById("calendarArea");
+  const dates = getCthWeekdayDates();
+  if(dates.length === 0){
+    area.innerHTML = `<p class="off-note">対象期間のデータがありません。</p>`;
+    return;
+  }
+
+  area.innerHTML = dates.map(d => {
+    // まだadmin.html側でその日の具材配分が編集されていない場合は、CTH固定50個を
+    // 標準比率で按分したデフォルト値を暫定表示する（実際に編集されればここにも反映される）
+    const fillingQty = uvaFillingByDate[d.iso] || buildFillingDefaults(CTH_SPECIAL_QTY);
+    const fillingRows = FILLINGS.filter(f => (fillingQty[f] || 0) > 0).map(f =>
+      `<div class="filling-name">${escapeHtml(f)}</div><div class="filling-qty">${fillingQty[f]}個</div>`
+    ).join("");
+    const totalQty = FILLINGS.reduce((s, f) => s + (fillingQty[f] || 0), 0);
+
+    const staffList = shiftByDate[d.iso] || [];
+    const staffHtml = staffList.length
+      ? `<div class="staff-list">${staffList.map(s =>
+          `<span class="staff-chip">${escapeHtml(s.name)}<span class="time">${escapeHtml(s.time)}</span></span>`
+        ).join("")}</div>`
+      : `<p class="no-staff-note">出勤予定はまだ登録されていません。</p>`;
+
+    return `
+      <div class="day-card">
+        <div class="day-card-header">
+          <span class="day-date">${d.dateObj.getMonth() + 1}/${d.dateObj.getDate()}</span>
+          <span class="day-dow">${DAY_NAMES[d.dow]}曜日</span>
+        </div>
+        <div class="menu-block">
+          <div class="menu-title">🍙 おにぎり<span class="total-badge">合計${totalQty}個</span></div>
+          <div class="filling-grid">${fillingRows}</div>
+        </div>
+        <div class="menu-block">
+          <div class="menu-title">🍱 お弁当</div>
+          <div class="fixed-item-row"><span>2種類 × 10個ずつ</span><span class="fixed-item-qty">計20個</span></div>
+        </div>
+        <div class="menu-block">
+          <div class="menu-title">🍞 フルーツサンド</div>
+          <div class="fixed-item-row"><span>フルーツサンド</span><span class="fixed-item-qty">20個</span></div>
+        </div>
+        <div class="menu-block">
+          <div class="menu-title">🍡 その他</div>
+          <p class="no-qty-note">どら焼き・団子・抹茶ドリンクなど：数量指定なし</p>
+        </div>
+        <div class="menu-block">
+          <div class="menu-title">👤 出勤スタッフ</div>
+          ${staffHtml}
+        </div>
+      </div>
+    `;
+  }).join("");
+}
+
+async function init(){
+  try{
+    const [draftJson, cthShiftJson] = await Promise.all([
+      fetchGvizSheet("作業中プラン").catch(() => null),
+      fetchGvizSheet("CTHシフト").catch(() => null),
+    ]);
+    const uvaFillingByDate = parseDraftFillingsByDate(draftJson);
+    const shiftByDate = parseCthShiftByDate(cthShiftJson);
+    renderCalendar(uvaFillingByDate, shiftByDate);
+  }catch(e){
+    console.error("CTHカレンダーのデータ取得に失敗しました", e);
+    document.getElementById("calendarArea").innerHTML = `<p class="off-note">データの取得に失敗しました。時間をおいて再度お試しください。</p>`;
+  }
+}
+init();
+</script>
+</body>
+</html>

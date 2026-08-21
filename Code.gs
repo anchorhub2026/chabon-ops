@@ -27,6 +27,8 @@ function doPost(e) {
       handleSaveHourly(ss, data);
     } else if (data.type === "saveShiftConfig") {
       handleSaveShiftConfig(ss, data);
+    } else if (data.type === "saveCthShift") {
+      handleSaveCthShift(ss, data);
     } else {
       // type が無い場合（旧バージョンのshift.html等）もシフト回答として扱う
       handleShiftSubmit(ss, data);
@@ -254,6 +256,36 @@ function handleSaveShiftConfig(ss, data) {
   } else {
     sheet.appendRow(row);
   }
+}
+
+// CTH期間限定シフト（日付×バイトさん名ごとの勤務時間帯）を保存する。
+// 読み取りはgviz経由（cth-calendar.html）で行うため、Apps Script側にはtype=cthShiftの
+// ような取得エンドポイントは用意しない（保存のみApps Script経由、他のシートと同じ方針）。
+function handleSaveCthShift(ss, data) {
+  var sheet = ss.getSheetByName("CTHシフト");
+  if (!sheet) {
+    sheet = ss.insertSheet("CTHシフト");
+    sheet.appendRow(["日付", "名前", "時間帯", "更新日時"]);
+  }
+  var values = sheet.getDataRange().getValues();
+  (data.entries || []).forEach(function(entry) {
+    var foundRow = -1;
+    for (var r = 1; r < values.length; r++) {
+      if (normalizeDateCell(values[r][0]) === String(entry.date) &&
+          String(values[r][1]) === String(entry.name)) {
+        foundRow = r + 1;
+        break;
+      }
+    }
+    var row = [entry.date, entry.name, entry.time || "", new Date()];
+    if (foundRow > 0) {
+      sheet.getRange(foundRow, 1, 1, row.length).setValues([row]);
+      values[foundRow - 1] = row;
+    } else {
+      sheet.appendRow(row);
+      values.push(row);
+    }
+  });
 }
 
 function getShiftConfigData(ss) {

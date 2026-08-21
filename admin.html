@@ -1025,6 +1025,105 @@
     color: var(--main-dark);
   }
   .shift-config-status.error{ color: var(--accent); }
+
+  /* CTHシフト入力 */
+  .cth-shift-add-row{
+    display: flex;
+    gap: 8px;
+    margin-bottom: 12px;
+    flex-wrap: wrap;
+  }
+  .cth-shift-add-row input[type="text"]{
+    font-family: inherit;
+    font-size: 0.88rem;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    padding: 7px 10px;
+    background: #fff;
+    color: var(--ink);
+    flex: 1;
+    min-width: 160px;
+  }
+  .cth-shift-add-btn{
+    background: var(--main-light);
+    color: var(--main-dark);
+    border: 1px solid var(--main);
+    border-radius: 100px;
+    padding: 7px 16px;
+    font-size: 0.85rem;
+    font-weight: bold;
+    cursor: pointer;
+    font-family: inherit;
+    white-space: nowrap;
+  }
+  .cth-shift-add-btn:hover{ background: var(--main); color: #fff; }
+  table.cth-shift-table{
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.82rem;
+  }
+  table.cth-shift-table th, table.cth-shift-table td{
+    border-bottom: 1px solid var(--line);
+    padding: 6px 8px;
+    text-align: center;
+    white-space: nowrap;
+  }
+  table.cth-shift-table th{
+    color: var(--main-dark);
+    font-weight: bold;
+    background: var(--main-light);
+  }
+  table.cth-shift-table td.cth-date-cell{
+    text-align: left;
+    font-weight: bold;
+    color: var(--main-dark);
+    background: rgba(242,247,243,0.6);
+  }
+  .cth-remove-name-btn{
+    border: none;
+    background: transparent;
+    color: #999;
+    font-size: 0.8rem;
+    cursor: pointer;
+    margin-left: 4px;
+    padding: 0 2px;
+  }
+  .cth-remove-name-btn:hover{ color: var(--accent); }
+  table.cth-shift-table input[type="text"]{
+    width: 110px;
+    font-family: inherit;
+    font-size: 0.82rem;
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    padding: 5px 7px;
+    text-align: center;
+    color: var(--ink);
+  }
+  table.cth-shift-table input[type="text"]:focus{
+    border-color: var(--main);
+    outline: none;
+    box-shadow: 0 0 0 2px rgba(74,124,89,0.18);
+  }
+  .cth-shift-save-btn{
+    background: var(--main);
+    color: #fff;
+    border: none;
+    border-radius: 100px;
+    padding: 9px 20px;
+    font-size: 0.85rem;
+    font-weight: bold;
+    cursor: pointer;
+    font-family: inherit;
+    margin-top: 14px;
+  }
+  .cth-shift-save-btn:hover{ background: var(--main-dark); }
+  .cth-shift-save-btn:disabled{ background: #aaa; cursor: default; }
+  .cth-shift-status{
+    margin: 10px 0 0;
+    font-size: 0.85rem;
+    color: var(--main-dark);
+  }
+  .cth-shift-status.error{ color: var(--accent); }
 </style>
 </head>
 <body>
@@ -1036,8 +1135,10 @@
     <a href="index.html">← スタッフ画面</a>
     <a href="shift.html">シフト入力</a>
     <a href="#shiftConfigSection">シフト期間設定</a>
+    <a href="#cthShiftSection">CTHシフト入力</a>
     <a href="#paymentSection">月次支払い</a>
     <a href="analytics.html">📊 データ分析</a>
+    <a href="cth-calendar.html" target="_blank">🍙 CTHカレンダーを見る</a>
   </nav>
   <div><button type="button" class="header-refresh-btn" id="headerRefreshBtn">🔄 データを更新</button></div>
 </header>
@@ -1067,6 +1168,17 @@
       <button type="button" class="shift-config-save-btn" id="shiftConfigSaveBtn">設定を保存</button>
     </div>
     <p class="shift-config-status" id="shiftConfigStatus"></p>
+  </section>
+
+  <section id="cthShiftSection">
+    <h2>CTHシフト入力<span class="badge">8/24〜9/11 月〜金</span></h2>
+    <div class="cth-shift-add-row">
+      <input type="text" id="cthStaffNameInput" placeholder="バイトさんの名前を入力">
+      <button type="button" class="cth-shift-add-btn" id="cthAddStaffBtn">＋ 追加</button>
+    </div>
+    <div id="cthShiftArea"><p class="loading">データを読み込み中...</p></div>
+    <button type="button" class="cth-shift-save-btn" id="cthShiftSaveBtn">CTHシフトを保存</button>
+    <p class="cth-shift-status" id="cthShiftStatus"></p>
   </section>
 
   <section>
@@ -1172,6 +1284,8 @@ const state = {
   notesByName: {},      // memberName -> { note:string, supplies:string }
   confirmedByDate: {},  // "M/D" -> { zuidTotal, uvaTotal, confirmed:true }
   cellStatus: {},       // "M/D" -> { memberName: { fillingName: { handed:bool, cooked:bool } } }
+  cthStaffNames: [],    // CTHシフト表の列（バイトさん名）
+  cthShiftData: {},     // "yyyy-MM-dd" -> { name: "10:00-14:00", ... }
 };
 
 const weekCollapsed = { 1: false, 2: false };
@@ -1359,6 +1473,23 @@ const CTH_SPECIAL_QTY = 50;
 const CTH_VENUE_NAME = "CTH";
 function isCthSpecialDay(iso, dow){
   return dow >= 1 && dow <= 5 && iso >= CTH_SPECIAL_START && iso <= CTH_SPECIAL_END;
+}
+
+// CTH特別期間内（8/24〜9/11）の月〜金の日付一覧を返す（CTHシフト入力表の行に使う）
+function getCthWeekdayDates(){
+  const pad = n => String(n).padStart(2, "0");
+  const dates = [];
+  const cursor = new Date(`${CTH_SPECIAL_START}T00:00:00`);
+  const end = new Date(`${CTH_SPECIAL_END}T00:00:00`);
+  while(cursor <= end){
+    const dow = cursor.getDay();
+    if(dow >= 1 && dow <= 5){
+      const iso = `${cursor.getFullYear()}-${pad(cursor.getMonth() + 1)}-${pad(cursor.getDate())}`;
+      dates.push({ iso, dow, dateObj: new Date(cursor) });
+    }
+    cursor.setDate(cursor.getDate() + 1);
+  }
+  return dates;
 }
 
 // 無料・APIキー不要のオランダ祝日API。CORS対応済みでブラウザから直接fetch可能
@@ -2761,6 +2892,145 @@ function initShiftConfigSection(initialConfig){
   });
 }
 
+/* ---------- CTH特別会場シフト入力（8/24〜9/11 月〜金） ---------- */
+
+function parseCthShiftSheet(json){
+  const result = {};
+  const names = [];
+  if(!json || !json.table || !json.table.rows) return { data: result, names };
+  json.table.rows.forEach(r => {
+    const c = r.c;
+    if(!c || !c[0] || !c[1]) return;
+    const dateStr = parseGvizDateCell(c[0]);
+    const name = String((c[1] && c[1].v) || "").trim();
+    const time = c[2] ? String(c[2].v || "").trim() : "";
+    if(!dateStr || !name) return;
+    if(!result[dateStr]) result[dateStr] = {};
+    result[dateStr][name] = time;
+    if(!names.includes(name)) names.push(name);
+  });
+  return { data: result, names };
+}
+
+// 表を再描画する前に、まだ保存していない入力欄の値をstateに取り込んでおく
+// （列の追加・削除で表全体を作り直しても、入力途中のデータが消えないようにするため）
+function captureCthShiftInputs(){
+  const area = document.getElementById("cthShiftArea");
+  if(!area) return;
+  area.querySelectorAll(".cth-shift-input").forEach(input => {
+    const iso = input.dataset.iso;
+    const name = input.dataset.name;
+    if(!state.cthShiftData[iso]) state.cthShiftData[iso] = {};
+    state.cthShiftData[iso][name] = input.value;
+  });
+}
+
+function escapeHtmlAttr(str){
+  return String(str || "").replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
+function renderCthShiftTable(){
+  const area = document.getElementById("cthShiftArea");
+  if(!area) return;
+  const dates = getCthWeekdayDates();
+
+  if(state.cthStaffNames.length === 0){
+    area.innerHTML = `<p class="off-note">まずバイトさんの名前を追加してください。</p>`;
+    return;
+  }
+
+  const headerCells = state.cthStaffNames.map(name =>
+    `<th>${escapeHtmlAttr(name)}<button type="button" class="cth-remove-name-btn" data-name="${escapeHtmlAttr(name)}" title="列を削除">×</button></th>`
+  ).join("");
+
+  const rows = dates.map(d => {
+    const cells = state.cthStaffNames.map(name => {
+      const val = (state.cthShiftData[d.iso] && state.cthShiftData[d.iso][name]) || "";
+      return `<td><input type="text" class="cth-shift-input" data-iso="${d.iso}" data-name="${escapeHtmlAttr(name)}" value="${escapeHtmlAttr(val)}" placeholder="例:10:00-14:00"></td>`;
+    }).join("");
+    return `<tr><td class="cth-date-cell">${d.dateObj.getMonth() + 1}/${d.dateObj.getDate()}（${DAY_NAMES[d.dow]}）</td>${cells}</tr>`;
+  }).join("");
+
+  area.innerHTML = `
+    <div class="table-scroll">
+      <table class="cth-shift-table">
+        <thead><tr><th>日付</th>${headerCells}</tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>
+  `;
+
+  area.querySelectorAll(".cth-remove-name-btn").forEach(btn => {
+    btn.addEventListener("click", () => {
+      captureCthShiftInputs();
+      state.cthStaffNames = state.cthStaffNames.filter(n => n !== btn.dataset.name);
+      renderCthShiftTable();
+    });
+  });
+}
+
+// データの反映・再描画のみ行う（再読み込み時に呼んでもイベントリスナーは重複登録しない）
+function applyCthShiftData(cthShiftJson){
+  const parsed = parseCthShiftSheet(cthShiftJson);
+  state.cthShiftData = parsed.data;
+  state.cthStaffNames = parsed.names;
+  renderCthShiftTable();
+}
+
+// ボタンのイベントリスナー登録は初期化時に1度だけ行う
+function bindCthShiftControls(){
+  const addNameInput = document.getElementById("cthStaffNameInput");
+  const addNameBtn = document.getElementById("cthAddStaffBtn");
+  const saveBtn = document.getElementById("cthShiftSaveBtn");
+  const statusEl = document.getElementById("cthShiftStatus");
+  if(!addNameBtn || !saveBtn) return;
+
+  addNameBtn.addEventListener("click", () => {
+    const val = (addNameInput.value || "").trim();
+    if(!val) return;
+    if(state.cthStaffNames.includes(val)){ addNameInput.value = ""; return; }
+    captureCthShiftInputs();
+    state.cthStaffNames.push(val);
+    addNameInput.value = "";
+    renderCthShiftTable();
+  });
+  addNameInput.addEventListener("keydown", e => {
+    if(e.key === "Enter"){ e.preventDefault(); addNameBtn.click(); }
+  });
+
+  saveBtn.addEventListener("click", async () => {
+    captureCthShiftInputs();
+    const dates = getCthWeekdayDates();
+    const entries = [];
+    dates.forEach(d => {
+      state.cthStaffNames.forEach(name => {
+        const time = (state.cthShiftData[d.iso] && state.cthShiftData[d.iso][name]) || "";
+        entries.push({ date: d.iso, name, time });
+      });
+    });
+    if(entries.length === 0){
+      statusEl.textContent = "バイトさんを1人以上追加してください。";
+      statusEl.classList.add("error");
+      return;
+    }
+    statusEl.classList.remove("error");
+    saveBtn.disabled = true;
+    saveBtn.textContent = "保存中...";
+    try{
+      await fetch(SCRIPT_URL, { method: "POST", mode: "no-cors", body: JSON.stringify({ type: "saveCthShift", entries }) });
+      statusEl.textContent = "✓ 保存しました";
+      saveBtn.textContent = "CTHシフトを保存";
+    }catch(e){
+      console.error("CTHシフトの保存に失敗しました", e);
+      statusEl.textContent = "保存に失敗しました。";
+      statusEl.classList.add("error");
+      saveBtn.textContent = "CTHシフトを保存";
+    }finally{
+      saveBtn.disabled = false;
+    }
+  });
+}
+
 /* ---------- localStorage: 販売予測数・生産割り振り（オフライン時フォールバック） ---------- */
 
 function saveForecast(day){
@@ -3111,7 +3381,7 @@ async function refreshAllData(){
 
     const thisYear = new Date().getFullYear();
     state.cellStatus = {};
-    const [weatherRes, chiseJson, shiftJson, holidaysByIso, nsDisruptionsByDate, bootstrap] = await Promise.all([
+    const [weatherRes, chiseJson, shiftJson, holidaysByIso, nsDisruptionsByDate, bootstrap, cthShiftJson] = await Promise.all([
       fetch(weatherUrl).then(r => r.json()),
       fetchSheetJson(null).catch(e => { console.error("チセさんシート取得失敗", e); return null; }),
       fetchSheetJson("シフト回答", SHIFT_SPREADSHEET_ID).catch(e => { console.error("シフト回答シート取得失敗", e); return null; }),
@@ -3119,9 +3389,13 @@ async function refreshAllData(){
       fetchNsDisruptions(),
       // 作業中プラン・具材ステータスをまとめて1回のリクエストで取得する
       fetchBootstrap(),
+      // CTHシフトシートはまだ一度も保存されていない場合は存在しないため、
+      // 取得失敗時はapplyCthShiftData側で空データとして扱う
+      fetchSheetJson("CTHシフト", SHIFT_SPREADSHEET_ID).catch(() => null),
     ]);
     const draftData = bootstrap.drafts;
     applyStatusesToState(bootstrap.statuses);
+    applyCthShiftData(cthShiftJson);
 
     state.holidaysByIso = holidaysByIso;
     state.nsDisruptionsByDate = nsDisruptionsByDate;
@@ -3396,10 +3670,10 @@ async function init(){
 
     const thisYear = new Date().getFullYear();
     initProgressDone = 0;
-    setInitProgress(0, 7);
-    const track = p => p.then(v => { setInitProgress(++initProgressDone, 7); return v; });
+    setInitProgress(0, 8);
+    const track = p => p.then(v => { setInitProgress(++initProgressDone, 8); return v; });
     state.cellStatus = {};
-    const [weatherRes, chiseJson, shiftJson, holidaysByIso, nsDisruptionsByDate, bootstrap, paymentPlanJson] = await Promise.all([
+    const [weatherRes, chiseJson, shiftJson, holidaysByIso, nsDisruptionsByDate, bootstrap, paymentPlanJson, cthShiftJson] = await Promise.all([
       track(fetch(weatherUrl).then(r => r.json())),
       track(fetchSheetJson(null).catch(e => { console.error("チセさんシート取得失敗", e); return null; })),
       track(fetchSheetJson("シフト回答", SHIFT_SPREADSHEET_ID).catch(e => { console.error("シフト回答シート取得失敗", e); return null; })),
@@ -3412,10 +3686,15 @@ async function init(){
       // 月次支払いセクション用の確定プランも、ここで他の取得と並列fetchしておく
       // （従来は描画後に別途fetchしていたため、その分だけ表示完了が遅れていた）
       track(fetchSheetJson("確定プラン", SHIFT_SPREADSHEET_ID).catch(e => { console.error("確定プラン(支払い用)取得失敗", e); return null; })),
+      // CTHシフトシートはまだ一度も保存されていない場合は存在しないため、
+      // 取得失敗時はapplyCthShiftData側で空データとして扱う
+      track(fetchSheetJson("CTHシフト", SHIFT_SPREADSHEET_ID).catch(() => null)),
     ]);
     const draftData = bootstrap.drafts;
     applyStatusesToState(bootstrap.statuses);
     const shiftConfig = bootstrap.shiftConfig;
+    applyCthShiftData(cthShiftJson);
+    bindCthShiftControls();
 
     state.holidaysByIso = holidaysByIso;
     state.nsDisruptionsByDate = nsDisruptionsByDate;
