@@ -29,6 +29,8 @@ function doPost(e) {
       handleSaveShiftConfig(ss, data);
     } else if (data.type === "saveCthShift") {
       handleSaveCthShift(ss, data);
+    } else if (data.type === "saveCthProducts") {
+      handleSaveCthProducts(ss, data);
     } else {
       // type が無い場合（旧バージョンのshift.html等）もシフト回答として扱う
       handleShiftSubmit(ss, data);
@@ -278,6 +280,43 @@ function handleSaveCthShift(ss, data) {
       }
     }
     var row = [entry.date, entry.name, entry.time || "", new Date()];
+    if (foundRow > 0) {
+      sheet.getRange(foundRow, 1, 1, row.length).setValues([row]);
+      values[foundRow - 1] = row;
+    } else {
+      sheet.appendRow(row);
+      values.push(row);
+    }
+  });
+}
+
+// CTH特別会場の商品ラインナップ（お弁当2種・サンドイッチの種類名・個数）を日付ごとに保存する。
+// 1日1行（日付キーでupsert）。読み取りは他の低頻度シートと同様gviz経由で行う。
+function handleSaveCthProducts(ss, data) {
+  var sheet = ss.getSheetByName("CTH商品");
+  if (!sheet) {
+    sheet = ss.insertSheet("CTH商品");
+    sheet.appendRow(["日付", "お弁当1名", "お弁当1個数", "お弁当2名", "お弁当2個数", "サンドイッチ名", "サンドイッチ個数", "更新日時"]);
+  }
+  var values = sheet.getDataRange().getValues();
+  (data.entries || []).forEach(function(entry) {
+    var foundRow = -1;
+    for (var r = 1; r < values.length; r++) {
+      if (normalizeDateCell(values[r][0]) === String(entry.date)) {
+        foundRow = r + 1;
+        break;
+      }
+    }
+    var row = [
+      entry.date,
+      entry.bento1Name || "",
+      Number(entry.bento1Qty) || 0,
+      entry.bento2Name || "",
+      Number(entry.bento2Qty) || 0,
+      entry.sandoName || "",
+      Number(entry.sandoQty) || 0,
+      new Date()
+    ];
     if (foundRow > 0) {
       sheet.getRange(foundRow, 1, 1, row.length).setValues([row]);
       values[foundRow - 1] = row;

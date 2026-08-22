@@ -1089,7 +1089,8 @@
     padding: 0 2px;
   }
   .cth-remove-name-btn:hover{ color: var(--accent); }
-  table.cth-shift-table input[type="text"]{
+  table.cth-shift-table input[type="text"],
+  table.cth-shift-table input[type="number"]{
     width: 110px;
     font-family: inherit;
     font-size: 0.82rem;
@@ -1099,7 +1100,9 @@
     text-align: center;
     color: var(--ink);
   }
-  table.cth-shift-table input[type="text"]:focus{
+  table.cth-shift-table input[type="number"].cth-product-qty{ width: 60px; }
+  table.cth-shift-table input[type="text"]:focus,
+  table.cth-shift-table input[type="number"]:focus{
     border-color: var(--main);
     outline: none;
     box-shadow: 0 0 0 2px rgba(74,124,89,0.18);
@@ -1136,6 +1139,7 @@
     <a href="shift.html">シフト入力</a>
     <a href="#shiftConfigSection">シフト期間設定</a>
     <a href="#cthShiftSection">CTHシフト入力</a>
+    <a href="#cthProductsSection">CTH商品ラインナップ</a>
     <a href="#paymentSection">月次支払い</a>
     <a href="analytics.html">📊 データ分析</a>
     <a href="cth-calendar.html" target="_blank">🍙 CTHカレンダーを見る</a>
@@ -1179,6 +1183,13 @@
     <div id="cthShiftArea"><p class="loading">データを読み込み中...</p></div>
     <button type="button" class="cth-shift-save-btn" id="cthShiftSaveBtn">CTHシフトを保存</button>
     <p class="cth-shift-status" id="cthShiftStatus"></p>
+  </section>
+
+  <section id="cthProductsSection">
+    <h2>CTH商品ラインナップ設定<span class="badge">8/24〜9/11 月〜金</span></h2>
+    <div id="cthProductsArea"><p class="loading">データを読み込み中...</p></div>
+    <button type="button" class="cth-shift-save-btn" id="cthProductsSaveBtn">CTH商品ラインナップを保存</button>
+    <p class="cth-shift-status" id="cthProductsStatus"></p>
   </section>
 
   <section>
@@ -1286,6 +1297,7 @@ const state = {
   cellStatus: {},       // "M/D" -> { memberName: { fillingName: { handed:bool, cooked:bool } } }
   cthStaffNames: [],    // CTHシフト表の列（バイトさん名）
   cthShiftData: {},     // "yyyy-MM-dd" -> { name: "10:00-14:00", ... }
+  cthProductsByDate: {}, // "yyyy-MM-dd" -> { bento1Name, bento1Qty, bento2Name, bento2Qty, sandoName, sandoQty }
 };
 
 const weekCollapsed = { 1: false, 2: false };
@@ -3031,6 +3043,125 @@ function bindCthShiftControls(){
   });
 }
 
+/* ---------- CTH商品ラインナップ設定（お弁当2種・サンドイッチ） ---------- */
+
+const CTH_PRODUCT_DEFAULTS = { bento1Qty: 10, bento2Qty: 10, sandoQty: 20 };
+
+function parseCthProductsSheet(json){
+  const result = {};
+  if(!json || !json.table || !json.table.rows) return result;
+  json.table.rows.forEach(r => {
+    const c = r.c;
+    if(!c || !c[0]) return;
+    const dateStr = parseGvizDateCell(c[0]);
+    if(!dateStr) return;
+    const qtyOrDefault = (cell, def) => (cell && cell.v !== null && cell.v !== undefined && cell.v !== "") ? Number(cell.v) : def;
+    result[dateStr] = {
+      bento1Name: String((c[1] && c[1].v) || ""),
+      bento1Qty: qtyOrDefault(c[2], CTH_PRODUCT_DEFAULTS.bento1Qty),
+      bento2Name: String((c[3] && c[3].v) || ""),
+      bento2Qty: qtyOrDefault(c[4], CTH_PRODUCT_DEFAULTS.bento2Qty),
+      sandoName: String((c[5] && c[5].v) || ""),
+      sandoQty: qtyOrDefault(c[6], CTH_PRODUCT_DEFAULTS.sandoQty),
+    };
+  });
+  return result;
+}
+
+function renderCthProductsTable(){
+  const area = document.getElementById("cthProductsArea");
+  if(!area) return;
+  const dates = getCthWeekdayDates();
+
+  const rows = dates.map(d => {
+    const entry = state.cthProductsByDate[d.iso] || {};
+    const b1n = entry.bento1Name || "";
+    const b1q = entry.bento1Qty !== undefined ? entry.bento1Qty : CTH_PRODUCT_DEFAULTS.bento1Qty;
+    const b2n = entry.bento2Name || "";
+    const b2q = entry.bento2Qty !== undefined ? entry.bento2Qty : CTH_PRODUCT_DEFAULTS.bento2Qty;
+    const sn = entry.sandoName || "";
+    const sq = entry.sandoQty !== undefined ? entry.sandoQty : CTH_PRODUCT_DEFAULTS.sandoQty;
+    return `<tr>
+      <td class="cth-date-cell">${d.dateObj.getMonth() + 1}/${d.dateObj.getDate()}（${DAY_NAMES[d.dow]}）</td>
+      <td><input type="text" class="cth-product-input" data-iso="${d.iso}" data-field="bento1Name" value="${escapeHtmlAttr(b1n)}" placeholder="お弁当1"></td>
+      <td><input type="number" class="cth-product-input cth-product-qty" data-iso="${d.iso}" data-field="bento1Qty" value="${b1q}" min="0"></td>
+      <td><input type="text" class="cth-product-input" data-iso="${d.iso}" data-field="bento2Name" value="${escapeHtmlAttr(b2n)}" placeholder="お弁当2"></td>
+      <td><input type="number" class="cth-product-input cth-product-qty" data-iso="${d.iso}" data-field="bento2Qty" value="${b2q}" min="0"></td>
+      <td><input type="text" class="cth-product-input" data-iso="${d.iso}" data-field="sandoName" value="${escapeHtmlAttr(sn)}" placeholder="サンドイッチ"></td>
+      <td><input type="number" class="cth-product-input cth-product-qty" data-iso="${d.iso}" data-field="sandoQty" value="${sq}" min="0"></td>
+    </tr>`;
+  }).join("");
+
+  area.innerHTML = `
+    <div class="table-scroll">
+      <table class="cth-shift-table">
+        <thead><tr>
+          <th>日付</th>
+          <th colspan="2">お弁当1</th>
+          <th colspan="2">お弁当2</th>
+          <th colspan="2">サンドイッチ</th>
+        </tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>
+  `;
+}
+
+// データの反映・再描画のみ行う（再読み込み時に呼んでもイベントリスナーは重複登録しない）
+function applyCthProductsData(cthProductsJson){
+  state.cthProductsByDate = parseCthProductsSheet(cthProductsJson);
+  renderCthProductsTable();
+}
+
+// ボタンのイベントリスナー登録は初期化時に1度だけ行う
+function bindCthProductsControls(){
+  const saveBtn = document.getElementById("cthProductsSaveBtn");
+  const statusEl = document.getElementById("cthProductsStatus");
+  if(!saveBtn) return;
+
+  saveBtn.addEventListener("click", async () => {
+    const area = document.getElementById("cthProductsArea");
+    const dates = getCthWeekdayDates();
+    const byIso = {};
+    area.querySelectorAll(".cth-product-input").forEach(input => {
+      const iso = input.dataset.iso;
+      const field = input.dataset.field;
+      if(!byIso[iso]) byIso[iso] = {};
+      byIso[iso][field] = input.value;
+    });
+
+    const entries = dates.map(d => {
+      const v = byIso[d.iso] || {};
+      const qtyOrDefault = (val, def) => (val !== undefined && val !== "") ? Number(val) : def;
+      return {
+        date: d.iso,
+        bento1Name: v.bento1Name || "",
+        bento1Qty: qtyOrDefault(v.bento1Qty, CTH_PRODUCT_DEFAULTS.bento1Qty),
+        bento2Name: v.bento2Name || "",
+        bento2Qty: qtyOrDefault(v.bento2Qty, CTH_PRODUCT_DEFAULTS.bento2Qty),
+        sandoName: v.sandoName || "",
+        sandoQty: qtyOrDefault(v.sandoQty, CTH_PRODUCT_DEFAULTS.sandoQty),
+      };
+    });
+
+    statusEl.classList.remove("error");
+    saveBtn.disabled = true;
+    saveBtn.textContent = "保存中...";
+    try{
+      await fetch(SCRIPT_URL, { method: "POST", mode: "no-cors", body: JSON.stringify({ type: "saveCthProducts", entries }) });
+      statusEl.textContent = "✓ 保存しました";
+      saveBtn.textContent = "CTH商品ラインナップを保存";
+    }catch(e){
+      console.error("CTH商品ラインナップの保存に失敗しました", e);
+      statusEl.textContent = "保存に失敗しました。";
+      statusEl.classList.add("error");
+      saveBtn.textContent = "CTH商品ラインナップを保存";
+    }finally{
+      saveBtn.disabled = false;
+    }
+  });
+}
+
 /* ---------- localStorage: 販売予測数・生産割り振り（オフライン時フォールバック） ---------- */
 
 function saveForecast(day){
@@ -3381,7 +3512,7 @@ async function refreshAllData(){
 
     const thisYear = new Date().getFullYear();
     state.cellStatus = {};
-    const [weatherRes, chiseJson, shiftJson, holidaysByIso, nsDisruptionsByDate, bootstrap, cthShiftJson] = await Promise.all([
+    const [weatherRes, chiseJson, shiftJson, holidaysByIso, nsDisruptionsByDate, bootstrap, cthShiftJson, cthProductsJson] = await Promise.all([
       fetch(weatherUrl).then(r => r.json()),
       fetchSheetJson(null).catch(e => { console.error("チセさんシート取得失敗", e); return null; }),
       fetchSheetJson("シフト回答", SHIFT_SPREADSHEET_ID).catch(e => { console.error("シフト回答シート取得失敗", e); return null; }),
@@ -3389,13 +3520,15 @@ async function refreshAllData(){
       fetchNsDisruptions(),
       // 作業中プラン・具材ステータスをまとめて1回のリクエストで取得する
       fetchBootstrap(),
-      // CTHシフトシートはまだ一度も保存されていない場合は存在しないため、
-      // 取得失敗時はapplyCthShiftData側で空データとして扱う
+      // CTHシフト・CTH商品シートはまだ一度も保存されていない場合は存在しないため、
+      // 取得失敗時はapplyCthShiftData/applyCthProductsData側で空データとして扱う
       fetchSheetJson("CTHシフト", SHIFT_SPREADSHEET_ID).catch(() => null),
+      fetchSheetJson("CTH商品", SHIFT_SPREADSHEET_ID).catch(() => null),
     ]);
     const draftData = bootstrap.drafts;
     applyStatusesToState(bootstrap.statuses);
     applyCthShiftData(cthShiftJson);
+    applyCthProductsData(cthProductsJson);
 
     state.holidaysByIso = holidaysByIso;
     state.nsDisruptionsByDate = nsDisruptionsByDate;
@@ -3670,10 +3803,10 @@ async function init(){
 
     const thisYear = new Date().getFullYear();
     initProgressDone = 0;
-    setInitProgress(0, 8);
-    const track = p => p.then(v => { setInitProgress(++initProgressDone, 8); return v; });
+    setInitProgress(0, 9);
+    const track = p => p.then(v => { setInitProgress(++initProgressDone, 9); return v; });
     state.cellStatus = {};
-    const [weatherRes, chiseJson, shiftJson, holidaysByIso, nsDisruptionsByDate, bootstrap, paymentPlanJson, cthShiftJson] = await Promise.all([
+    const [weatherRes, chiseJson, shiftJson, holidaysByIso, nsDisruptionsByDate, bootstrap, paymentPlanJson, cthShiftJson, cthProductsJson] = await Promise.all([
       track(fetch(weatherUrl).then(r => r.json())),
       track(fetchSheetJson(null).catch(e => { console.error("チセさんシート取得失敗", e); return null; })),
       track(fetchSheetJson("シフト回答", SHIFT_SPREADSHEET_ID).catch(e => { console.error("シフト回答シート取得失敗", e); return null; })),
@@ -3686,15 +3819,18 @@ async function init(){
       // 月次支払いセクション用の確定プランも、ここで他の取得と並列fetchしておく
       // （従来は描画後に別途fetchしていたため、その分だけ表示完了が遅れていた）
       track(fetchSheetJson("確定プラン", SHIFT_SPREADSHEET_ID).catch(e => { console.error("確定プラン(支払い用)取得失敗", e); return null; })),
-      // CTHシフトシートはまだ一度も保存されていない場合は存在しないため、
-      // 取得失敗時はapplyCthShiftData側で空データとして扱う
+      // CTHシフト・CTH商品シートはまだ一度も保存されていない場合は存在しないため、
+      // 取得失敗時はapplyCthShiftData/applyCthProductsData側で空データとして扱う
       track(fetchSheetJson("CTHシフト", SHIFT_SPREADSHEET_ID).catch(() => null)),
+      track(fetchSheetJson("CTH商品", SHIFT_SPREADSHEET_ID).catch(() => null)),
     ]);
     const draftData = bootstrap.drafts;
     applyStatusesToState(bootstrap.statuses);
     const shiftConfig = bootstrap.shiftConfig;
     applyCthShiftData(cthShiftJson);
     bindCthShiftControls();
+    applyCthProductsData(cthProductsJson);
+    bindCthProductsControls();
 
     state.holidaysByIso = holidaysByIso;
     state.nsDisruptionsByDate = nsDisruptionsByDate;

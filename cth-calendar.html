@@ -285,6 +285,40 @@ function parseDraftFillingsByDate(json){
   return result;
 }
 
+// CTH商品ラインナップ設定のデフォルト値（admin.htmlで未設定の日はこの値を使う）
+const CTH_PRODUCT_DEFAULTS = {
+  bento1Name: "お弁当1", bento1Qty: 10,
+  bento2Name: "お弁当2", bento2Qty: 10,
+  sandoName: "サンドイッチ", sandoQty: 20,
+};
+
+// CTH商品シートから日付ごとのお弁当2種・サンドイッチの種類名・個数を取り出す。
+// 名前が未入力の項目にはデフォルトの仮名称を、個数が未入力の項目にはデフォルト値を補う。
+function parseCthProductsByDate(json){
+  const result = {};
+  if(!json || !json.table || !json.table.rows) return result;
+  json.table.rows.forEach(r => {
+    const c = r.c;
+    if(!c || !c[0]) return;
+    const dateStr = parseGvizDateCell(c[0]);
+    if(!dateStr) return;
+    const qtyOrDefault = (cell, def) => (cell && cell.v !== null && cell.v !== undefined && cell.v !== "") ? Number(cell.v) : def;
+    const nameOrDefault = (cell, def) => {
+      const v = cell ? String(cell.v || "").trim() : "";
+      return v || def;
+    };
+    result[dateStr] = {
+      bento1Name: nameOrDefault(c[1], CTH_PRODUCT_DEFAULTS.bento1Name),
+      bento1Qty: qtyOrDefault(c[2], CTH_PRODUCT_DEFAULTS.bento1Qty),
+      bento2Name: nameOrDefault(c[3], CTH_PRODUCT_DEFAULTS.bento2Name),
+      bento2Qty: qtyOrDefault(c[4], CTH_PRODUCT_DEFAULTS.bento2Qty),
+      sandoName: nameOrDefault(c[5], CTH_PRODUCT_DEFAULTS.sandoName),
+      sandoQty: qtyOrDefault(c[6], CTH_PRODUCT_DEFAULTS.sandoQty),
+    };
+  });
+  return result;
+}
+
 // CTHシフトシートから日付ごとの出勤スタッフ一覧を取り出す（時間帯が未入力の行は出勤なし扱い）
 function parseCthShiftByDate(json){
   const result = {};
@@ -423,7 +457,7 @@ function buildStaffTimelineHtml(staffList){
   `;
 }
 
-function renderCalendar(uvaFillingByDate, shiftByDate){
+function renderCalendar(uvaFillingByDate, shiftByDate, productsByDate){
   const area = document.getElementById("calendarArea");
   const dates = getCthWeekdayDates();
   if(dates.length === 0){
@@ -439,6 +473,10 @@ function renderCalendar(uvaFillingByDate, shiftByDate){
       `<div class="filling-name">${escapeHtml(f)}</div><div class="filling-qty">${fillingQty[f]}個</div>`
     ).join("");
     const totalQty = FILLINGS.reduce((s, f) => s + (fillingQty[f] || 0), 0);
+
+    // まだadmin.html側でその日の商品ラインナップが設定されていない場合は、仮の名称と
+    // デフォルト個数（10個・10個・20個）を暫定表示する
+    const products = productsByDate[d.iso] || CTH_PRODUCT_DEFAULTS;
 
     const staffList = shiftByDate[d.iso] || [];
     let staffHtml;
@@ -464,11 +502,12 @@ function renderCalendar(uvaFillingByDate, shiftByDate){
         </div>
         <div class="menu-block">
           <div class="menu-title">🍱 お弁当</div>
-          <div class="fixed-item-row"><span>2種類 × 10個ずつ</span><span class="fixed-item-qty">計20個</span></div>
+          <div class="fixed-item-row"><span>${escapeHtml(products.bento1Name)}</span><span class="fixed-item-qty">${products.bento1Qty}個</span></div>
+          <div class="fixed-item-row"><span>${escapeHtml(products.bento2Name)}</span><span class="fixed-item-qty">${products.bento2Qty}個</span></div>
         </div>
         <div class="menu-block">
-          <div class="menu-title">🍞 フルーツサンド</div>
-          <div class="fixed-item-row"><span>フルーツサンド</span><span class="fixed-item-qty">20個</span></div>
+          <div class="menu-title">🍞 サンドイッチ</div>
+          <div class="fixed-item-row"><span>${escapeHtml(products.sandoName)}</span><span class="fixed-item-qty">${products.sandoQty}個</span></div>
         </div>
         <div class="menu-block">
           <div class="menu-title">🍡 その他</div>
@@ -485,13 +524,15 @@ function renderCalendar(uvaFillingByDate, shiftByDate){
 
 async function init(){
   try{
-    const [draftJson, cthShiftJson] = await Promise.all([
+    const [draftJson, cthShiftJson, cthProductsJson] = await Promise.all([
       fetchGvizSheet("作業中プラン").catch(() => null),
       fetchGvizSheet("CTHシフト").catch(() => null),
+      fetchGvizSheet("CTH商品").catch(() => null),
     ]);
     const uvaFillingByDate = parseDraftFillingsByDate(draftJson);
     const shiftByDate = parseCthShiftByDate(cthShiftJson);
-    renderCalendar(uvaFillingByDate, shiftByDate);
+    const productsByDate = parseCthProductsByDate(cthProductsJson);
+    renderCalendar(uvaFillingByDate, shiftByDate, productsByDate);
   }catch(e){
     console.error("CTHカレンダーのデータ取得に失敗しました", e);
     document.getElementById("calendarArea").innerHTML = `<p class="off-note">データの取得に失敗しました。時間をおいて再度お試しください。</p>`;
