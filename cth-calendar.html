@@ -116,6 +116,71 @@
     margin: 0;
     padding: 6px 12px;
   }
+
+  /* 出勤スタッフ：時間軸タイムライン（ガントチャート風） */
+  .timeline-wrap{
+    background: rgba(242,247,243,0.6);
+    border-radius: 8px;
+    padding: 10px 12px 8px;
+  }
+  .timeline-axis{
+    position: relative;
+    height: 16px;
+    margin-bottom: 6px;
+    border-bottom: 1px solid var(--line);
+  }
+  .timeline-axis span{
+    position: absolute;
+    top: 0;
+    transform: translateX(-50%);
+    font-size: 0.62rem;
+    color: #888;
+    white-space: nowrap;
+  }
+  .timeline-axis span:first-child{ transform: translateX(0); }
+  .timeline-axis span:last-child{ transform: translateX(-100%); }
+  .timeline-body{
+    position: relative;
+    padding-top: 2px;
+  }
+  .timeline-gridlines{
+    position: absolute;
+    inset: 0;
+  }
+  .timeline-gridline{
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    width: 1px;
+    background: var(--line);
+  }
+  .timeline-row{
+    position: relative;
+    height: 30px;
+    margin-bottom: 3px;
+  }
+  .timeline-bar{
+    position: absolute;
+    top: 2px;
+    bottom: 2px;
+    border-radius: 6px;
+    color: #fff;
+    font-size: 0.72rem;
+    font-weight: bold;
+    display: flex;
+    align-items: center;
+    padding: 0 8px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.15);
+  }
+  .timeline-unparsed-note{
+    font-size: 0.76rem;
+    color: #999;
+    margin: 8px 0 0;
+    padding: 0 12px;
+  }
   .loading{ text-align: center; color: #999; padding: 50px 0; }
   .off-note{ text-align: center; color: #999; padding: 20px 0; }
 
@@ -241,6 +306,123 @@ function escapeHtml(str){
   return String(str || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
 
+// バイトさんごとに固定の色を割り当てる（同じ名前なら日をまたいでも常に同じ色になるよう、
+// 名前の文字列から決定的にハッシュ計算する。乱数は使わない）
+const TIMELINE_COLORS = ["#4a7c59", "#c9533f", "#3d6d99", "#b8860b", "#7d5ba6", "#c2185b", "#00796b", "#8d6e63", "#5d4037", "#455a64"];
+function hashStaffName(name){
+  let hash = 0;
+  const str = String(name || "");
+  for(let i = 0; i < str.length; i++){ hash = (hash * 31 + str.charCodeAt(i)) >>> 0; }
+  return hash;
+}
+
+// 同じ日にタイムライン表示される全員の色を一括で決める。名前のハッシュを基準の色に
+// しつつ（別の日でもできるだけ同じ人が同じ色になるように）、同じ日に表示される人数分の
+// ハッシュが衝突した場合は次の未使用色にずらして必ず異なる色にする
+// （パレットの色数=10を超える人数が同じ日に重なる場合のみ、色が重複しうる）。
+function assignStaffColors(names){
+  const used = new Set();
+  const colorByName = {};
+  names.forEach(name => {
+    let idx = hashStaffName(name) % TIMELINE_COLORS.length;
+    let tries = 0;
+    while(used.has(idx) && tries < TIMELINE_COLORS.length){
+      idx = (idx + 1) % TIMELINE_COLORS.length;
+      tries++;
+    }
+    used.add(idx);
+    colorByName[name] = TIMELINE_COLORS[idx];
+  });
+  return colorByName;
+}
+
+// "10:00-14:00" のような自由記述の時間帯文字列を分単位の開始・終了に変換する。
+// "〜"や"~"区切りにも対応。解析できない場合はnullを返す（呼び出し側でタイムライン表示から除外する）。
+function parseShiftTimeRange(timeStr){
+  const parts = String(timeStr || "").split(/[-〜~]/).map(s => s.trim());
+  if(parts.length !== 2) return null;
+  const toMinutes = s => {
+    const m = s.match(/^(\d{1,2}):(\d{2})$/);
+    if(!m) return null;
+    const h = parseInt(m[1], 10), mi = parseInt(m[2], 10);
+    if(h < 0 || h > 29 || mi < 0 || mi > 59) return null;
+    return h * 60 + mi;
+  };
+  const start = toMinutes(parts[0]);
+  const end = toMinutes(parts[1]);
+  if(start === null || end === null || end <= start) return null;
+  return { start, end };
+}
+
+// タイムラインの時間軸範囲を、実際の勤務時間帯を全てカバーしつつ1時間単位に揃えて決定する。
+// 誰も出勤していない/時間帯を解析できない日は、CTHの標準的な営業時間帯をデフォルトにする。
+function computeTimelineAxis(rangesWithData){
+  const DEFAULT_START = 10 * 60;
+  const DEFAULT_END = 18 * 60;
+  let minStart = DEFAULT_START, maxEnd = DEFAULT_END;
+  rangesWithData.forEach(r => {
+    minStart = Math.min(minStart, r.start);
+    maxEnd = Math.max(maxEnd, r.end);
+  });
+  return {
+    axisStart: Math.floor(minStart / 60) * 60,
+    axisEnd: Math.ceil(maxEnd / 60) * 60,
+  };
+}
+
+// 出勤スタッフの一覧を、時間軸に沿ったバー（ガントチャート風）のHTMLに変換する。
+// 名前ごとに1行を割り当てるため、時間帯が重なっていても視覚的に衝突しない。
+// 時間帯を解析できたスタッフが1人もいない場合はnullを返し、呼び出し側で従来の
+// テキスト一覧表示にフォールバックできるようにする。
+function buildStaffTimelineHtml(staffList){
+  const withRange = [];
+  const unparsed = [];
+  staffList.forEach(s => {
+    const range = parseShiftTimeRange(s.time);
+    if(range) withRange.push({ ...s, range });
+    else unparsed.push(s);
+  });
+
+  if(withRange.length === 0) return null;
+
+  const { axisStart, axisEnd } = computeTimelineAxis(withRange.map(s => s.range));
+  const totalMin = axisEnd - axisStart;
+
+  const hourTicks = [];
+  for(let t = axisStart; t <= axisEnd; t += 60){
+    hourTicks.push({ label: `${Math.floor(t / 60)}時`, pct: ((t - axisStart) / totalMin) * 100 });
+  }
+  const axisHtml = hourTicks.map(h => `<span style="left:${h.pct}%">${h.label}</span>`).join("");
+  const gridlinesHtml = hourTicks.map(h => `<div class="timeline-gridline" style="left:${h.pct}%"></div>`).join("");
+
+  const colorByName = assignStaffColors(withRange.map(s => s.name));
+  const rowsHtml = withRange.map(s => {
+    const leftPct = ((s.range.start - axisStart) / totalMin) * 100;
+    const widthPct = ((s.range.end - s.range.start) / totalMin) * 100;
+    const color = colorByName[s.name];
+    return `
+      <div class="timeline-row">
+        <div class="timeline-bar" style="left:${leftPct}%; width:${widthPct}%; background:${color};" title="${escapeHtml(s.name)} ${escapeHtml(s.time)}">${escapeHtml(s.name)}</div>
+      </div>
+    `;
+  }).join("");
+
+  const unparsedHtml = unparsed.length
+    ? `<p class="timeline-unparsed-note">時刻の形式を認識できなかったため一覧表示：${unparsed.map(s => `${escapeHtml(s.name)}（${escapeHtml(s.time)}）`).join("、")}</p>`
+    : "";
+
+  return `
+    <div class="timeline-wrap">
+      <div class="timeline-axis">${axisHtml}</div>
+      <div class="timeline-body">
+        <div class="timeline-gridlines">${gridlinesHtml}</div>
+        ${rowsHtml}
+      </div>
+    </div>
+    ${unparsedHtml}
+  `;
+}
+
 function renderCalendar(uvaFillingByDate, shiftByDate){
   const area = document.getElementById("calendarArea");
   const dates = getCthWeekdayDates();
@@ -259,11 +441,16 @@ function renderCalendar(uvaFillingByDate, shiftByDate){
     const totalQty = FILLINGS.reduce((s, f) => s + (fillingQty[f] || 0), 0);
 
     const staffList = shiftByDate[d.iso] || [];
-    const staffHtml = staffList.length
-      ? `<div class="staff-list">${staffList.map(s =>
-          `<span class="staff-chip">${escapeHtml(s.name)}<span class="time">${escapeHtml(s.time)}</span></span>`
-        ).join("")}</div>`
-      : `<p class="no-staff-note">出勤予定はまだ登録されていません。</p>`;
+    let staffHtml;
+    if(staffList.length === 0){
+      staffHtml = `<p class="no-staff-note">出勤予定はまだ登録されていません。</p>`;
+    } else {
+      // 時間帯を解析できたスタッフが1人もいない場合（自由記述の形式が想定外など）は
+      // タイムラインを描画できないため、従来通りのテキスト一覧表示にフォールバックする
+      staffHtml = buildStaffTimelineHtml(staffList) || `<div class="staff-list">${staffList.map(s =>
+        `<span class="staff-chip">${escapeHtml(s.name)}<span class="time">${escapeHtml(s.time)}</span></span>`
+      ).join("")}</div>`;
+    }
 
     return `
       <div class="day-card">
