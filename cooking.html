@@ -1,0 +1,552 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>調理計算 | Chabon Ops</title>
+<style>
+  :root{
+    --main: #4a7c59;
+    --main-dark: #335c3e;
+    --main-light: #e9f1ea;
+    --accent: #c9533f;
+    --bg: #faf8f3;
+    --card: #ffffff;
+    --ink: #2b2b28;
+    --line: #e2ddd0;
+  }
+  *{ box-sizing: border-box; }
+  body{
+    margin: 0;
+    font-family: "Hiragino Sans", "Yu Gothic", "Noto Sans JP", sans-serif;
+    background: var(--bg);
+    color: var(--ink);
+  }
+  header{
+    background: var(--main-dark);
+    color: #fff;
+    padding: 20px 16px;
+    text-align: center;
+  }
+  header h1{ margin: 0; font-size: 1.2rem; letter-spacing: 0.05em; }
+  header p{ margin: 6px 0 0; font-size: 0.8rem; opacity: 0.85; }
+  .header-nav{ margin-top: 12px; }
+  .header-nav a{
+    display: inline-block;
+    color: #fff;
+    text-decoration: none;
+    background: rgba(255,255,255,0.15);
+    border: 1px solid rgba(255,255,255,0.4);
+    border-radius: 100px;
+    padding: 5px 14px;
+    font-size: 0.78rem;
+    margin: 2px 4px;
+  }
+  main{
+    max-width: 680px;
+    margin: 0 auto;
+    padding: 16px 14px 60px;
+  }
+  section.card{
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: 14px;
+    padding: 16px;
+    margin-bottom: 16px;
+    box-shadow: 0 2px 6px rgba(0,0,0,0.03);
+  }
+  section.card h2{
+    margin: 0 0 12px;
+    font-size: 0.95rem;
+    color: var(--main-dark);
+  }
+  .section-header-row{
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 12px;
+  }
+  .section-header-row h2{ margin: 0; }
+
+  .weekday-btn-row{
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+  .weekday-btn{
+    flex: 1;
+    min-width: 56px;
+    background: var(--main-light);
+    color: var(--main-dark);
+    border: 1px solid var(--main);
+    border-radius: 10px;
+    padding: 10px 6px;
+    font-size: 0.88rem;
+    font-weight: bold;
+    cursor: pointer;
+    font-family: inherit;
+  }
+  .weekday-btn:hover{ background: #dcebe0; }
+  .weekday-btn.active{ background: var(--main); color: #fff; }
+
+  .clear-btn{
+    background: #fff;
+    color: var(--accent);
+    border: 1px solid var(--accent);
+    border-radius: 100px;
+    padding: 6px 16px;
+    font-size: 0.8rem;
+    font-weight: bold;
+    cursor: pointer;
+    font-family: inherit;
+    white-space: nowrap;
+  }
+  .clear-btn:hover{ background: #fdecea; }
+
+  .date-list{
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+    gap: 8px;
+  }
+  .date-item{
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    padding: 8px 10px;
+    font-size: 0.85rem;
+    cursor: pointer;
+    user-select: none;
+  }
+  .date-item:has(input:checked){
+    background: var(--main-light);
+    border-color: var(--main);
+    color: var(--main-dark);
+    font-weight: bold;
+  }
+  .date-item input[type="checkbox"]{
+    width: 16px;
+    height: 16px;
+    accent-color: var(--main);
+    flex-shrink: 0;
+  }
+  .date-item .week-tag{
+    font-size: 0.68rem;
+    color: #999;
+    margin-left: auto;
+  }
+  .week-heading{
+    font-size: 0.8rem;
+    font-weight: bold;
+    color: #888;
+    margin: 14px 0 6px;
+  }
+  .week-heading:first-child{ margin-top: 0; }
+
+  .summary-card{ background: var(--main-light); border-color: var(--main); }
+  .summary-grid{
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+    gap: 12px;
+  }
+  .summary-item{
+    background: #fff;
+    border-radius: 12px;
+    padding: 14px 10px;
+    text-align: center;
+    box-shadow: 0 1px 4px rgba(0,0,0,0.05);
+  }
+  .summary-label{
+    font-size: 0.8rem;
+    font-weight: bold;
+    color: var(--main-dark);
+    margin-bottom: 6px;
+  }
+  .summary-num{
+    font-size: 2.4rem;
+    font-weight: bold;
+    color: var(--main-dark);
+    line-height: 1;
+  }
+  .summary-num span{ font-size: 1rem; font-weight: normal; color: #666; margin-left: 2px; }
+  .summary-note{
+    text-align: center;
+    font-size: 0.8rem;
+    color: #888;
+    margin-top: 12px;
+  }
+
+  .loading{ text-align: center; color: #999; padding: 30px 0; }
+  .off-note{ text-align: center; color: #999; padding: 20px 0; }
+
+  @media (max-width: 480px){
+    main{ padding: 12px 8px 50px; }
+    section.card{ padding: 12px; }
+    .summary-num{ font-size: 2rem; }
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>🍳 調理計算</h1>
+  <p>複数日分の調理をまとめて行う際の必要数を計算します</p>
+  <nav class="header-nav">
+    <a href="admin.html">← 管理画面</a>
+  </nav>
+</header>
+
+<main>
+  <section class="card">
+    <h2>曜日でまとめて選択</h2>
+    <div class="weekday-btn-row" id="weekdayBtnRow"></div>
+  </section>
+
+  <section class="card">
+    <div class="section-header-row">
+      <h2>日付を選択</h2>
+      <button type="button" class="clear-btn" id="clearAllBtn">全て解除</button>
+    </div>
+    <div id="dateListArea"><p class="loading">読み込み中...</p></div>
+  </section>
+
+  <section class="card summary-card">
+    <h2>必要数合計</h2>
+    <div class="summary-grid" id="summaryArea"></div>
+    <p class="summary-note" id="summaryNote"></p>
+  </section>
+</main>
+
+<script>
+const SHIFT_SPREADSHEET_ID = "1PHf1o3smqIQdeFkhBHjBZUEub7VtRcynQLllmSR7w-s"; // 作業中プラン
+const CHISE_SPREADSHEET_ID = "1rQtRUSP5e7qOjnT4RPvMGfWrEFcFL89AsLe8cjGIW4U"; // チセさんの生産データ
+const DAY_NAMES = ["日", "月", "火", "水", "木", "金", "土"];
+const WEEKDAY_BUTTONS = [1, 2, 3, 4, 5]; // 月〜金
+
+// 週2回の調理対象具材（この4種類のみ集計する）
+const TARGET_FILLINGS = ["テリヤキチキン", "サーモン", "ツナマヨ", "スパイシーツナマヨ"];
+
+// CTH特別会場（期間限定）: admin.html/cth-calendar.htmlと同じ定義。
+// 作業中プランがまだ編集されていないCTH期間中の日は、UvA枠がCTH固定50個の標準比率按分に
+// フォールバックする（cth-calendar.htmlのおにぎり表示と同じ扱い）。
+const CTH_SPECIAL_START = "2026-08-24";
+const CTH_SPECIAL_END = "2026-09-11";
+const CTH_SPECIAL_QTY = 50;
+const FILLING_RATIOS = {
+  "スパイシーツナマヨ": 0.2234,
+  "テリヤキチキン": 0.1966,
+  "サーモン": 0.1966,
+  "ツナマヨ": 0.1340,
+  "スパイシー味噌": 0.0894,
+  "枝豆": 0.04,
+  "梅": 0.02,
+  "うなぎ": 0.05,
+  "今月のおにぎり": 0.05,
+};
+function isCthSpecialDay(iso){
+  const dow = new Date(`${iso}T00:00:00`).getDay();
+  return dow >= 1 && dow <= 5 && iso >= CTH_SPECIAL_START && iso <= CTH_SPECIAL_END;
+}
+function buildFillingDefaults(total){
+  const obj = {};
+  Object.keys(FILLING_RATIOS).forEach(f => { obj[f] = Math.round(total * FILLING_RATIOS[f]); });
+  return obj;
+}
+
+const state = {
+  dates: [],           // [{iso, dow, dateObj, weekLabel}]
+  selected: new Set(),  // 選択中のiso
+  draftByDate: {},      // iso -> {zuidFillingQty, uvaFillingQty, zuidOpen, uvaOpen}
+  chiseByLabel: {},     // "M/d" -> {breakdown, subtotal}
+};
+
+function pad(n){ return String(n).padStart(2, "0"); }
+function isoDate(d){ return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`; }
+function mdLabel(d){ return `${d.getMonth() + 1}/${d.getDate()}`; }
+
+function getMonday(date){
+  const d = new Date(date);
+  const day = d.getDay();
+  const diff = day === 0 ? -6 : 1 - day;
+  d.setDate(d.getDate() + diff);
+  d.setHours(0, 0, 0, 0);
+  return d;
+}
+function getWeekDates(weekOffset){
+  const thisMonday = getMonday(new Date());
+  const targetMonday = new Date(thisMonday);
+  targetMonday.setDate(thisMonday.getDate() + weekOffset * 7);
+  const dates = [];
+  for(let i = 0; i < 5; i++){
+    const d = new Date(targetMonday);
+    d.setDate(targetMonday.getDate() + i);
+    dates.push(d);
+  }
+  return dates;
+}
+// 「今週」：今日〜今週金曜まで。今日が月〜金の場合のみ表示し、土日は表示しない
+// （admin.htmlの「販売予測数」カード一覧と同じ「直近の営業日」の定義に合わせている）
+function getThisWeekRemainingDates(){
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const dow = today.getDay();
+  if(dow < 1 || dow > 5) return [];
+  const thisMonday = getMonday(today);
+  const thisFriday = new Date(thisMonday);
+  thisFriday.setDate(thisMonday.getDate() + 4);
+  const dates = [];
+  const cursor = new Date(today);
+  while(cursor <= thisFriday){
+    dates.push(new Date(cursor));
+    cursor.setDate(cursor.getDate() + 1);
+  }
+  return dates;
+}
+
+// 直近2〜3週間分の営業日（今週の残り＋来週＋再来週、月〜金）の日付一覧を作る
+function buildDateList(){
+  const weeks = [
+    { label: "今週", dates: getThisWeekRemainingDates() },
+    { label: "来週", dates: getWeekDates(1) },
+    { label: "再来週", dates: getWeekDates(2) },
+  ];
+  const list = [];
+  weeks.forEach(week => {
+    week.dates.forEach(d => {
+      list.push({ iso: isoDate(d), dow: d.getDay(), dateObj: d, weekLabel: week.label });
+    });
+  });
+  return list;
+}
+
+function escapeHtml(str){
+  return String(str || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
+async function fetchGvizSheet(spreadsheetId, sheetName){
+  const url = `https://docs.google.com/spreadsheets/d/${spreadsheetId}/gviz/tq?tqx=out:json` +
+    (sheetName ? `&sheet=${encodeURIComponent(sheetName)}` : "");
+  const res = await fetch(url, { cache: "no-store" });
+  const text = await res.text();
+  const match = text.match(/setResponse\(([\s\S]*)\);\s*$/);
+  if(!match) throw new Error("シートの解析に失敗しました: " + sheetName);
+  return JSON.parse(match[1]);
+}
+
+// gvizの日付型セルを "yyyy-MM-dd" のISO文字列に変換する（admin.html/index.htmlと同じ方式）
+function parseGvizDateCell(cell){
+  if(!cell || cell.v === null || cell.v === undefined) return null;
+  const v = cell.v;
+  if(typeof v === "string"){
+    const m = v.match(/^Date\((\d+),(\d+),(\d+)\)/);
+    if(m){
+      const y = parseInt(m[1], 10), mo = parseInt(m[2], 10) + 1, d = parseInt(m[3], 10);
+      return `${y}-${String(mo).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
+    }
+    if(/^\d{4}-\d{2}-\d{2}$/.test(v)) return v;
+  }
+  return null;
+}
+
+// 作業中プランから日付ごとのZuid/UvA(CTH)具材内訳・営業フラグを取り出す。
+// ※「確定プラン」シートは店舗ごとの合計数のみを保持し具材別の内訳を持たないため、
+// 　具材別の必要数は、常に最新の内訳を保持している「作業中プラン」から算出する
+// 　（admin.htmlで確定操作を行うと両シートは同じ内容に揃う）。
+function parseDraftByDate(json){
+  const result = {};
+  if(!json || !json.table || !json.table.rows) return result;
+  json.table.rows.forEach(r => {
+    const c = r.c;
+    if(!c || !c[0]) return;
+    const dateStr = parseGvizDateCell(c[0]);
+    if(!dateStr) return;
+    try{
+      const forecast = JSON.parse((c[1] && c[1].v) || "{}");
+      result[dateStr] = {
+        zuidFillingQty: forecast.zuidFillingQty || {},
+        uvaFillingQty: forecast.uvaFillingQty || {},
+        zuidOpen: forecast.zuidOpen,
+        uvaOpen: forecast.uvaOpen,
+      };
+    }catch(e){ /* 壊れたJSON行は無視する */ }
+  });
+  return result;
+}
+
+// チセさんの生産データ（商品×日付の横持ち表）を解析する（admin.htmlのparseChiseSheetと同じロジック）
+function parseChiseSheet(json){
+  const result = {};
+  const rawRows = (json && json.table && json.table.rows) || [];
+  if(rawRows.length === 0) return result;
+
+  const dateRowCells = rawRows[0].c || [];
+  const dateCols = [];
+  dateRowCells.forEach((cell, idx) => {
+    const f = cell && cell.f;
+    if(f && /^\d{1,2}\/\d{1,2}$/.test(f)) dateCols.push({ idx, label: f });
+  });
+
+  const rows = rawRows.map(r => (r.c || []).map(c => (c ? c.v : null)));
+  const cellLabel = v => (v === null || v === undefined) ? "" : String(v).trim();
+  let startRow = -1, endRow = -1;
+  rows.forEach((r, i) => {
+    if(cellLabel(r[0]) === "商品") startRow = i + 1;
+    if(cellLabel(r[0]) === "SUB TOTAL" && startRow !== -1 && endRow === -1) endRow = i;
+  });
+  if(startRow === -1 || endRow === -1) return result;
+
+  dateCols.forEach(({ idx, label }) => {
+    const breakdown = {};
+    for(let i = startRow; i < endRow; i++){
+      const name = cellLabel(rows[i][0]);
+      const rawQty = rows[i][idx];
+      const qty = typeof rawQty === "number" ? rawQty
+        : (typeof rawQty === "string" && rawQty.trim() !== "" && !isNaN(Number(rawQty)) ? Number(rawQty) : null);
+      if(name && qty !== null) breakdown[name] = qty;
+    }
+    result[label] = { breakdown };
+  });
+  return result;
+}
+
+// 指定した日付1日分の、対象具材ごとの必要数（Zuid＋UvA/CTH＋チセ）を返す
+function fillingQtyForDate(iso){
+  const draft = state.draftByDate[iso];
+  const chiseEntry = state.chiseByLabel[mdLabel(new Date(`${iso}T00:00:00`))];
+  const chiseBreakdown = chiseEntry ? chiseEntry.breakdown : {};
+
+  let zuidQty = {}, uvaQty = {};
+  if(draft){
+    zuidQty = (draft.zuidOpen !== false) ? draft.zuidFillingQty : {};
+    uvaQty = (draft.uvaOpen !== false) ? draft.uvaFillingQty : {};
+  } else if(isCthSpecialDay(iso)){
+    // 作業中プランが未編集でもCTH期間中は標準比率で50個按分したデフォルト値を暫定的に使う
+    uvaQty = buildFillingDefaults(CTH_SPECIAL_QTY);
+  }
+
+  const result = {};
+  TARGET_FILLINGS.forEach(f => {
+    result[f] = (zuidQty[f] || 0) + (uvaQty[f] || 0) + (chiseBreakdown[f] || 0);
+  });
+  return result;
+}
+
+function renderWeekdayButtons(){
+  const area = document.getElementById("weekdayBtnRow");
+  area.innerHTML = WEEKDAY_BUTTONS.map(dow =>
+    `<button type="button" class="weekday-btn" data-dow="${dow}">${DAY_NAMES[dow]}曜</button>`
+  ).join("");
+
+  area.querySelectorAll(".weekday-btn").forEach(btn => {
+    btn.addEventListener("click", () => {
+      const dow = Number(btn.dataset.dow);
+      const matching = state.dates.filter(d => d.dow === dow).map(d => d.iso);
+      const allSelected = matching.length > 0 && matching.every(iso => state.selected.has(iso));
+      matching.forEach(iso => { allSelected ? state.selected.delete(iso) : state.selected.add(iso); });
+      renderDateList();
+      updateSummary();
+    });
+  });
+}
+
+function renderDateList(){
+  const area = document.getElementById("dateListArea");
+  if(state.dates.length === 0){
+    area.innerHTML = `<p class="off-note">表示できる営業日がありません。</p>`;
+    return;
+  }
+
+  const groups = [];
+  state.dates.forEach(d => {
+    const lastGroup = groups[groups.length - 1];
+    if(!lastGroup || lastGroup.label !== d.weekLabel) groups.push({ label: d.weekLabel, items: [d] });
+    else lastGroup.items.push(d);
+  });
+
+  const html = groups.map(group => {
+    const itemsHtml = group.items.map(d => {
+      const checked = state.selected.has(d.iso) ? "checked" : "";
+      return `
+        <label class="date-item">
+          <input type="checkbox" class="date-checkbox" data-iso="${d.iso}" ${checked}>
+          ${d.dateObj.getMonth() + 1}/${d.dateObj.getDate()}（${DAY_NAMES[d.dow]}）
+        </label>
+      `;
+    }).join("");
+    return `<div class="week-heading">${group.label}</div><div class="date-list">${itemsHtml}</div>`;
+  }).join("");
+
+  area.innerHTML = html;
+  area.querySelectorAll(".date-checkbox").forEach(cb => {
+    cb.addEventListener("change", () => {
+      if(cb.checked) state.selected.add(cb.dataset.iso);
+      else state.selected.delete(cb.dataset.iso);
+      updateWeekdayButtonStates();
+      updateSummary();
+    });
+  });
+  updateWeekdayButtonStates();
+}
+
+function updateWeekdayButtonStates(){
+  document.querySelectorAll(".weekday-btn").forEach(btn => {
+    const dow = Number(btn.dataset.dow);
+    const matching = state.dates.filter(d => d.dow === dow).map(d => d.iso);
+    const allSelected = matching.length > 0 && matching.every(iso => state.selected.has(iso));
+    btn.classList.toggle("active", allSelected);
+  });
+}
+
+function updateSummary(){
+  const totals = {};
+  TARGET_FILLINGS.forEach(f => { totals[f] = 0; });
+
+  state.selected.forEach(iso => {
+    const qty = fillingQtyForDate(iso);
+    TARGET_FILLINGS.forEach(f => { totals[f] += qty[f] || 0; });
+  });
+
+  const area = document.getElementById("summaryArea");
+  area.innerHTML = TARGET_FILLINGS.map(f => `
+    <div class="summary-item">
+      <div class="summary-label">${escapeHtml(f)}</div>
+      <div class="summary-num">${totals[f]}<span>個</span></div>
+    </div>
+  `).join("");
+
+  const noteEl = document.getElementById("summaryNote");
+  noteEl.textContent = state.selected.size === 0
+    ? "日付を選択すると必要数が表示されます。"
+    : `選択中：${state.selected.size}日分`;
+}
+
+async function init(){
+  state.dates = buildDateList();
+  renderWeekdayButtons();
+  renderDateList();
+  updateSummary();
+
+  try{
+    const [draftJson, chiseJson] = await Promise.all([
+      fetchGvizSheet(SHIFT_SPREADSHEET_ID, "作業中プラン").catch(() => null),
+      fetchGvizSheet(CHISE_SPREADSHEET_ID, null).catch(() => null),
+    ]);
+    state.draftByDate = parseDraftByDate(draftJson);
+    state.chiseByLabel = parseChiseSheet(chiseJson);
+    updateSummary();
+  }catch(e){
+    console.error("調理計算のデータ取得に失敗しました", e);
+    document.getElementById("summaryNote").textContent = "データの取得に失敗しました。時間をおいて再度お試しください。";
+  }
+
+  document.getElementById("clearAllBtn").addEventListener("click", () => {
+    state.selected.clear();
+    renderDateList();
+    updateSummary();
+  });
+}
+init();
+</script>
+</body>
+</html>
