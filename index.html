@@ -1539,6 +1539,7 @@ function updateSoldDisplay(fillings){
       });
 
       let givenSum = 0;
+      let lastKnownCum = null;
       HOURLY_SLOTS.forEach((h, si) => {
         const soldEl = document.getElementById(`sold-${storeKey}-${fi}-${si}`);
         const cumEl = document.getElementById(`cum-${storeKey}-${fi}-${si}`);
@@ -1557,8 +1558,18 @@ function updateSoldDisplay(fillings){
           if(cumEl) cumEl.textContent = `累計:${cum}`;
           cumTotals[si] += cum;
           cumCount[si]++;
-        } else if(cumEl){
-          cumEl.textContent = "";
+          lastKnownCum = cum;
+        } else {
+          if(cumEl) cumEl.textContent = "";
+          // 「全具材累計売上」は本来"その時点までの累計"を表す値のため、この具材だけ
+          // その時間帯が未入力でも合計から丸ごと除外してしまうと、他の具材は入力済みなのに
+          // 合計だけ不自然に小さくなってしまう（例: 17時81→18時15）。
+          // その具材の直近に判明している累計値をそのまま繰り越して合計に含めることで、
+          // 未入力の具材が1つでもあると合計が実態より小さく見える問題を防ぐ。
+          if(lastKnownCum !== null){
+            cumTotals[si] += lastKnownCum;
+            cumCount[si]++;
+          }
         }
         if(curr === null){ if(soldEl) soldEl.textContent = ""; return; }
         const prev = si === 0 ? made : vals[si - 1];
