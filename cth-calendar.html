@@ -35,6 +35,32 @@
     margin: 0 auto;
     padding: 16px 14px 50px;
   }
+  .week-block{ margin-bottom: 20px; }
+  .week-header{
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 8px 4px;
+    margin-bottom: 10px;
+    border-bottom: 2px solid var(--main-light);
+  }
+  .week-title{
+    font-size: 0.95rem;
+    font-weight: bold;
+    color: var(--main-dark);
+  }
+  .week-toggle-btn{
+    background: var(--main-light);
+    color: var(--main-dark);
+    border: 1px solid var(--main);
+    border-radius: 100px;
+    padding: 5px 14px;
+    font-size: 0.78rem;
+    font-weight: bold;
+    cursor: pointer;
+    font-family: inherit;
+  }
+  .week-toggle-btn:hover{ background: var(--main); color: #fff; }
   .day-card{
     background: var(--card);
     border: 1px solid var(--line);
@@ -226,17 +252,21 @@ function buildFillingDefaults(total){
   return obj;
 }
 
-// CTH特別期間内（8/24〜9/11）の月〜金の日付一覧を返す
+// CTH特別期間内（8/24〜9/11）の月〜金の日付一覧を返す。
+// CTH_SPECIAL_STARTが月曜・CTH_SPECIAL_ENDが金曜のため、月〜金5日ずつのちょうど3週間
+// （15営業日）に区切れる。weekIndexは週の折りたたみ表示に使う（1週目=今週など）。
 function getCthWeekdayDates(){
   const pad = n => String(n).padStart(2, "0");
   const dates = [];
   const cursor = new Date(`${CTH_SPECIAL_START}T00:00:00`);
   const end = new Date(`${CTH_SPECIAL_END}T00:00:00`);
+  let count = 0;
   while(cursor <= end){
     const dow = cursor.getDay();
     if(dow >= 1 && dow <= 5){
       const iso = `${cursor.getFullYear()}-${pad(cursor.getMonth() + 1)}-${pad(cursor.getDate())}`;
-      dates.push({ iso, dow, dateObj: new Date(cursor) });
+      dates.push({ iso, dow, dateObj: new Date(cursor), weekIndex: Math.floor(count / 5) + 1 });
+      count++;
     }
     cursor.setDate(cursor.getDate() + 1);
   }
@@ -290,10 +320,16 @@ const CTH_PRODUCT_DEFAULTS = {
   bento1Name: "お弁当1", bento1Qty: 10,
   bento2Name: "お弁当2", bento2Qty: 10,
   sandoName: "サンドイッチ", sandoQty: 20,
+  // 注文弁当は他3項目と異なり、未設定なら「なし」と表示するだけなので仮名称は持たない
+  orderBentoName: "", orderBentoQty: "",
 };
 
-// CTH商品シートから日付ごとのお弁当2種・サンドイッチの種類名・個数を取り出す。
-// 名前が未入力の項目にはデフォルトの仮名称を、個数が未入力の項目にはデフォルト値を補う。
+// CTH商品シートから日付ごとのお弁当2種・サンドイッチ・注文弁当の種類名・個数を取り出す。
+// お弁当1・お弁当2・サンドイッチは名前が未入力の項目にデフォルトの仮名称を、個数が
+// 未入力の項目にデフォルト値を補う。注文弁当は未設定なら空のまま（呼び出し側で「なし」表示にする）。
+// 列構成：日付, お弁当1名, お弁当1個数, お弁当2名, お弁当2個数, サンドイッチ名,
+// サンドイッチ個数, 更新日時, 注文弁当名, 注文弁当個数
+// （注文弁当は後から追加した列のため、既存データとの互換性を保つよう更新日時の後ろに追加した）
 function parseCthProductsByDate(json){
   const result = {};
   if(!json || !json.table || !json.table.rows) return result;
@@ -314,6 +350,8 @@ function parseCthProductsByDate(json){
       bento2Qty: qtyOrDefault(c[4], CTH_PRODUCT_DEFAULTS.bento2Qty),
       sandoName: nameOrDefault(c[5], CTH_PRODUCT_DEFAULTS.sandoName),
       sandoQty: qtyOrDefault(c[6], CTH_PRODUCT_DEFAULTS.sandoQty),
+      orderBentoName: nameOrDefault(c[8], ""),
+      orderBentoQty: qtyOrDefault(c[9], ""),
     };
   });
   return result;
@@ -457,7 +495,76 @@ function buildStaffTimelineHtml(staffList){
   `;
 }
 
+// 週ごとの折りたたみ状態。デフォルトは1週目のみ表示、2・3週目は折りたたみ。
+const collapsedWeeks = { 1: false, 2: true, 3: true };
+// トグルボタンから再描画できるよう、直近に取得したデータをキャッシュしておく
+let lastRenderData = null;
+
+function buildDayCardHtml(d, uvaFillingByDate, shiftByDate, productsByDate){
+  // まだadmin.html側でその日の具材配分が編集されていない場合は、CTH固定50個を
+  // 標準比率で按分したデフォルト値を暫定表示する（実際に編集されればここにも反映される）
+  const fillingQty = uvaFillingByDate[d.iso] || buildFillingDefaults(CTH_SPECIAL_QTY);
+  const fillingRows = FILLINGS.filter(f => (fillingQty[f] || 0) > 0).map(f =>
+    `<div class="filling-name">${escapeHtml(f)}</div><div class="filling-qty">${fillingQty[f]}個</div>`
+  ).join("");
+  const totalQty = FILLINGS.reduce((s, f) => s + (fillingQty[f] || 0), 0);
+
+  // まだadmin.html側でその日の商品ラインナップが設定されていない場合は、仮の名称と
+  // デフォルト個数（10個・10個・20個）を暫定表示する（注文弁当は仮名称を持たず「なし」表示）
+  const products = productsByDate[d.iso] || CTH_PRODUCT_DEFAULTS;
+  const orderBentoHtml = products.orderBentoName
+    ? `<div class="fixed-item-row"><span>${escapeHtml(products.orderBentoName)}</span><span class="fixed-item-qty">${products.orderBentoQty || 0}個</span></div>`
+    : `<p class="no-qty-note order-bento-none">注文弁当：なし</p>`;
+
+  const staffList = shiftByDate[d.iso] || [];
+  let staffHtml;
+  if(staffList.length === 0){
+    staffHtml = `<p class="no-staff-note">出勤予定はまだ登録されていません。</p>`;
+  } else {
+    // 時間帯を解析できたスタッフが1人もいない場合（自由記述の形式が想定外など）は
+    // タイムラインを描画できないため、従来通りのテキスト一覧表示にフォールバックする
+    staffHtml = buildStaffTimelineHtml(staffList) || `<div class="staff-list">${staffList.map(s =>
+      `<span class="staff-chip">${escapeHtml(s.name)}<span class="time">${escapeHtml(s.time)}</span></span>`
+    ).join("")}</div>`;
+  }
+
+  return `
+    <div class="day-card">
+      <div class="day-card-header">
+        <span class="day-date">${d.dateObj.getMonth() + 1}/${d.dateObj.getDate()}</span>
+        <span class="day-dow">${DAY_NAMES[d.dow]}曜日</span>
+      </div>
+      <div class="menu-block">
+        <div class="menu-title">🍙 おにぎり<span class="total-badge">合計${totalQty}個</span></div>
+        <div class="filling-grid">${fillingRows}</div>
+      </div>
+      <div class="menu-block">
+        <div class="menu-title">🍱 お弁当</div>
+        <div class="fixed-item-row"><span>${escapeHtml(products.bento1Name)}</span><span class="fixed-item-qty">${products.bento1Qty}個</span></div>
+        <div class="fixed-item-row"><span>${escapeHtml(products.bento2Name)}</span><span class="fixed-item-qty">${products.bento2Qty}個</span></div>
+      </div>
+      <div class="menu-block">
+        <div class="menu-title">🍞 サンドイッチ</div>
+        <div class="fixed-item-row"><span>${escapeHtml(products.sandoName)}</span><span class="fixed-item-qty">${products.sandoQty}個</span></div>
+      </div>
+      <div class="menu-block">
+        <div class="menu-title">📦 注文弁当</div>
+        ${orderBentoHtml}
+      </div>
+      <div class="menu-block">
+        <div class="menu-title">🍡 その他</div>
+        <p class="no-qty-note">どら焼き・団子・抹茶ドリンクなど：数量指定なし</p>
+      </div>
+      <div class="menu-block">
+        <div class="menu-title">👤 出勤スタッフ</div>
+        ${staffHtml}
+      </div>
+    </div>
+  `;
+}
+
 function renderCalendar(uvaFillingByDate, shiftByDate, productsByDate){
+  lastRenderData = { uvaFillingByDate, shiftByDate, productsByDate };
   const area = document.getElementById("calendarArea");
   const dates = getCthWeekdayDates();
   if(dates.length === 0){
@@ -465,61 +572,36 @@ function renderCalendar(uvaFillingByDate, shiftByDate, productsByDate){
     return;
   }
 
-  area.innerHTML = dates.map(d => {
-    // まだadmin.html側でその日の具材配分が編集されていない場合は、CTH固定50個を
-    // 標準比率で按分したデフォルト値を暫定表示する（実際に編集されればここにも反映される）
-    const fillingQty = uvaFillingByDate[d.iso] || buildFillingDefaults(CTH_SPECIAL_QTY);
-    const fillingRows = FILLINGS.filter(f => (fillingQty[f] || 0) > 0).map(f =>
-      `<div class="filling-name">${escapeHtml(f)}</div><div class="filling-qty">${fillingQty[f]}個</div>`
-    ).join("");
-    const totalQty = FILLINGS.reduce((s, f) => s + (fillingQty[f] || 0), 0);
+  const weeks = [];
+  dates.forEach(d => {
+    let week = weeks.find(w => w.weekIndex === d.weekIndex);
+    if(!week){ week = { weekIndex: d.weekIndex, days: [] }; weeks.push(week); }
+    week.days.push(d);
+  });
 
-    // まだadmin.html側でその日の商品ラインナップが設定されていない場合は、仮の名称と
-    // デフォルト個数（10個・10個・20個）を暫定表示する
-    const products = productsByDate[d.iso] || CTH_PRODUCT_DEFAULTS;
-
-    const staffList = shiftByDate[d.iso] || [];
-    let staffHtml;
-    if(staffList.length === 0){
-      staffHtml = `<p class="no-staff-note">出勤予定はまだ登録されていません。</p>`;
-    } else {
-      // 時間帯を解析できたスタッフが1人もいない場合（自由記述の形式が想定外など）は
-      // タイムラインを描画できないため、従来通りのテキスト一覧表示にフォールバックする
-      staffHtml = buildStaffTimelineHtml(staffList) || `<div class="staff-list">${staffList.map(s =>
-        `<span class="staff-chip">${escapeHtml(s.name)}<span class="time">${escapeHtml(s.time)}</span></span>`
-      ).join("")}</div>`;
-    }
-
+  area.innerHTML = weeks.map(week => {
+    const first = week.days[0], last = week.days[week.days.length - 1];
+    const rangeLabel = `${first.dateObj.getMonth() + 1}/${first.dateObj.getDate()}〜${last.dateObj.getMonth() + 1}/${last.dateObj.getDate()}`;
+    const collapsed = collapsedWeeks[week.weekIndex];
+    const cardsHtml = week.days.map(d => buildDayCardHtml(d, uvaFillingByDate, shiftByDate, productsByDate)).join("");
     return `
-      <div class="day-card">
-        <div class="day-card-header">
-          <span class="day-date">${d.dateObj.getMonth() + 1}/${d.dateObj.getDate()}</span>
-          <span class="day-dow">${DAY_NAMES[d.dow]}曜日</span>
+      <div class="week-block">
+        <div class="week-header">
+          <span class="week-title">${week.weekIndex}週目（${rangeLabel}）</span>
+          <button type="button" class="week-toggle-btn" data-week="${week.weekIndex}">${collapsed ? "表示する" : "隠す"}</button>
         </div>
-        <div class="menu-block">
-          <div class="menu-title">🍙 おにぎり<span class="total-badge">合計${totalQty}個</span></div>
-          <div class="filling-grid">${fillingRows}</div>
-        </div>
-        <div class="menu-block">
-          <div class="menu-title">🍱 お弁当</div>
-          <div class="fixed-item-row"><span>${escapeHtml(products.bento1Name)}</span><span class="fixed-item-qty">${products.bento1Qty}個</span></div>
-          <div class="fixed-item-row"><span>${escapeHtml(products.bento2Name)}</span><span class="fixed-item-qty">${products.bento2Qty}個</span></div>
-        </div>
-        <div class="menu-block">
-          <div class="menu-title">🍞 サンドイッチ</div>
-          <div class="fixed-item-row"><span>${escapeHtml(products.sandoName)}</span><span class="fixed-item-qty">${products.sandoQty}個</span></div>
-        </div>
-        <div class="menu-block">
-          <div class="menu-title">🍡 その他</div>
-          <p class="no-qty-note">どら焼き・団子・抹茶ドリンクなど：数量指定なし</p>
-        </div>
-        <div class="menu-block">
-          <div class="menu-title">👤 出勤スタッフ</div>
-          ${staffHtml}
-        </div>
+        <div class="week-days"${collapsed ? " hidden" : ""}>${cardsHtml}</div>
       </div>
     `;
   }).join("");
+
+  area.querySelectorAll(".week-toggle-btn").forEach(btn => {
+    btn.addEventListener("click", () => {
+      const weekIndex = Number(btn.dataset.week);
+      collapsedWeeks[weekIndex] = !collapsedWeeks[weekIndex];
+      renderCalendar(lastRenderData.uvaFillingByDate, lastRenderData.shiftByDate, lastRenderData.productsByDate);
+    });
+  });
 }
 
 async function init(){
