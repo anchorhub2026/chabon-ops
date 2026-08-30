@@ -2376,40 +2376,11 @@ function buildProductionPlan(day, working, memberCaps){
     remaining[mi] -= qty;
   }
 
-  // CTH向け専用の割り振り（MIKI→本部固定30個→MARIの順）。
-  // UvA枠がCTH固定50個になる日（day.uvaVenueLabel === CTH_VENUE_NAME）だけ動作し、
-  // 対象はCTH向け必要数（day.uvaFillingQty）のみ。ここで消費したcapはこの後の
-  // 通常ループ（Zuid・チセ向け、MEMBER_PRIORITY順）に引き継がれる。
-  // MIKI・MARIどちらのcapも本部の30個枠も超えて余った分は、通常の残差計算により
-  // 本部が無制限に引き受ける（既存のhqBreakdown残差ロジックに委ねる）。
+  // CTH特別期間（UvA枠がCTH固定50個になる日）かどうか。CTH向け必要数(day.uvaFillingQty)は
+  // 下の通常ループでは扱わず、通常ループの後でCTH専用ロジックにより
+  // 各メンバーの「残りcap」を使って埋める。処理順序を「通常割り振り→CTH割り振り」にすることで、
+  // MARIさんの本来のZuid向け割り振り分がCTH分によって圧迫されないようにする。
   const isCthDay = day.uvaVenueLabel === CTH_VENUE_NAME && day.uvaOpen;
-  if(isCthDay){
-    const mikiIdx = working.indexOf("MIKI");
-    const mariIdx = working.indexOf("MARI");
-    let hqCthRemaining = HQ_CTH_DAILY_CAP;
-    ALLOC_FILLINGS
-      .map(f => ({ f, need: day.uvaFillingQty[f] || 0 }))
-      .sort((a, b) => b.need - a.need)
-      .forEach(({ f, need }) => {
-        let left = need;
-        if(left <= 0) return;
-        if(mikiIdx !== -1 && left > 0){
-          const take = floorToMultipleOf3(Math.min(left, remaining[mikiIdx]));
-          if(take > 0){ give(mikiIdx, f, take); left -= take; }
-        }
-        if(left > 0 && hqCthRemaining > 0){
-          const take = Math.min(left, hqCthRemaining);
-          hqCthRemaining -= take;
-          left -= take;
-        }
-        if(mariIdx !== -1 && left > 0){
-          const take = floorToMultipleOf3(Math.min(left, remaining[mariIdx]));
-          if(take > 0){ give(mariIdx, f, take); left -= take; }
-        }
-        // これでも残る分（本部の30個枠・MARIのcap双方を超える極端なケース）はここでは
-        // 割り振らず、下の通常ループ後の残差計算で本部が無制限に引き受ける。
-      });
-  }
 
   const itemsByNeedDesc = ALLOC_FILLINGS
     .map(f => {
@@ -2445,6 +2416,41 @@ function buildProductionPlan(day, working, memberCaps){
     }
     if(left > 0) hqBreakdown[f] = (hqBreakdown[f] || 0) + left;
   });
+
+  // CTH向け専用の割り振り（MIKI→本部固定30個→MARIの順）。
+  // 上のZuid・チセ向け通常ループが終わった「後」に実行することで、各メンバーの
+  // remaining（希望数capのうち未使用分）を使って埋める。これにより、MARIさんが
+  // 本来Zuid向けに握れたはずの分をCTH分が圧迫することはなく、MARIさんの合計は
+  // 「Zuid向け実績＋CTH向け残り」でcap上限まで最大限使い切られる。
+  // MIKI・MARIどちらのcapも本部の30個枠も超えて余った分は、既存の残差計算により
+  // 本部が無制限に引き受ける。
+  if(isCthDay){
+    const mikiIdx = working.indexOf("MIKI");
+    const mariIdx = working.indexOf("MARI");
+    let hqCthRemaining = HQ_CTH_DAILY_CAP;
+    ALLOC_FILLINGS
+      .map(f => ({ f, need: day.uvaFillingQty[f] || 0 }))
+      .sort((a, b) => b.need - a.need)
+      .forEach(({ f, need }) => {
+        let left = need;
+        if(left <= 0) return;
+        if(mikiIdx !== -1 && left > 0){
+          const take = floorToMultipleOf3(Math.min(left, remaining[mikiIdx]));
+          if(take > 0){ give(mikiIdx, f, take); left -= take; }
+        }
+        if(left > 0 && hqCthRemaining > 0){
+          const take = Math.min(left, hqCthRemaining);
+          hqCthRemaining -= take;
+          left -= take;
+        }
+        if(mariIdx !== -1 && left > 0){
+          const take = floorToMultipleOf3(Math.min(left, remaining[mariIdx]));
+          if(take > 0){ give(mariIdx, f, take); left -= take; }
+        }
+        // これでも残る分（本部の30個枠・MARIのcap双方を超える極端なケース）は
+        // 割り振らず、下の残差計算で本部が無制限に引き受ける。
+      });
+  }
 
   ALWAYS_HQ_FILLINGS.forEach(f => {
     const v = neededQtyFor(day, f);
