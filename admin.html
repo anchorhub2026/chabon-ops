@@ -1755,6 +1755,12 @@ const MEMBER_PRIORITY = ["MARI", "CHIKAKO", "YUMI", "MIKI"];
 const PRODUCTION_FLOOR_QTY = 30;
 const MAX_FILLING_TYPES_PER_MEMBER = 2;
 
+// CTH特別期間（UvA枠がCTH向け固定50個になる日）専用の割り振り優先順位：
+// 1) MIKIさん（既存の希望数=capを上限） → 2) 本部（1日あたり固定30個まで） → 3) MARIさん。
+// 通常のMEMBER_PRIORITY（Zuid・チセ向けの割り振り）とは完全に独立したルールで、
+// CTH向け必要数（day.uvaFillingQty）にのみ適用する。
+const HQ_CTH_DAILY_CAP = 30;
+
 function memberPriorityRank(name){
   const idx = MEMBER_PRIORITY.indexOf(name);
   return idx === -1 ? MEMBER_PRIORITY.length : idx;
@@ -2370,8 +2376,48 @@ function buildProductionPlan(day, working, memberCaps){
     remaining[mi] -= qty;
   }
 
+  // CTH向け専用の割り振り（MIKI→本部固定30個→MARIの順）。
+  // UvA枠がCTH固定50個になる日（day.uvaVenueLabel === CTH_VENUE_NAME）だけ動作し、
+  // 対象はCTH向け必要数（day.uvaFillingQty）のみ。ここで消費したcapはこの後の
+  // 通常ループ（Zuid・チセ向け、MEMBER_PRIORITY順）に引き継がれる。
+  // MIKI・MARIどちらのcapも本部の30個枠も超えて余った分は、通常の残差計算により
+  // 本部が無制限に引き受ける（既存のhqBreakdown残差ロジックに委ねる）。
+  const isCthDay = day.uvaVenueLabel === CTH_VENUE_NAME && day.uvaOpen;
+  if(isCthDay){
+    const mikiIdx = working.indexOf("MIKI");
+    const mariIdx = working.indexOf("MARI");
+    let hqCthRemaining = HQ_CTH_DAILY_CAP;
+    ALLOC_FILLINGS
+      .map(f => ({ f, need: day.uvaFillingQty[f] || 0 }))
+      .sort((a, b) => b.need - a.need)
+      .forEach(({ f, need }) => {
+        let left = need;
+        if(left <= 0) return;
+        if(mikiIdx !== -1 && left > 0){
+          const take = floorToMultipleOf3(Math.min(left, remaining[mikiIdx]));
+          if(take > 0){ give(mikiIdx, f, take); left -= take; }
+        }
+        if(left > 0 && hqCthRemaining > 0){
+          const take = Math.min(left, hqCthRemaining);
+          hqCthRemaining -= take;
+          left -= take;
+        }
+        if(mariIdx !== -1 && left > 0){
+          const take = floorToMultipleOf3(Math.min(left, remaining[mariIdx]));
+          if(take > 0){ give(mariIdx, f, take); left -= take; }
+        }
+        // これでも残る分（本部の30個枠・MARIのcap双方を超える極端なケース）はここでは
+        // 割り振らず、下の通常ループ後の残差計算で本部が無制限に引き受ける。
+      });
+  }
+
   const itemsByNeedDesc = ALLOC_FILLINGS
-    .map(f => ({ f, need: neededQtyFor(day, f) }))
+    .map(f => {
+      // CTHの日はUvA枠（=CTH向け必要数）を上の専用ロジックで処理済みのため、
+      // 通常優先順位ループにはZuid・チセ向けの残り必要数だけを渡す
+      const cthPortion = isCthDay ? (day.uvaFillingQty[f] || 0) : 0;
+      return { f, need: neededQtyFor(day, f) - cthPortion };
+    })
     .sort((a, b) => b.need - a.need);
 
   itemsByNeedDesc.forEach(({ f, need }) => {
