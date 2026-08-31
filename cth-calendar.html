@@ -495,8 +495,23 @@ function buildStaffTimelineHtml(staffList){
   `;
 }
 
-// 週ごとの折りたたみ状態。デフォルトは1週目のみ表示、2・3週目は折りたたみ。
-const collapsedWeeks = { 1: false, 2: true, 3: true };
+// 実際の「今日」がCTH特別期間の1〜3週目のどこに該当するかを判定する。
+// CTH_SPECIAL_STARTは月曜始まりで、ちょうど週7日単位×3週間の期間になっているため、
+// 開始日からの経過日数を7で割った商（0〜2）+1で週番号が求まる。
+// 期間開始前は1週目、期間終了後は3週目として扱う（表示上迷わないためのフォールバック）。
+function getCurrentCthWeekIndex(){
+  const start = new Date(`${CTH_SPECIAL_START}T00:00:00`);
+  const end = new Date(`${CTH_SPECIAL_END}T00:00:00`);
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  if(today <= start) return 1;
+  if(today >= end) return 3;
+  const diffDays = Math.floor((today - start) / (1000 * 60 * 60 * 24));
+  return Math.min(3, Math.max(1, Math.floor(diffDays / 7) + 1));
+}
+
+// 週ごとの折りたたみ状態。デフォルトは「今日」が属する週だけを表示し、他の週は折りたたむ。
+const currentCthWeekIndex = getCurrentCthWeekIndex();
+const collapsedWeeks = { 1: currentCthWeekIndex !== 1, 2: currentCthWeekIndex !== 2, 3: currentCthWeekIndex !== 3 };
 // トグルボタンから再描画できるよう、直近に取得したデータをキャッシュしておく
 let lastRenderData = null;
 
