@@ -1805,6 +1805,27 @@ function sumQtyMap(map){
 function zuidFinal(day){ return day.zuidOpen ? sumQtyMap(day.zuidFillingQty) : 0; }
 function uvaFinal(day){ return day.uvaOpen ? sumQtyMap(day.uvaFillingQty) : 0; }
 
+// その日の現在の実際の必要数合計（Zuid＋UvA＋チセ）。UvAはCTH特別期間中は
+// CTH向け固定数を含む。computeDaySnapshot()のtotalと同じ計算式。
+// localStorage・「作業中プラン」シートに保存された古いメンバー別内訳(prod)が、
+// 必要数の変化後もまだ有効かどうかを判定するための基準値として使う。
+function currentNeededTotalForDay(day){
+  const chise = state.chiseByDate[mdLabel(day.dateObj)];
+  const chiseQty = chise ? chise.subtotal : 0;
+  return (zuidFinal(day) || 0) + (uvaFinal(day) || 0) + chiseQty;
+}
+
+// 保存済みのメンバー別内訳(prod)が、現在の必要数と整合しているかを判定する。
+// ニギニギ隊の内訳合計は、本部固定具材（枝豆・梅・うなぎ）の分だけ必要数合計を
+// 常に下回るのが正常な状態（＝完全な「一致」にはならない）なため、「必要数合計を
+// 上回っていないか」で判定する。これを上回っている場合は、必要数が変わった後も
+// 古い内訳がそのまま残っている（＝物理的にありえない量が保存されている）ことを
+// 意味するため、古いデータとみなして復元を拒否する。
+function isProdSnapshotConsistent(day, memberFillingQty){
+  const savedTotal = Object.values(memberFillingQty || {}).reduce((s, qtyMap) => s + (sumQtyMap(qtyMap) || 0), 0);
+  return savedTotal <= currentNeededTotalForDay(day);
+}
+
 function getManualQty(day, name){
   const key = mdLabel(day.dateObj);
   const fromShift = state.shiftByDate[key] && state.shiftByDate[key][name];
@@ -2887,9 +2908,16 @@ function applyDraftToDay(day, draft){
   if(fc.zuidOpen !== undefined) day.zuidOpen = fc.zuidOpen;
   if(fc.uvaOpen  !== undefined) day.uvaOpen  = fc.uvaOpen;
   if(draft.prod && Object.keys(draft.prod).length > 0){
-    day.memberFillingQty = { ...draft.prod };
-    if(!day.prodManuallyEdited) day.prodManuallyEdited = {};
-    Object.keys(draft.prod).forEach(name => { day.prodManuallyEdited[name] = true; });
+    if(isProdSnapshotConsistent(day, draft.prod)){
+      day.memberFillingQty = { ...draft.prod };
+      if(!day.prodManuallyEdited) day.prodManuallyEdited = {};
+      Object.keys(draft.prod).forEach(name => { day.prodManuallyEdited[name] = true; });
+    } else {
+      // 必要数が変わった後も「作業中プラン」シートに古い内訳が残っている状態。
+      // 古いデータを復元せず、prodManuallyEditedも立てないことで、通常の
+      // 自動計算（buildProductionPlan）に基づく現在の必要数からの再計算に任せる。
+      console.warn(`[admin.html] ${day.iso}: 作業中プランの内訳が古いため自動再計算しました（保存内訳合計が現在の必要数合計を超過）。`);
+    }
   }
 }
 
@@ -3263,7 +3291,14 @@ function loadProdAllocData(day){
   try{
     const raw = localStorage.getItem(`chabon_prod_${mdLabel(day.dateObj)}`);
     if(!raw) return false;
-    day.memberFillingQty = JSON.parse(raw);
+    const parsed = JSON.parse(raw);
+    if(!isProdSnapshotConsistent(day, parsed)){
+      // 必要数が変わった後もlocalStorageに古い内訳が残っている状態。
+      // 古いデータを復元せず、通常の自動計算に基づく現在の必要数からの再計算に任せる。
+      console.warn(`[admin.html] ${day.iso}: localStorageの内訳が古いため自動再計算しました（保存内訳合計が現在の必要数合計を超過）。`);
+      return false;
+    }
+    day.memberFillingQty = parsed;
     if(!day.prodManuallyEdited) day.prodManuallyEdited = {};
     Object.keys(day.memberFillingQty).forEach(name => { day.prodManuallyEdited[name] = true; });
     return true;
@@ -3599,6 +3634,10 @@ async function refreshAllData(){
     state.holidaysByIso = holidaysByIso;
     state.nsDisruptionsByDate = nsDisruptionsByDate;
     state.confirmedByDate = loadConfirmedFromStorage();
+    // isProdSnapshotConsistent()がチセさんの必要数も含めて現在の必要数合計を計算できるよう、
+    // 保存済みprod内訳の復元(loadProdAllocData/applyDraftToDay)より先にチセデータを反映しておく
+    state.chiseByDate = chiseJson ? parseChiseSheet(chiseJson) : {};
+    logChiseFillingNameCheck(state.chiseByDate);
 
     const hourlyByDate = buildHourlyByDate(weatherRes.hourly);
     state.days = buildDays(weatherRes.daily, hourlyByDate);
@@ -3623,8 +3662,6 @@ async function refreshAllData(){
     } else {
       console.warn("ドラフトデータが取得できませんでした（null）");
     }
-    state.chiseByDate = chiseJson ? parseChiseSheet(chiseJson) : {};
-    logChiseFillingNameCheck(state.chiseByDate);
     const shiftParsed = shiftJson ? parseShiftSheet(shiftJson) : { byDate: {}, notesByName: {} };
     state.shiftByDate  = shiftParsed.byDate;
     state.notesByName  = shiftParsed.notesByName;
@@ -3901,6 +3938,10 @@ async function init(){
     state.holidaysByIso = holidaysByIso;
     state.nsDisruptionsByDate = nsDisruptionsByDate;
     state.confirmedByDate = loadConfirmedFromStorage();
+    // isProdSnapshotConsistent()がチセさんの必要数も含めて現在の必要数合計を計算できるよう、
+    // 保存済みprod内訳の復元(loadProdAllocData/applyDraftToDay)より先にチセデータを反映しておく
+    state.chiseByDate = chiseJson ? parseChiseSheet(chiseJson) : {};
+    logChiseFillingNameCheck(state.chiseByDate);
     const hourlyByDate = buildHourlyByDate(weatherRes.hourly);
     state.days = buildDays(weatherRes.daily, hourlyByDate);
     // localStorageから復元（オフライン時フォールバック）→ シートのドラフトで上書き
@@ -3915,8 +3956,6 @@ async function init(){
         if(draft) applyDraftToDay(day, draft);
       });
     }
-    state.chiseByDate = chiseJson ? parseChiseSheet(chiseJson) : {};
-    logChiseFillingNameCheck(state.chiseByDate);
     const shiftParsed = shiftJson ? parseShiftSheet(shiftJson) : { byDate: {}, notesByName: {} };
     state.shiftByDate  = shiftParsed.byDate;
     state.notesByName  = shiftParsed.notesByName;
