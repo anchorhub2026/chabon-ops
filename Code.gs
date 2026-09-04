@@ -293,13 +293,17 @@ function handleSaveCthShift(ss, data) {
 // CTH特別会場の商品ラインナップ（お弁当2種・サンドイッチの種類名・個数）を日付ごとに保存する。
 // 1日1行（日付キーでupsert）。読み取りは他の低頻度シートと同様gviz経由で行う。
 function handleSaveCthProducts(ss, data) {
-  // 注文弁当（後から追加した列）は、既存データの列位置を変えないよう更新日時の後ろに追加した
-  var header = ["日付", "お弁当1名", "お弁当1個数", "お弁当2名", "お弁当2個数", "サンドイッチ名", "サンドイッチ個数", "更新日時", "注文弁当名", "注文弁当個数"];
+  // お弁当3（旧・注文弁当。後から追加した列）は、既存データの列位置を変えないよう
+  // 更新日時の後ろに追加した。列名は画面上の表示ラベル（日付により「注文弁当」/「お弁当3」を
+  // 切り替え表示）とは独立して「お弁当3名」「お弁当3個数」に統一している。
+  var header = ["日付", "お弁当1名", "お弁当1個数", "お弁当2名", "お弁当2個数", "サンドイッチ名", "サンドイッチ個数", "更新日時", "お弁当3名", "お弁当3個数"];
   var sheet = ss.getSheetByName("CTH商品");
   if (!sheet) {
     sheet = ss.insertSheet("CTH商品");
     sheet.appendRow(header);
-  } else if (sheet.getLastColumn() < header.length) {
+  } else {
+    // 列名の変更（例：注文弁当名→お弁当3名へのリネーム）を都度反映する。
+    // データ行の列位置には影響しない
     sheet.getRange(1, 1, 1, header.length).setValues([header]);
   }
   var values = sheet.getDataRange().getValues();
@@ -320,8 +324,8 @@ function handleSaveCthProducts(ss, data) {
       entry.sandoName || "",
       Number(entry.sandoQty) || 0,
       new Date(),
-      entry.orderBentoName || "",
-      Number(entry.orderBentoQty) || 0
+      entry.bento3Name || "",
+      Number(entry.bento3Qty) || 0
     ];
     if (foundRow > 0) {
       sheet.getRange(foundRow, 1, 1, row.length).setValues([row]);

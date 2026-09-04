@@ -1089,6 +1089,14 @@
     padding: 0 2px;
   }
   .cth-remove-name-btn:hover{ color: var(--accent); }
+  .th-sub{ font-weight: normal; font-size: 0.75em; color: var(--main-dark); opacity: 0.75; }
+  .cth-product-row-label{
+    font-size: 0.72em;
+    color: var(--main-dark);
+    opacity: 0.75;
+    margin-bottom: 2px;
+    white-space: nowrap;
+  }
   table.cth-shift-table input[type="text"],
   table.cth-shift-table input[type="number"]{
     width: 110px;
@@ -1486,6 +1494,14 @@ const CTH_SPECIAL_QTY = 50;
 const CTH_VENUE_NAME = "CTH";
 function isCthSpecialDay(iso, dow){
   return dow >= 1 && dow <= 5 && iso >= CTH_SPECIAL_START && iso <= CTH_SPECIAL_END;
+}
+
+// 「お弁当3」枠（旧・注文弁当）の画面表示ラベル切り替え日。
+// データ構造・スプレッドシートの列名は「お弁当3名」「お弁当3個数」に統一しているが、
+// 画面上の表示ラベルだけは日付に応じて「注文弁当」（1・2週目）/「お弁当3」（3週目〜）を切り替える。
+const BENTO3_LABEL_SWITCH_DATE = "2026-09-07";
+function bento3Label(iso){
+  return iso >= BENTO3_LABEL_SWITCH_DATE ? "お弁当3" : "注文弁当";
 }
 
 // CTH特別期間内（8/24〜9/11）の月〜金の日付一覧を返す（CTHシフト入力表の行に使う）
@@ -3144,10 +3160,10 @@ function parseCthProductsSheet(json){
       bento2Qty: qtyOrDefault(c[4], CTH_PRODUCT_DEFAULTS.bento2Qty),
       sandoName: String((c[5] && c[5].v) || ""),
       sandoQty: qtyOrDefault(c[6], CTH_PRODUCT_DEFAULTS.sandoQty),
-      // 注文弁当は列7(更新日時)の後ろに追加した列。他3項目と異なり仮名称・デフォルト個数は
-      // 持たず、未設定なら空のまま返す（cth-calendar.html側で「なし」と表示する）
-      orderBentoName: String((c[8] && c[8].v) || ""),
-      orderBentoQty: qtyOrDefault(c[9], ""),
+      // お弁当3（旧・注文弁当）は列7(更新日時)の後ろに追加した列。他3項目と異なり仮名称・
+      // デフォルト個数は持たず、未設定なら空のまま返す（cth-calendar.html側で「なし」と表示する）
+      bento3Name: String((c[8] && c[8].v) || ""),
+      bento3Qty: qtyOrDefault(c[9], ""),
     };
   });
   return result;
@@ -3166,9 +3182,11 @@ function renderCthProductsTable(){
     const b2q = entry.bento2Qty !== undefined ? entry.bento2Qty : CTH_PRODUCT_DEFAULTS.bento2Qty;
     const sn = entry.sandoName || "";
     const sq = entry.sandoQty !== undefined ? entry.sandoQty : CTH_PRODUCT_DEFAULTS.sandoQty;
-    // 注文弁当は他3項目と異なりデフォルト値を持たない（未設定なら空のまま）
-    const on = entry.orderBentoName || "";
-    const oq = entry.orderBentoQty !== undefined ? entry.orderBentoQty : "";
+    // お弁当3（旧・注文弁当）は他3項目と異なりデフォルト値を持たない（未設定なら空のまま）
+    const bn = entry.bento3Name || "";
+    const bq = entry.bento3Qty !== undefined ? entry.bento3Qty : "";
+    // 表示ラベルは日付により「注文弁当」（1・2週目）/「お弁当3」（3週目〜）を切り替える
+    const b3Label = bento3Label(d.iso);
     return `<tr>
       <td class="cth-date-cell">${d.dateObj.getMonth() + 1}/${d.dateObj.getDate()}（${DAY_NAMES[d.dow]}）</td>
       <td><input type="text" class="cth-product-input" data-iso="${d.iso}" data-field="bento1Name" value="${escapeHtmlAttr(b1n)}" placeholder="お弁当1"></td>
@@ -3177,8 +3195,11 @@ function renderCthProductsTable(){
       <td><input type="number" class="cth-product-input cth-product-qty" data-iso="${d.iso}" data-field="bento2Qty" value="${b2q}" min="0"></td>
       <td><input type="text" class="cth-product-input" data-iso="${d.iso}" data-field="sandoName" value="${escapeHtmlAttr(sn)}" placeholder="サンドイッチ"></td>
       <td><input type="number" class="cth-product-input cth-product-qty" data-iso="${d.iso}" data-field="sandoQty" value="${sq}" min="0"></td>
-      <td><input type="text" class="cth-product-input" data-iso="${d.iso}" data-field="orderBentoName" value="${escapeHtmlAttr(on)}" placeholder="未設定（なし）"></td>
-      <td><input type="number" class="cth-product-input cth-product-qty" data-iso="${d.iso}" data-field="orderBentoQty" value="${oq}" min="0"></td>
+      <td>
+        <div class="cth-product-row-label">${b3Label}</div>
+        <input type="text" class="cth-product-input" data-iso="${d.iso}" data-field="bento3Name" value="${escapeHtmlAttr(bn)}" placeholder="未設定（なし）">
+      </td>
+      <td><input type="number" class="cth-product-input cth-product-qty" data-iso="${d.iso}" data-field="bento3Qty" value="${bq}" min="0"></td>
     </tr>`;
   }).join("");
 
@@ -3190,7 +3211,7 @@ function renderCthProductsTable(){
           <th colspan="2">お弁当1</th>
           <th colspan="2">お弁当2</th>
           <th colspan="2">サンドイッチ</th>
-          <th colspan="2">注文弁当</th>
+          <th colspan="2">お弁当3<br><span class="th-sub">（注文弁当）</span></th>
         </tr></thead>
         <tbody>${rows}</tbody>
       </table>
@@ -3232,9 +3253,9 @@ function bindCthProductsControls(){
         bento2Qty: qtyOrDefault(v.bento2Qty, CTH_PRODUCT_DEFAULTS.bento2Qty),
         sandoName: v.sandoName || "",
         sandoQty: qtyOrDefault(v.sandoQty, CTH_PRODUCT_DEFAULTS.sandoQty),
-        // 注文弁当は他3項目と異なりデフォルト値を持たない（未入力なら空のまま送信する）
-        orderBentoName: v.orderBentoName || "",
-        orderBentoQty: qtyOrDefault(v.orderBentoQty, ""),
+        // お弁当3（旧・注文弁当）は他3項目と異なりデフォルト値を持たない（未入力なら空のまま送信する）
+        bento3Name: v.bento3Name || "",
+        bento3Qty: qtyOrDefault(v.bento3Qty, ""),
       };
     });
 

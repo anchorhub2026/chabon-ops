@@ -320,16 +320,24 @@ const CTH_PRODUCT_DEFAULTS = {
   bento1Name: "お弁当1", bento1Qty: 10,
   bento2Name: "お弁当2", bento2Qty: 10,
   sandoName: "サンドイッチ", sandoQty: 20,
-  // 注文弁当は他3項目と異なり、未設定なら「なし」と表示するだけなので仮名称は持たない
-  orderBentoName: "", orderBentoQty: "",
+  // お弁当3（旧・注文弁当）は他3項目と異なり、未設定なら「なし」と表示するだけなので仮名称は持たない
+  bento3Name: "", bento3Qty: "",
 };
 
-// CTH商品シートから日付ごとのお弁当2種・サンドイッチ・注文弁当の種類名・個数を取り出す。
+// 「お弁当3」枠（旧・注文弁当）の画面表示ラベル切り替え日。
+// データ構造・スプレッドシートの列名は「お弁当3名」「お弁当3個数」に統一しているが、
+// 画面上の表示ラベルだけは日付に応じて「注文弁当」（1・2週目）/「お弁当3」（3週目〜）を切り替える。
+const BENTO3_LABEL_SWITCH_DATE = "2026-09-07";
+function bento3Label(iso){
+  return iso >= BENTO3_LABEL_SWITCH_DATE ? "お弁当3" : "注文弁当";
+}
+
+// CTH商品シートから日付ごとのお弁当2種・サンドイッチ・お弁当3の種類名・個数を取り出す。
 // お弁当1・お弁当2・サンドイッチは名前が未入力の項目にデフォルトの仮名称を、個数が
-// 未入力の項目にデフォルト値を補う。注文弁当は未設定なら空のまま（呼び出し側で「なし」表示にする）。
+// 未入力の項目にデフォルト値を補う。お弁当3は未設定なら空のまま（呼び出し側で「なし」表示にする）。
 // 列構成：日付, お弁当1名, お弁当1個数, お弁当2名, お弁当2個数, サンドイッチ名,
-// サンドイッチ個数, 更新日時, 注文弁当名, 注文弁当個数
-// （注文弁当は後から追加した列のため、既存データとの互換性を保つよう更新日時の後ろに追加した）
+// サンドイッチ個数, 更新日時, お弁当3名, お弁当3個数
+// （お弁当3は後から追加した列のため、既存データとの互換性を保つよう更新日時の後ろに追加した）
 function parseCthProductsByDate(json){
   const result = {};
   if(!json || !json.table || !json.table.rows) return result;
@@ -350,8 +358,8 @@ function parseCthProductsByDate(json){
       bento2Qty: qtyOrDefault(c[4], CTH_PRODUCT_DEFAULTS.bento2Qty),
       sandoName: nameOrDefault(c[5], CTH_PRODUCT_DEFAULTS.sandoName),
       sandoQty: qtyOrDefault(c[6], CTH_PRODUCT_DEFAULTS.sandoQty),
-      orderBentoName: nameOrDefault(c[8], ""),
-      orderBentoQty: qtyOrDefault(c[9], ""),
+      bento3Name: nameOrDefault(c[8], ""),
+      bento3Qty: qtyOrDefault(c[9], ""),
     };
   });
   return result;
@@ -525,11 +533,13 @@ function buildDayCardHtml(d, uvaFillingByDate, shiftByDate, productsByDate){
   const totalQty = FILLINGS.reduce((s, f) => s + (fillingQty[f] || 0), 0);
 
   // まだadmin.html側でその日の商品ラインナップが設定されていない場合は、仮の名称と
-  // デフォルト個数（10個・10個・20個）を暫定表示する（注文弁当は仮名称を持たず「なし」表示）
+  // デフォルト個数（10個・10個・20個）を暫定表示する（お弁当3は仮名称を持たず「なし」表示）
   const products = productsByDate[d.iso] || CTH_PRODUCT_DEFAULTS;
-  const orderBentoHtml = products.orderBentoName
-    ? `<div class="fixed-item-row"><span>${escapeHtml(products.orderBentoName)}</span><span class="fixed-item-qty">${products.orderBentoQty || 0}個</span></div>`
-    : `<p class="no-qty-note order-bento-none">注文弁当：なし</p>`;
+  // 表示ラベルは日付により「注文弁当」（1・2週目）/「お弁当3」（3週目〜）を切り替える
+  const bento3LabelText = bento3Label(d.iso);
+  const bento3Html = products.bento3Name
+    ? `<div class="fixed-item-row"><span>${escapeHtml(products.bento3Name)}</span><span class="fixed-item-qty">${products.bento3Qty || 0}個</span></div>`
+    : `<p class="no-qty-note bento3-none">${bento3LabelText}：なし</p>`;
 
   const staffList = shiftByDate[d.iso] || [];
   let staffHtml;
@@ -563,8 +573,8 @@ function buildDayCardHtml(d, uvaFillingByDate, shiftByDate, productsByDate){
         <div class="fixed-item-row"><span>${escapeHtml(products.sandoName)}</span><span class="fixed-item-qty">${products.sandoQty}個</span></div>
       </div>
       <div class="menu-block">
-        <div class="menu-title">📦 注文弁当</div>
-        ${orderBentoHtml}
+        <div class="menu-title">📦 ${bento3LabelText}</div>
+        ${bento3Html}
       </div>
       <div class="menu-block">
         <div class="menu-title">🍡 その他</div>
