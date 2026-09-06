@@ -324,13 +324,6 @@ const CTH_PRODUCT_DEFAULTS = {
   bento3Name: "", bento3Qty: "",
 };
 
-// 「お弁当3」枠（旧・注文弁当）の画面表示ラベル切り替え日。
-// データ構造・スプレッドシートの列名は「お弁当3名」「お弁当3個数」に統一しているが、
-// 画面上の表示ラベルだけは日付に応じて「注文弁当」（1・2週目）/「お弁当3」（3週目〜）を切り替える。
-const BENTO3_LABEL_SWITCH_DATE = "2026-09-07";
-function bento3Label(iso){
-  return iso >= BENTO3_LABEL_SWITCH_DATE ? "お弁当3" : "注文弁当";
-}
 
 // CTH商品シートから日付ごとのお弁当2種・サンドイッチ・お弁当3の種類名・個数を取り出す。
 // お弁当1・お弁当2・サンドイッチは名前が未入力の項目にデフォルトの仮名称を、個数が
@@ -503,23 +496,9 @@ function buildStaffTimelineHtml(staffList){
   `;
 }
 
-// 実際の「今日」がCTH特別期間の1〜3週目のどこに該当するかを判定する。
-// CTH_SPECIAL_STARTは月曜始まりで、ちょうど週7日単位×3週間の期間になっているため、
-// 開始日からの経過日数を7で割った商（0〜2）+1で週番号が求まる。
-// 期間開始前は1週目、期間終了後は3週目として扱う（表示上迷わないためのフォールバック）。
-function getCurrentCthWeekIndex(){
-  const start = new Date(`${CTH_SPECIAL_START}T00:00:00`);
-  const end = new Date(`${CTH_SPECIAL_END}T00:00:00`);
-  const today = new Date(); today.setHours(0, 0, 0, 0);
-  if(today <= start) return 1;
-  if(today >= end) return 3;
-  const diffDays = Math.floor((today - start) / (1000 * 60 * 60 * 24));
-  return Math.min(3, Math.max(1, Math.floor(diffDays / 7) + 1));
-}
-
-// 週ごとの折りたたみ状態。デフォルトは「今日」が属する週だけを表示し、他の週は折りたたむ。
-const currentCthWeekIndex = getCurrentCthWeekIndex();
-const collapsedWeeks = { 1: currentCthWeekIndex !== 1, 2: currentCthWeekIndex !== 2, 3: currentCthWeekIndex !== 3 };
+// 週ごとの折りたたみ状態。デフォルトは3週目だけを初期展開し、1・2週目は初期折りたたみにする
+// （日付による自動判定ではなく固定設定）。
+const collapsedWeeks = { 1: true, 2: true, 3: false };
 // トグルボタンから再描画できるよう、直近に取得したデータをキャッシュしておく
 let lastRenderData = null;
 
@@ -533,13 +512,17 @@ function buildDayCardHtml(d, uvaFillingByDate, shiftByDate, productsByDate){
   const totalQty = FILLINGS.reduce((s, f) => s + (fillingQty[f] || 0), 0);
 
   // まだadmin.html側でその日の商品ラインナップが設定されていない場合は、仮の名称と
-  // デフォルト個数（10個・10個・20個）を暫定表示する（お弁当3は仮名称を持たず「なし」表示）
+  // デフォルト個数（10個・10個・20個）を暫定表示する（お弁当3は仮名称を持たず、未設定なら非表示）
   const products = productsByDate[d.iso] || CTH_PRODUCT_DEFAULTS;
-  // 表示ラベルは日付により「注文弁当」（1・2週目）/「お弁当3」（3週目〜）を切り替える
-  const bento3LabelText = bento3Label(d.iso);
-  const bento3Html = products.bento3Name
-    ? `<div class="fixed-item-row"><span>${escapeHtml(products.bento3Name)}</span><span class="fixed-item-qty">${products.bento3Qty || 0}個</span></div>`
-    : `<p class="no-qty-note bento3-none">${bento3LabelText}：なし</p>`;
+  // お弁当1・お弁当2・お弁当3（設定済みの場合のみ）を「お弁当」1グループにまとめて表示する。
+  // 「お弁当1」「お弁当2」「お弁当3」という区分ラベルは表示せず、商品名＋個数だけを並べる
+  const bentoRows = [
+    `<div class="fixed-item-row"><span>${escapeHtml(products.bento1Name)}</span><span class="fixed-item-qty">${products.bento1Qty}個</span></div>`,
+    `<div class="fixed-item-row"><span>${escapeHtml(products.bento2Name)}</span><span class="fixed-item-qty">${products.bento2Qty}個</span></div>`,
+    products.bento3Name
+      ? `<div class="fixed-item-row"><span>${escapeHtml(products.bento3Name)}</span><span class="fixed-item-qty">${products.bento3Qty || 0}個</span></div>`
+      : "",
+  ].join("");
 
   const staffList = shiftByDate[d.iso] || [];
   let staffHtml;
@@ -565,16 +548,11 @@ function buildDayCardHtml(d, uvaFillingByDate, shiftByDate, productsByDate){
       </div>
       <div class="menu-block">
         <div class="menu-title">🍱 お弁当</div>
-        <div class="fixed-item-row"><span>${escapeHtml(products.bento1Name)}</span><span class="fixed-item-qty">${products.bento1Qty}個</span></div>
-        <div class="fixed-item-row"><span>${escapeHtml(products.bento2Name)}</span><span class="fixed-item-qty">${products.bento2Qty}個</span></div>
+        ${bentoRows}
       </div>
       <div class="menu-block">
         <div class="menu-title">🍞 サンドイッチ</div>
         <div class="fixed-item-row"><span>${escapeHtml(products.sandoName)}</span><span class="fixed-item-qty">${products.sandoQty}個</span></div>
-      </div>
-      <div class="menu-block">
-        <div class="menu-title">📦 ${bento3LabelText}</div>
-        ${bento3Html}
       </div>
       <div class="menu-block">
         <div class="menu-title">🍡 その他</div>
