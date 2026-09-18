@@ -185,6 +185,42 @@
   th.sortable{ cursor: pointer; user-select: none; }
   th.sortable:hover{ background: #dcebe0; }
   th.sortable .arrow{ font-size: 0.7rem; opacity: 0.5; margin-left: 3px; }
+
+  /* 過去の生産実績（具材別） */
+  .prod-history-controls input[type="date"]{
+    font-family: inherit;
+    font-size: 0.84rem;
+    border: 1px solid #ccc;
+    border-radius: 6px;
+    padding: 5px 8px;
+    margin-left: 4px;
+  }
+  .prod-history-controls button{
+    background: var(--main);
+    color: #fff;
+    border: none;
+    border-radius: 100px;
+    padding: 7px 18px;
+    font-size: 0.84rem;
+    font-weight: bold;
+    cursor: pointer;
+    font-family: inherit;
+  }
+  .prod-history-controls button:hover{ background: var(--main-dark); }
+  .prod-day-card{
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 14px 16px;
+    margin-bottom: 14px;
+  }
+  .prod-day-card h3{ margin: 0 0 4px; font-size: 0.95rem; color: var(--main-dark); }
+  .prod-day-totals{ font-size: 0.8rem; color: #777; margin-bottom: 10px; }
+  .prod-day-no-store-note{ font-size: 0.78rem; color: #b8825f; margin: 0 0 10px; }
+  .prod-member-list{ margin-top: 10px; font-size: 0.82rem; }
+  .prod-member-list summary{ cursor: pointer; color: var(--main-dark); font-weight: bold; }
+  .prod-member-row{ display: flex; justify-content: space-between; padding: 4px 0; border-bottom: 1px dashed var(--line); }
+  .prod-member-row:last-child{ border-bottom: none; }
   th.sortable.sorted .arrow{ opacity: 1; }
   td.num{ text-align: right; }
   td.num .sold-main{ font-size: 1rem; font-weight: 600; }
@@ -300,6 +336,17 @@
       </select>
     </div>
     <div id="planHistoryArea" class="loading">読み込み中...</div>
+  </section>
+
+  <section>
+    <h2>🥡 過去の生産実績（具材別）</h2>
+    <p class="off-note">確定プランシートから、選択した期間の日ごとの具材別生産数（Zuid向け・UvA向け・チセ向け・ニギニギ隊内訳・本部内訳）を表示します。</p>
+    <div class="table-filter-row prod-history-controls">
+      <label>開始日 <input type="date" id="prodHistoryStart"></label>
+      <label>終了日 <input type="date" id="prodHistoryEnd"></label>
+      <button type="button" id="prodHistoryShowBtn">表示</button>
+    </div>
+    <div id="prodHistoryArea" class="off-note">開始日・終了日を選んで「表示」を押してください。</div>
   </section>
 
 </main>
@@ -943,6 +990,126 @@ function renderPlanHistoryTable(){
   });
 }
 
+/* ---------- 過去の生産実績（具材別） ---------- */
+
+const FILLINGS = ["ツナマヨ","スパイシーツナマヨ","テリヤキチキン","サーモン","スパイシー味噌","枝豆","梅","うなぎ","今月のおにぎり"];
+
+// "具材名×個数" をスペース区切りで解析する（admin.htmlのmemberFillingToString/hqBreakdownToStringと同じ形式）
+function parseFillingBreakdown(str){
+  if(!str) return {};
+  const result = {};
+  String(str).trim().split(/\s+/).filter(Boolean).forEach(part => {
+    const [filling, qtyStr] = part.split("×");
+    if(!filling) return;
+    result[filling] = parseInt(qtyStr, 10) || 0;
+  });
+  return result;
+}
+
+// "名前:具材×個数 具材×個数；名前:..." 形式（ニギニギ隊内訳）を解析する（production.htmlと同じ形式）
+function parseMemberBreakdown(str){
+  if(!str) return [];
+  return String(str).split("；").filter(Boolean).map(part => {
+    const idx = part.indexOf(":");
+    const name = idx === -1 ? part.trim() : part.slice(0, idx).trim();
+    const items = parseFillingBreakdown(idx === -1 ? "" : part.slice(idx + 1));
+    const total = Object.values(items).reduce((s, q) => s + q, 0);
+    return { name, items, total };
+  });
+}
+
+function prodHistoryDayCardHtml(plan){
+  const dt = parseIsoDate(plan.date);
+  const zuidItems = parseFillingBreakdown(plan.zuidBreakdown);
+  const uvaItems = parseFillingBreakdown(plan.uvaBreakdown);
+  const chiseItems = parseFillingBreakdown(plan.chiseBreakdown);
+  const members = parseMemberBreakdown(plan.ningiBreakdown);
+  const hqItems = parseFillingBreakdown(plan.hqBreakdown);
+
+  const ningiByFilling = {};
+  members.forEach(m => {
+    Object.entries(m.items).forEach(([f, q]) => { ningiByFilling[f] = (ningiByFilling[f] || 0) + q; });
+  });
+
+  // Zuid/UvA/チセ内訳は後から追加した列のため、それより前に確定された日はデータが無い
+  // （合計数のみ確定プランに残っている）。その場合は具材別内訳の代わりに合計数だけを注記する
+  const hasStoreBreakdown = plan.zuidBreakdown || plan.uvaBreakdown || plan.chiseBreakdown;
+
+  const fillingNames = FILLINGS.filter(f =>
+    (zuidItems[f] || uvaItems[f] || chiseItems[f] || ningiByFilling[f] || hqItems[f]) > 0
+  );
+
+  const rowsHtml = fillingNames.map(f => `
+    <tr>
+      <td>${f}</td>
+      <td class="num">${hasStoreBreakdown ? `${zuidItems[f] || 0}個` : "—"}</td>
+      <td class="num">${hasStoreBreakdown ? `${uvaItems[f] || 0}個` : "—"}</td>
+      <td class="num">${hasStoreBreakdown ? `${chiseItems[f] || 0}個` : "—"}</td>
+      <td class="num">${ningiByFilling[f] || 0}個</td>
+      <td class="num">${hqItems[f] || 0}個</td>
+    </tr>
+  `).join("");
+
+  const memberListHtml = members.length ? `
+    <details class="prod-member-list">
+      <summary>ニギニギ隊メンバー別の内訳（${members.length}名）</summary>
+      ${members.map(m => `
+        <div class="prod-member-row">
+          <span>${m.name}：${Object.entries(m.items).map(([f, q]) => `${f}×${q}`).join(" ") || "（内訳なし）"}</span>
+          <span><strong>${m.total}個</strong></span>
+        </div>
+      `).join("")}
+    </details>
+  ` : "";
+
+  return `
+    <div class="prod-day-card">
+      <h3>${dt.getMonth() + 1}/${dt.getDate()}（${plan.weekday || "—"}）</h3>
+      <div class="prod-day-totals">Zuid確定数：${plan.zuid}個　UvA確定数：${plan.uva}個　チセ分：${plan.chise}個　本部製造数：${plan.hqQty}個　総生産数：${plan.total}個</div>
+      ${hasStoreBreakdown ? "" : `<p class="prod-day-no-store-note">※この日はZuid/UvA/チセ向けの具材別内訳データがありません（本機能追加前に確定されたため、合計数のみ）。ニギニギ隊内訳・本部内訳は具材別に表示できます。</p>`}
+      ${fillingNames.length ? `
+        <div class="table-scroll">
+          <table>
+            <thead><tr><th>具材</th><th>Zuid向け</th><th>UvA向け</th><th>チセ向け</th><th>ニギニギ隊合計</th><th>本部</th></tr></thead>
+            <tbody>${rowsHtml}</tbody>
+          </table>
+        </div>
+      ` : `<p class="off-note">具材別の内訳データがありません。</p>`}
+      ${memberListHtml}
+    </div>
+  `;
+}
+
+function renderProdHistory(){
+  const area = document.getElementById("prodHistoryArea");
+  const startVal = document.getElementById("prodHistoryStart").value;
+  const endVal = document.getElementById("prodHistoryEnd").value;
+
+  if(!startVal || !endVal){
+    area.innerHTML = `<p class="off-note">開始日・終了日を選んで「表示」を押してください。</p>`;
+    return;
+  }
+  if(startVal > endVal){
+    area.innerHTML = `<p class="off-note">終了日は開始日以降にしてください。</p>`;
+    return;
+  }
+
+  const plans = state.confirmedPlans
+    .filter(p => p.date >= startVal && p.date <= endVal)
+    .sort((a, b) => a.date < b.date ? -1 : (a.date > b.date ? 1 : 0));
+
+  if(plans.length === 0){
+    area.innerHTML = `<p class="off-note">この期間に確定済みのデータがありません。</p>`;
+    return;
+  }
+
+  area.innerHTML = plans.map(prodHistoryDayCardHtml).join("");
+}
+
+function initProdHistorySection(){
+  document.getElementById("prodHistoryShowBtn").addEventListener("click", renderProdHistory);
+}
+
 /* ---------- 傾向インサイト ---------- */
 
 function renderInsights(){
@@ -1044,6 +1211,13 @@ async function init(){
     state.planLimit = Number(e.target.value) || 0;
     renderPlanHistoryTable();
   });
+
+  // 過去の生産実績：デフォルトは直近7日間（確定プランがあればそのまま「表示」で見られる）
+  const todayIso = toIso(new Date());
+  const weekAgoIso = toIso(new Date(Date.now() - 6 * 86400000));
+  document.getElementById("prodHistoryStart").value = weekAgoIso;
+  document.getElementById("prodHistoryEnd").value = todayIso;
+  initProdHistorySection();
 
   document.querySelectorAll(".filter-mode-tab").forEach(btn => {
     btn.addEventListener("click", () => {

@@ -3593,6 +3593,7 @@ async function confirmWeek(weekIndex){
       const ningiBreakdown = snap.working
         .map(name => `${name}:${memberFillingToString(d.memberFillingQty[name])}`)
         .join("；");
+      const chise = state.chiseByDate[mdLabel(d.dateObj)];
 
       return {
         date: mdLabel(d.dateObj),
@@ -3603,6 +3604,11 @@ async function confirmWeek(weekIndex){
         ningiBreakdown,
         hqQty: snap.hqQty,
         hqBreakdown: hqBreakdownToString(snap.hqBreakdown),
+        // 過去の生産実績（analytics.html）で店舗別の具材内訳を確認できるよう、
+        // 確定時点のZuid・UvA・チセ向けの具材別内訳もあわせて保存する
+        zuidBreakdown: memberFillingToString(d.zuidOpen ? d.zuidFillingQty : {}),
+        uvaBreakdown: memberFillingToString(d.uvaOpen ? d.uvaFillingQty : {}),
+        chiseBreakdown: memberFillingToString(chise ? chise.breakdown : {}),
       };
     }),
   };

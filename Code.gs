@@ -55,17 +55,18 @@ function handleShiftSubmit(ss, data) {
 }
 
 function handleConfirmPlan(ss, data) {
-  var headers = ["日付", "曜日", "Zuid確定数", "UvA確定数", "チセ分", "ニギニギ隊内訳", "本部製造数", "本部内訳", "確定日時"];
+  // Zuid内訳・UvA内訳・チセ内訳（後から追加した列）は、既存データの列位置を変えないよう
+  // 確定日時の後ろに追加した。過去に確定済みの行はこれらの列を持たないため、
+  // 具材別の店舗内訳は無く合計数のみになる（handleGetConfirmedPlansの呼び出し側で判定する）。
+  var headers = ["日付", "曜日", "Zuid確定数", "UvA確定数", "チセ分", "ニギニギ隊内訳", "本部製造数", "本部内訳", "確定日時", "Zuid内訳", "UvA内訳", "チセ内訳"];
   var sheet = ss.getSheetByName("確定プラン");
   if (!sheet) {
     sheet = ss.insertSheet("確定プラン");
     sheet.appendRow(headers);
   } else {
-    // 旧バージョン（列数が少ない）のシートはヘッダーを新しい列構成に揃える
-    var currentHeader = sheet.getRange(1, 1, 1, headers.length).getValues()[0];
-    if (currentHeader[5] !== headers[5]) {
-      sheet.getRange(1, 1, 1, headers.length).setValues([headers]);
-    }
+    // 列名の変更・追加（旧バージョンの列数が少ないシートも含む）を都度反映する。
+    // データ行の列位置には影響しない
+    sheet.getRange(1, 1, 1, headers.length).setValues([headers]);
   }
   var values = sheet.getDataRange().getValues();
   var ts = new Date();
@@ -96,7 +97,10 @@ function handleConfirmPlan(ss, data) {
       day.ningiBreakdown || "",
       day.hqQty || 0,
       day.hqBreakdown || "",
-      ts
+      ts,
+      day.zuidBreakdown || "",
+      day.uvaBreakdown || "",
+      day.chiseBreakdown || ""
     ];
     if (foundRow > 0) {
       sheet.getRange(foundRow, 1, 1, row.length).setValues([row]);
@@ -152,6 +156,14 @@ function handleGetConfirmedPlans(ss) {
       hqQty: hqQty,
       // 総生産数＝Zuid＋UvA＋チセ（本部製造数はこの内訳の一部であり、別途加算しない）
       total: zuid + uva + chise,
+      // 具材別の内訳（"具材名×個数"をスペース区切り、メンバー内訳はさらに"名前:..."を「；」区切り）。
+      // Zuid内訳・UvA内訳・チセ内訳は後から追加した列のため、それより前に確定された行では
+      // 空文字になる（analytics.html側で「店舗別内訳データなし」として扱う）
+      ningiBreakdown: String(r[5] || ""),
+      hqBreakdown: String(r[7] || ""),
+      zuidBreakdown: String(r[9] || ""),
+      uvaBreakdown: String(r[10] || ""),
+      chiseBreakdown: String(r[11] || ""),
     });
   }
   plans.sort(function(a, b) { return a.date < b.date ? 1 : (a.date > b.date ? -1 : 0); });
