@@ -147,13 +147,15 @@
     border-radius: 8px;
   }
   .cal thead th.col-sun{ background: #8b2222; }
+  .cal thead th.col-sat{ background: #2f6fb0; }
 
   /* td（セル外枠）*/
+  /* table-layout:fixedのためwidth指定は不要（thead thの数に応じて自動で均等割りされる。
+     土曜列の有無で列数が6/7と変わるため、固定パーセンテージにはしない） */
   .cal tbody td{
     vertical-align: top;
     background: transparent;
     padding: 0;
-    width: calc(100% / 6);
   }
 
   /* セル本体 */
@@ -203,6 +205,7 @@
     line-height: 1;
   }
   .cell-date.is-sun .date-num{ color: var(--sun); }
+  .cell-date.is-sat .date-num{ color: #2f6fb0; }
   td.is-today .cell-date .date-num{ color: var(--main-dark); }
 
   .today-badge{
@@ -587,22 +590,41 @@ async function loadData(){
 }
 
 /* ── Calendar render ── */
+// 週ごとに、日〜金の日付配列に加えてその週の土曜日の実日付（Dateオブジェクト）を返す。
+// 土曜日は月をまたぐ場合もあるため、月内の日付配列とは別にDateで持っておき、
+// 確定プランの有無判定・表示どちらもこのDateから計算する。
 function buildWeeks(yr, mo){
   const lastDay = new Date(yr, mo + 1, 0).getDate();
   const weeks = [];
   let week = new Array(6).fill(null);
 
+  function finalizeWeek(){
+    let saturday = null;
+    for(let col = 0; col < 6; col++){
+      if(week[col] !== null){
+        const sunday = new Date(yr, mo, week[col]);
+        sunday.setDate(sunday.getDate() - col);
+        saturday = new Date(sunday);
+        saturday.setDate(saturday.getDate() + 6);
+        break;
+      }
+    }
+    weeks.push({ days: week, saturday });
+    week = new Array(6).fill(null);
+  }
+
   for(let d = 1; d <= lastDay; d++){
     const dow = new Date(yr, mo, d).getDay();
     if(dow === 6) continue;
     week[dow] = d;
-    if(dow === 5){
-      weeks.push(week);
-      week = new Array(6).fill(null);
-    }
+    if(dow === 5) finalizeWeek();
   }
-  if(week.some(v => v !== null)) weeks.push(week);
+  if(week.some(v => v !== null)) finalizeWeek();
   return weeks;
+}
+
+function planKeyForDate(dateObj){
+  return `${dateObj.getFullYear()}-${dateObj.getMonth() + 1}-${dateObj.getDate()}`;
 }
 
 // カレンダーセル内表示（PC：名前＋具材＋合計 / スマホ：名前＋合計のみ）
@@ -637,6 +659,51 @@ function memberModalHtml(m){
   return html;
 }
 
+// 1日分のセルHTML（平日・日曜・土曜のいずれも共通で使う）
+function dayCellHtml(dateObj, today, isSun, isSat){
+  const isToday = dateObj.getTime() === today.getTime();
+  const isPast  = dateObj < today;
+  const key     = planKeyForDate(dateObj);
+  const plan    = allPlans[key];
+
+  let tdCls = "";
+  if(isToday) tdCls = "is-today";
+  else if(isPast) tdCls = "is-past";
+
+  const activeMembers = plan ? plan.members.filter(m => m.total > 0) : [];
+  const hasPlan = activeMembers.length > 0 || !!plan;
+  let html = `<td${tdCls ? ` class="${tdCls}"` : ""}>`;
+  html += `<div class="cell${hasPlan ? ' has-plan' : ''}"${hasPlan ? ` data-day-key="${key}"` : ""}>`;
+
+  // 日付ヘッダー
+  html += `<div class="cell-date${isSun ? " is-sun" : ""}${isSat ? " is-sat" : ""}">`;
+  html += `<span class="date-num">${dateObj.getDate()}</span>`;
+  if(isToday) html += `<span class="today-badge">TODAY</span>`;
+  html += `</div>`;
+
+  if(activeMembers.length > 0){
+    activeMembers.forEach(m => {
+      html += memberBlockHtml(m);
+    });
+    const dispTotal = activeMembers.reduce((s, m) => s + m.total, 0);
+    html += `<div class="cell-total">`;
+    html += `<span class="total-label">TOTAL</span>`;
+    html += `<span class="total-num">${dispTotal}<span class="unit">個</span></span>`;
+    html += `</div>`;
+    html += `<div class="tap-hint">詳細 ›</div>`;
+  } else if(plan){
+    html += `<div class="cell-total">`;
+    html += `<span class="total-label">TOTAL</span>`;
+    html += `<span class="total-num">0<span class="unit">個</span></span>`;
+    html += `</div>`;
+  } else if(!isPast){
+    html += `<div class="no-plan">未確定</div>`;
+  }
+
+  html += `</div></td>`;
+  return html;
+}
+
 function renderCalendar(){
   const today = new Date();
   today.setHours(0, 0, 0, 0);
@@ -647,62 +714,33 @@ function renderCalendar(){
 
   const weeks = buildWeeks(yr, mo);
 
+  // 確定プランに土曜日のデータが存在する週が1つでもあれば、その月のカレンダーには
+  // 土曜列を追加する（admin.htmlの「土日イベントを追加」機能で設定したデータを表示するため）。
+  // データがない通常の月は、これまで通り日〜金の6列のまま。
+  const showSat = weeks.some(wk => wk.saturday && allPlans[planKeyForDate(wk.saturday)]);
+  const colLabels = showSat ? [...COL_LABELS, "土"] : COL_LABELS;
+
   let html = `<table class="cal"><thead><tr>`;
-  COL_LABELS.forEach((lbl, i) => {
-    html += `<th class="${i === 0 ? "col-sun" : ""}">${lbl}</th>`;
+  colLabels.forEach((lbl, i) => {
+    const cls = i === 0 ? "col-sun" : (lbl === "土" ? "col-sat" : "");
+    html += `<th class="${cls}">${lbl}</th>`;
   });
   html += `</tr></thead><tbody>`;
 
   for(const wk of weeks){
     html += `<tr>`;
     for(let ci = 0; ci < 6; ci++){
-      const day = wk[ci];
+      const day = wk.days[ci];
       if(day === null){
         html += `<td class="empty-cell"></td>`;
         continue;
       }
-      const dateObj = new Date(yr, mo, day);
-      const isToday = dateObj.getTime() === today.getTime();
-      const isPast  = dateObj < today;
-      const isSun   = ci === 0;
-      const key     = `${yr}-${mo + 1}-${day}`;
-      const plan    = allPlans[key];
-
-      let tdCls = "";
-      if(isToday) tdCls = "is-today";
-      else if(isPast) tdCls = "is-past";
-
-      const activeMembers = plan ? plan.members.filter(m => m.total > 0) : [];
-      const hasPlan = activeMembers.length > 0 || !!plan;
-      html += `<td${tdCls ? ` class="${tdCls}"` : ""}>`;
-      html += `<div class="cell${hasPlan ? ' has-plan' : ''}"${hasPlan ? ` data-day-key="${key}"` : ""}>`;
-
-      // 日付ヘッダー
-      html += `<div class="cell-date${isSun ? " is-sun" : ""}">`;
-      html += `<span class="date-num">${day}</span>`;
-      if(isToday) html += `<span class="today-badge">TODAY</span>`;
-      html += `</div>`;
-
-      if(activeMembers.length > 0){
-        activeMembers.forEach(m => {
-          html += memberBlockHtml(m);
-        });
-        const dispTotal = activeMembers.reduce((s, m) => s + m.total, 0);
-        html += `<div class="cell-total">`;
-        html += `<span class="total-label">TOTAL</span>`;
-        html += `<span class="total-num">${dispTotal}<span class="unit">個</span></span>`;
-        html += `</div>`;
-        html += `<div class="tap-hint">詳細 ›</div>`;
-      } else if(plan){
-        html += `<div class="cell-total">`;
-        html += `<span class="total-label">TOTAL</span>`;
-        html += `<span class="total-num">0<span class="unit">個</span></span>`;
-        html += `</div>`;
-      } else if(!isPast){
-        html += `<div class="no-plan">未確定</div>`;
-      }
-
-      html += `</div></td>`;
+      html += dayCellHtml(new Date(yr, mo, day), today, ci === 0, false);
+    }
+    if(showSat){
+      html += wk.saturday
+        ? dayCellHtml(wk.saturday, today, false, true)
+        : `<td class="empty-cell"></td>`;
     }
     html += `</tr>`;
   }
