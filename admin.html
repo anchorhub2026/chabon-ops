@@ -1911,25 +1911,20 @@ function sumQtyMap(map){
 function zuidFinal(day){ return day.zuidOpen ? sumQtyMap(day.zuidFillingQty) : 0; }
 function uvaFinal(day){ return day.uvaOpen ? sumQtyMap(day.uvaFillingQty) : 0; }
 
-// その日の現在の実際の必要数合計（Zuid＋UvA＋チセ）。UvAはCTH特別期間中は
-// CTH向け固定数を含む。computeDaySnapshot()のtotalと同じ計算式。
-// localStorage・「作業中プラン」シートに保存された古いメンバー別内訳(prod)が、
-// 必要数の変化後もまだ有効かどうかを判定するための基準値として使う。
-function currentNeededTotalForDay(day){
-  const chise = state.chiseByDate[mdLabel(day.dateObj)];
-  const chiseQty = chise ? chise.subtotal : 0;
-  return (zuidFinal(day) || 0) + (uvaFinal(day) || 0) + chiseQty;
-}
-
 // 保存済みのメンバー別内訳(prod)が、現在の必要数と整合しているかを判定する。
-// ニギニギ隊の内訳合計は、本部固定具材（枝豆・梅・うなぎ）の分だけ必要数合計を
-// 常に下回るのが正常な状態（＝完全な「一致」にはならない）なため、「必要数合計を
-// 上回っていないか」で判定する。これを上回っている場合は、必要数が変わった後も
-// 古い内訳がそのまま残っている（＝物理的にありえない量が保存されている）ことを
+// 具材ごとに「ニギニギ隊への割り振り合計がその具材の必要数(neededQtyFor)を超えていないか」を
+// 確認する。1つでも超えている具材があれば、必要数の"内訳"（Zuid/UvA間の具材配分など）が
+// 変わった後も古い内訳がそのまま残っている（＝物理的にありえない量が保存されている）ことを
 // 意味するため、古いデータとみなして復元を拒否する。
+// 合計だけを比較する判定では、具材ごとの配分が変わっても総合計自体は変わらないケースを
+// 検知できず、本部の割り振りが特定の具材だけマイナスになる不具合の原因になっていたため、
+// 具材単位でチェックする。
 function isProdSnapshotConsistent(day, memberFillingQty){
-  const savedTotal = Object.values(memberFillingQty || {}).reduce((s, qtyMap) => s + (sumQtyMap(qtyMap) || 0), 0);
-  return savedTotal <= currentNeededTotalForDay(day);
+  if(!memberFillingQty) return true;
+  return FILLINGS.every(f => {
+    const savedForFilling = Object.values(memberFillingQty).reduce((s, qtyMap) => s + ((qtyMap && qtyMap[f]) || 0), 0);
+    return savedForFilling <= neededQtyFor(day, f);
+  });
 }
 
 function getManualQty(day, name){
@@ -2294,7 +2289,7 @@ function splitForecastTableHtml(day){
 
 function splitProdTableHtml(day){
   const snap = computeDaySnapshot(day);
-  const { working, memberCaps, hqBreakdown, hqQty, memberTotals, ningiTotal } = snap;
+  const { working, memberCaps, hqBreakdown, hqQty, memberTotals, ningiTotal, fillingOveredBy } = snap;
 
   const memberHeaderCells = working.map((name, i) =>
     `<th class="sub-prod-head">${name}<br><small class="wish-hint">希望:${memberCaps[i]}個</small></th>`
@@ -2310,8 +2305,9 @@ function splitProdTableHtml(day){
     }).join("");
     const hqVal = hqBreakdown[f] || 0;
     const prodRowTotal = working.reduce((s, name) => s + ((day.memberFillingQty[name] && day.memberFillingQty[name][f]) || 0), 0) + hqVal;
-    const hqDisplay = hqVal < 0
-      ? `<span class="hq-negative">${hqVal}<span class="hq-over-badge">⚠️超過</span></span>`
+    const overQty = fillingOveredBy[f];
+    const hqDisplay = overQty
+      ? `<span class="hq-negative">${hqVal}<span class="hq-over-badge">⚠️${overQty}個超過</span></span>`
       : `${hqVal}`;
     return `<tr>
         <td class="f-name">${f}</td>
@@ -2340,7 +2336,7 @@ function splitProdTableHtml(day){
         <tr>
           <td>合計</td>
           ${colTotalCells}
-          <td class="cell-readonly" id="prodHqTotal-${day.dateKey}">${hqQty < 0 ? `<span class="hq-negative">${hqQty}<span class="hq-over-badge">⚠️超過</span></span>` : hqQty}</td>
+          <td class="cell-readonly" id="prodHqTotal-${day.dateKey}">${snap.hasFillingOverage ? `<span class="hq-negative">${hqQty}<span class="hq-over-badge">⚠️超過あり</span></span>` : hqQty}</td>
           <td class="cell-readonly cell-row-total" id="prodGrandTotal-${day.dateKey}">${prodGrandTotal}</td>
         </tr>
       </tfoot>
@@ -2622,20 +2618,35 @@ function computeDaySnapshot(day){
       if(qty > 0) producedByFilling[f] = (producedByFilling[f] || 0) + qty;
     });
   });
+  // 本部の割り振りは、どんな入力（希望数合計が総生産数を超える・手動編集や古い保存データにより
+  // 特定の具材だけニギニギ隊への割り振りが必要数を超えている等）であっても、絶対にマイナスに
+  // ならないようにする。ニギニギ隊への割り振りがその具材の必要数を超えている場合、本部は0個とし、
+  // 超過分はfillingOveredBy[f]に記録して画面側で警告を出す（＝本部で肩代わりするのではなく、
+  // ニギニギ隊側の割り振りを減らして調整すべき異常として扱う）。
   const hqBreakdown = {};
+  const fillingOveredBy = {};
   FILLINGS.forEach(f => {
     const needed = neededQtyFor(day, f);
     const produced = producedByFilling[f] || 0;
-    hqBreakdown[f] = needed - produced;
+    const raw = needed - produced;
+    hqBreakdown[f] = Math.max(0, raw);
+    if(raw < 0) fillingOveredBy[f] = -raw;
   });
 
   // 本部合計は「全具材の本部分の合計」を正式な値とする（独立した別計算式は使わない）
   const hqQty = Object.values(hqBreakdown).reduce((s, v) => s + v, 0);
+  const hasFillingOverage = Object.keys(fillingOveredBy).length > 0;
 
   return {
     chiseQty, total, working, memberCaps, capTotal, allocationTarget, isOverCap,
-    hqBreakdown, hqQty, memberTotals, ningiTotal,
+    hqBreakdown, hqQty, memberTotals, ningiTotal, fillingOveredBy, hasFillingOverage,
   };
+}
+
+function fillingOverageWarningHtml(snap){
+  if(!snap.hasFillingOverage) return "";
+  const detail = Object.entries(snap.fillingOveredBy).map(([f, over]) => `${f}(${over}個超過)`).join("、");
+  return `<div class="warning-line">⚠️ ${detail}：ニギニギ隊への割り振りが必要数を超えています。ニギニギ隊側の個数を減らして調整してください</div>`;
 }
 
 function summaryHtmlFor(snap){
@@ -2645,6 +2656,7 @@ function summaryHtmlFor(snap){
     <div>本部：${snap.hqQty}個（自動計算）</div>
     <div style="font-size:0.82em;color:#888;margin-top:2px;">${Math.ceil(snap.hqQty / 3)}合</div>
     ${snap.isOverCap ? `<div class="warning-line">⚠️ ニギニギ隊の希望数合計が総生産数を超えています</div>` : ""}
+    ${fillingOverageWarningHtml(snap)}
   `;
 }
 
@@ -2661,7 +2673,7 @@ function prodCellStepperHtml(day, name, filling, qty){
 
 // 生産割り振り表：列＝メンバー＋本部＋合計、行＝具材＋合計
 function productionTableHtml(day, snap){
-  const { working, memberCaps, hqBreakdown, hqQty, memberTotals, ningiTotal } = snap;
+  const { working, memberCaps, hqBreakdown, hqQty, memberTotals, ningiTotal, fillingOveredBy } = snap;
 
   const headerCells = working.map((name, i) => `<th>${name}<small class="wish-hint">希望:${memberCaps[i]}個</small></th>`).join("");
 
@@ -2675,8 +2687,9 @@ function productionTableHtml(day, snap){
     }).join("");
     const hqVal = hqBreakdown[f] || 0;
     const rowTotal = working.reduce((s, name) => s + ((day.memberFillingQty[name] && day.memberFillingQty[name][f]) || 0), 0) + hqVal;
-    const hqDisplay = hqVal < 0
-      ? `<span class="hq-negative">${hqVal}<span class="hq-over-badge">⚠️超過</span></span>`
+    const overQty = fillingOveredBy[f];
+    const hqDisplay = overQty
+      ? `<span class="hq-negative">${hqVal}<span class="hq-over-badge">⚠️${overQty}個超過</span></span>`
       : `${hqVal}`;
 
     return `
@@ -2703,7 +2716,7 @@ function productionTableHtml(day, snap){
           <tr>
             <td>合計</td>
             ${colTotalCells}
-            <td class="cell-readonly" id="prodHqTotal-${day.dateKey}">${hqQty < 0 ? `<span class="hq-negative">${hqQty}<span class="hq-over-badge">⚠️超過</span></span>` : hqQty}</td>
+            <td class="cell-readonly" id="prodHqTotal-${day.dateKey}">${snap.hasFillingOverage ? `<span class="hq-negative">${hqQty}<span class="hq-over-badge">⚠️超過あり</span></span>` : hqQty}</td>
             <td class="cell-readonly cell-row-total" id="prodGrandTotal-${day.dateKey}">${grandTotal}</td>
           </tr>
         </tfoot>
@@ -2773,9 +2786,10 @@ function refreshProductionCellDerived(day){
 
   FILLINGS.forEach(f => {
     const hqVal = snap.hqBreakdown[f] || 0;
+    const overQty = snap.fillingOveredBy[f];
     const hqEl = document.getElementById(`prodHq-${day.dateKey}-${f}`);
-    if(hqEl) hqEl.innerHTML = hqVal < 0
-      ? `<span class="hq-negative">${hqVal}<span class="hq-over-badge">⚠️超過</span></span>`
+    if(hqEl) hqEl.innerHTML = overQty
+      ? `<span class="hq-negative">${hqVal}<span class="hq-over-badge">⚠️${overQty}個超過</span></span>`
       : `${hqVal}`;
 
     const rowTotal = snap.working.reduce((s, name) => s + ((day.memberFillingQty[name] && day.memberFillingQty[name][f]) || 0), 0) + hqVal;
@@ -2789,8 +2803,8 @@ function refreshProductionCellDerived(day){
   });
 
   const hqTotalEl = document.getElementById(`prodHqTotal-${day.dateKey}`);
-  if(hqTotalEl) hqTotalEl.innerHTML = snap.hqQty < 0
-    ? `<span class="hq-negative">${snap.hqQty}<span class="hq-over-badge">⚠️超過</span></span>`
+  if(hqTotalEl) hqTotalEl.innerHTML = snap.hasFillingOverage
+    ? `<span class="hq-negative">${snap.hqQty}<span class="hq-over-badge">⚠️超過あり</span></span>`
     : `${snap.hqQty}`;
 
   const grandTotalEl = document.getElementById(`prodGrandTotal-${day.dateKey}`);
