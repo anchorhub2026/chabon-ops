@@ -565,6 +565,16 @@
   .week-collapsed .day-cards,
   .week-collapsed .prod-cards-wrap,
   .week-collapsed .day-pairs-wrap{ display: none; }
+  .weekend-event-toggle-btn{
+    font-size: 0.75rem;
+    padding: 4px 12px;
+    border: 1px solid var(--accent);
+    border-radius: 100px;
+    background: #fff;
+    color: var(--accent);
+    cursor: pointer;
+  }
+  .weekend-event-toggle-btn:hover{ background: #fdecea; }
   .toggle-shift-btn{
     font-size: 0.75rem;
     padding: 4px 12px;
@@ -1307,6 +1317,10 @@ const state = {
   cthStaffNames: [],    // CTHシフト表の列（バイトさん名）
   cthShiftData: {},     // "yyyy-MM-dd" -> { name: "10:00-14:00", ... }
   cthProductsByDate: {}, // "yyyy-MM-dd" -> { bento1Name, bento1Qty, bento2Name, bento2Qty, sandoName, sandoQty }
+  weekendEventWeeks: {}, // weekIndex(0/1/2) -> bool。土日イベントを追加表示している週
+  weatherDaily: null,    // buildDays()の再実行用にAPIレスポンスをキャッシュ（土日イベント切り替え時に再取得不要にする）
+  hourlyByDate: {},      // 同上
+  draftData: null,       // 同上（「作業中プラン」から取得したドラフト一覧）
 };
 
 const weekCollapsed = { 1: false, 2: false };
@@ -1704,7 +1718,21 @@ function buildDays(daily, hourlyByDate){
     ...week2.map(d => ({ d, weekIndex: 2 })),
   ];
 
-  return all.map(({ d, weekIndex }) => {
+  // 土日イベント：「土日イベントを追加」で有効化された週は、その週の土曜・日曜も対象日に加える
+  // （Zuid・UvAの自動計算式は月〜金専用のため、これらの日は通常通りcalcZuid/calcUvAがnullを返し、
+  // 休み状態から始まる。管理画面側の営業/休みトグルで手動で開店・個数設定する運用にする）
+  [0, 1, 2].forEach(weekIndex => {
+    if(!state.weekendEventWeeks[weekIndex]) return;
+    const monday = getMonday(new Date());
+    monday.setDate(monday.getDate() + weekIndex * 7);
+    [5, 6].forEach(offset => {
+      const d = new Date(monday);
+      d.setDate(monday.getDate() + offset);
+      all.push({ d, weekIndex, isEventDay: true });
+    });
+  });
+
+  return all.map(({ d, weekIndex, isEventDay }) => {
     const dow = d.getDay();
     const iso = isoDate(d);
     const dIdx = daily.time.indexOf(iso);
@@ -1744,6 +1772,7 @@ function buildDays(daily, hourlyByDate){
       zuid,
       uva,
       uvaVenueLabel: cthSpecial ? CTH_VENUE_NAME : "UvA",
+      isEventDay: !!isEventDay,
     };
   }).map(day => {
     day.zuidOpen = day.zuid !== null;
@@ -1758,6 +1787,67 @@ function buildFillingDefaults(total){
   const obj = {};
   FILLINGS.forEach(f => { obj[f] = Math.round(total * FILLING_RATIOS[f]); });
   return obj;
+}
+
+/* ---------- 土日イベント（週末の臨時出店） ---------- */
+
+function loadWeekendEventWeeksFromStorage(){
+  try{
+    const raw = localStorage.getItem("chabon_weekend_event_weeks");
+    return raw ? JSON.parse(raw) : {};
+  }catch(e){ return {}; }
+}
+
+function saveWeekendEventWeeksToStorage(map){
+  try{ localStorage.setItem("chabon_weekend_event_weeks", JSON.stringify(map)); }catch(e){}
+}
+
+// draftData（「作業中プラン」）の中に、その週の土曜・日曜の実データ（営業設定 or 生産割り振り）が
+// 既に保存されている場合、ローカル保存の表示状態に関わらずその週を自動的に表示対象にする
+// （別ブラウザ・別端末で追加した土日イベントのデータが「非表示」になって見えなくなるのを防ぐ）
+function detectWeekendEventWeeksFromDrafts(draftData){
+  const result = {};
+  if(!draftData) return result;
+  for(let weekIndex = 0; weekIndex <= 2; weekIndex++){
+    const monday = getMonday(new Date());
+    monday.setDate(monday.getDate() + weekIndex * 7);
+    [5, 6].forEach(offset => {
+      const d = new Date(monday);
+      d.setDate(monday.getDate() + offset);
+      const iso = isoDate(d);
+      const draft = draftData.find(dd => dd.date === iso);
+      if(!draft) return;
+      const fc = draft.forecast || {};
+      const hasProd = draft.prod && Object.keys(draft.prod).length > 0;
+      if(fc.zuidOpen || fc.uvaOpen || hasProd) result[weekIndex] = true;
+    });
+  }
+  return result;
+}
+
+// 保存済みのweatherDaily/hourlyByDate/draftDataから、外部データの再取得なしにstate.daysを
+// 作り直して再描画する（土日イベントの表示切り替え時に使う）
+function rebuildDaysAndRender(){
+  state.days = buildDays(state.weatherDaily, state.hourlyByDate);
+  state.days.forEach(day => {
+    loadForecastData(day);
+    loadProdAllocData(day);
+  });
+  if(state.draftData){
+    state.days.forEach(day => {
+      const draft = state.draftData.find(d => d.date === day.iso)
+                 || state.draftData.find(d => d.date === mdLabel(day.dateObj));
+      if(draft) applyDraftToDay(day, draft);
+    });
+  }
+  renderCombined();
+  renderCellStatusTable();
+}
+
+function toggleWeekendEvent(weekIndex){
+  state.weekendEventWeeks[weekIndex] = !state.weekendEventWeeks[weekIndex];
+  saveWeekendEventWeeksToStorage(state.weekendEventWeeks);
+  rebuildDaysAndRender();
 }
 
 // 枝豆・梅・うなぎは常に本部製造（ニギニギ隊には割り振らない）
@@ -1935,6 +2025,7 @@ function renderCombined(){
           <h3><span class="week-title-badge">${week.title}</span>（${thisWeekBadge(week.days)}）</h3>
           <div>
             ${collapsible ? `<button class="toggle-week-btn" data-week-index="${week.weekIndex}">${btnLabel}</button>` : ""}
+            <button class="weekend-event-toggle-btn" data-week="${week.weekIndex}">${state.weekendEventWeeks[week.weekIndex] ? "土日イベントを非表示にする" : "＋ 土日イベントを追加"}</button>
             <button class="confirm-week-btn" data-week="${week.weekIndex}">この週を確定・公開する</button>
             <a class="production-link" href="production.html" target="_blank">ニギニギ隊生産数を見る</a>
             <span class="week-status-msg" id="weekStatus${week.weekIndex}"></span>
@@ -1961,6 +2052,9 @@ function renderCombined(){
   });
   area.querySelectorAll(".toggle-week-btn").forEach(btn => {
     btn.addEventListener("click", () => toggleWeek(+btn.dataset.weekIndex));
+  });
+  area.querySelectorAll(".weekend-event-toggle-btn").forEach(btn => {
+    btn.addEventListener("click", () => toggleWeekendEvent(+btn.dataset.week));
   });
 }
 
@@ -2075,7 +2169,7 @@ function bindForecastTableEvents(day){
       // 入力欄自体は再生成せず、行・列・全体の合計セルだけを更新する（フォーカスを失わない）
       const chise = state.chiseByDate[mdLabel(day.dateObj)];
       const chiseQtyForFilling = (chise && chise.breakdown[filling]) || 0;
-      const showUva = day.uva !== null;
+      const showUva = day.uva !== null || day.isEventDay;
       const zuidQty = day.zuidFillingQty[filling] || 0;
       const uvaQty = showUva ? (day.uvaFillingQty[filling] || 0) : 0;
 
@@ -2151,7 +2245,7 @@ function renderProductionSection(){ renderCombined(); }
 /* ---------- 統合テーブル：1日分を1つの<table>で描画 ---------- */
 
 function splitForecastTableHtml(day){
-  const showUva = day.uva !== null;
+  const showUva = day.uva !== null || day.isEventDay;
   const chise = state.chiseByDate[mdLabel(day.dateObj)];
   const chiseBreakdown = chise ? chise.breakdown : {};
   const chiseQty = chise ? chise.subtotal : 0;
@@ -2278,7 +2372,7 @@ function storeBoxWithToggleHtml(day, store, label, result, isConfirmed){
 
 function dayBlockHtml(day){
   const snap = computeDaySnapshot(day);
-  const showUva = day.uva !== null;
+  const showUva = day.uva !== null || day.isEventDay;
   const isConfirmed = !!(state.confirmedByDate && state.confirmedByDate[mdLabel(day.dateObj)]);
   const hasSavedForecast = !!localStorage.getItem(`chabon_forecast_${mdLabel(day.dateObj)}`);
   const hasSavedProd = !!localStorage.getItem(`chabon_prod_${mdLabel(day.dateObj)}`);
@@ -3648,6 +3742,7 @@ async function refreshAllData(){
       fetchSheetJson("CTH商品", SHIFT_SPREADSHEET_ID).catch(() => null),
     ]);
     const draftData = bootstrap.drafts;
+    state.draftData = draftData;
     applyStatusesToState(bootstrap.statuses);
     applyCthShiftData(cthShiftJson);
     applyCthProductsData(cthProductsJson);
@@ -3659,8 +3754,13 @@ async function refreshAllData(){
     // 保存済みprod内訳の復元(loadProdAllocData/applyDraftToDay)より先にチセデータを反映しておく
     state.chiseByDate = chiseJson ? parseChiseSheet(chiseJson) : {};
     logChiseFillingNameCheck(state.chiseByDate);
+    // buildDays()より前に、土日イベントを表示する週を確定させる
+    // （ローカル保存の状態 ＋ 実際に保存済みデータがある週は自動的に表示）
+    state.weekendEventWeeks = { ...loadWeekendEventWeeksFromStorage(), ...detectWeekendEventWeeksFromDrafts(draftData) };
 
     const hourlyByDate = buildHourlyByDate(weatherRes.hourly);
+    state.weatherDaily = weatherRes.daily;
+    state.hourlyByDate = hourlyByDate;
     state.days = buildDays(weatherRes.daily, hourlyByDate);
     state.days.forEach(day => {
       loadForecastData(day);
@@ -3949,6 +4049,7 @@ async function init(){
       track(fetchSheetJson("CTH商品", SHIFT_SPREADSHEET_ID).catch(() => null)),
     ]);
     const draftData = bootstrap.drafts;
+    state.draftData = draftData;
     applyStatusesToState(bootstrap.statuses);
     const shiftConfig = bootstrap.shiftConfig;
     applyCthShiftData(cthShiftJson);
@@ -3963,7 +4064,12 @@ async function init(){
     // 保存済みprod内訳の復元(loadProdAllocData/applyDraftToDay)より先にチセデータを反映しておく
     state.chiseByDate = chiseJson ? parseChiseSheet(chiseJson) : {};
     logChiseFillingNameCheck(state.chiseByDate);
+    // buildDays()より前に、土日イベントを表示する週を確定させる
+    // （ローカル保存の状態 ＋ 実際に保存済みデータがある週は自動的に表示）
+    state.weekendEventWeeks = { ...loadWeekendEventWeeksFromStorage(), ...detectWeekendEventWeeksFromDrafts(draftData) };
     const hourlyByDate = buildHourlyByDate(weatherRes.hourly);
+    state.weatherDaily = weatherRes.daily;
+    state.hourlyByDate = hourlyByDate;
     state.days = buildDays(weatherRes.daily, hourlyByDate);
     // localStorageから復元（オフライン時フォールバック）→ シートのドラフトで上書き
     state.days.forEach(day => {
