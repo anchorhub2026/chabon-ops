@@ -124,47 +124,54 @@ function handleGetConfirmedPlans(ss) {
   var plans = [];
   for (var i = 1; i < rows.length; i++) {
     if (!rows[i][0]) continue;
-    var r = rows[i];
-    var dateVal = r[0];
-    var confirmedAt = r[8];
-    var iso;
-    if (Object.prototype.toString.call(dateVal) === '[object Date]') {
-      iso = Utilities.formatDate(dateVal, Session.getScriptTimeZone(), "yyyy-MM-dd");
-    } else {
-      var parts = String(dateVal).split("/");
-      var year = (Object.prototype.toString.call(confirmedAt) === '[object Date]')
-        ? confirmedAt.getFullYear()
-        : new Date().getFullYear();
-      if (parts.length === 2) {
-        var mm = ("0" + parts[0]).slice(-2);
-        var dd = ("0" + parts[1]).slice(-2);
-        iso = year + "-" + mm + "-" + dd;
+    // 1行の解析で例外が起きても、その行だけスキップして残りの行は正常に返す
+    // （1件の不正データのせいで確定プラン履歴が丸ごと「データなし」に見えるのを防ぐ）
+    try {
+      var r = rows[i];
+      var dateVal = r[0];
+      var confirmedAt = r[8];
+      var iso;
+      if (Object.prototype.toString.call(dateVal) === '[object Date]') {
+        iso = Utilities.formatDate(dateVal, Session.getScriptTimeZone(), "yyyy-MM-dd");
       } else {
-        iso = String(dateVal);
+        var parts = String(dateVal).split("/");
+        var year = (Object.prototype.toString.call(confirmedAt) === '[object Date]')
+          ? confirmedAt.getFullYear()
+          : new Date().getFullYear();
+        if (parts.length === 2) {
+          var mm = ("0" + parts[0]).slice(-2);
+          var dd = ("0" + parts[1]).slice(-2);
+          iso = year + "-" + mm + "-" + dd;
+        } else {
+          iso = String(dateVal);
+        }
       }
+      var zuid = Number(r[2]) || 0;
+      var uva = Number(r[3]) || 0;
+      var chise = Number(r[4]) || 0;
+      var hqQty = Number(r[6]) || 0;
+      plans.push({
+        date: iso,
+        weekday: String(r[1] || ""),
+        zuid: zuid,
+        uva: uva,
+        chise: chise,
+        hqQty: hqQty,
+        // 総生産数＝Zuid＋UvA＋チセ（本部製造数はこの内訳の一部であり、別途加算しない）
+        total: zuid + uva + chise,
+        // 具材別の内訳（"具材名×個数"をスペース区切り、メンバー内訳はさらに"名前:..."を「；」区切り）。
+        // Zuid内訳・UvA内訳・チセ内訳は後から追加した列のため、それより前に確定された行では
+        // 空文字になる（analytics.html側で「店舗別内訳データなし」として扱う）
+        ningiBreakdown: String(r[5] || ""),
+        hqBreakdown: String(r[7] || ""),
+        zuidBreakdown: String(r[9] || ""),
+        uvaBreakdown: String(r[10] || ""),
+        chiseBreakdown: String(r[11] || ""),
+      });
+    } catch (rowErr) {
+      // この行はスキップして次の行へ
+      continue;
     }
-    var zuid = Number(r[2]) || 0;
-    var uva = Number(r[3]) || 0;
-    var chise = Number(r[4]) || 0;
-    var hqQty = Number(r[6]) || 0;
-    plans.push({
-      date: iso,
-      weekday: String(r[1] || ""),
-      zuid: zuid,
-      uva: uva,
-      chise: chise,
-      hqQty: hqQty,
-      // 総生産数＝Zuid＋UvA＋チセ（本部製造数はこの内訳の一部であり、別途加算しない）
-      total: zuid + uva + chise,
-      // 具材別の内訳（"具材名×個数"をスペース区切り、メンバー内訳はさらに"名前:..."を「；」区切り）。
-      // Zuid内訳・UvA内訳・チセ内訳は後から追加した列のため、それより前に確定された行では
-      // 空文字になる（analytics.html側で「店舗別内訳データなし」として扱う）
-      ningiBreakdown: String(r[5] || ""),
-      hqBreakdown: String(r[7] || ""),
-      zuidBreakdown: String(r[9] || ""),
-      uvaBreakdown: String(r[10] || ""),
-      chiseBreakdown: String(r[11] || ""),
-    });
   }
   plans.sort(function(a, b) { return a.date < b.date ? 1 : (a.date > b.date ? -1 : 0); });
   return ContentService.createTextOutput(JSON.stringify({ plans: plans }))
@@ -666,7 +673,20 @@ function handleGetAnalytics(ss) {
     .setMimeType(ContentService.MimeType.JSON);
 }
 
+// doGet本体で例外が発生すると、Content-Typeが text/html のGoogleエラーページが
+// 返ってしまい、呼び出し元（fetch().json()）ではその他のネットワークエラーと区別が付かず
+// 「データが0件だった」ように見えてしまう。これによりanalytics.html等で原因不明の
+// 「データがありません」表示につながっていたため、必ずJSONを返すようにラップする。
 function doGet(e) {
+  try {
+    return doGetInner(e);
+  } catch (err) {
+    return ContentService.createTextOutput(JSON.stringify({ error: String(err && err.message || err), rows: [], plans: [] }))
+      .setMimeType(ContentService.MimeType.JSON);
+  }
+}
+
+function doGetInner(e) {
   if (e.parameter && e.parameter.type === "disruptions") {
     return handleDisruptions();
   }

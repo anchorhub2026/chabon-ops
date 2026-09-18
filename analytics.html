@@ -263,8 +263,15 @@
 <main>
 
   <section>
+    <h2>🏬 店舗選択</h2>
+    <p class="off-note">Zuid・UvA・CTH（該当期間のみ）はそれぞれ完全に独立して集計しています。「全店舗合計」は参考値です。</p>
+    <div class="filter-mode-tabs" id="storeTabs"></div>
+    <div id="storeDataErrorArea"></div>
+  </section>
+
+  <section>
     <h2>📅 期間フィルター</h2>
-    <div class="filter-mode-tabs">
+    <div class="filter-mode-tabs" id="periodModeTabs">
       <button type="button" class="filter-mode-tab active" data-mode="week">週選択</button>
       <button type="button" class="filter-mode-tab" data-mode="month">月選択</button>
       <button type="button" class="filter-mode-tab" data-mode="custom">カスタム期間</button>
@@ -359,9 +366,17 @@ const HOURLY_SLOTS = [12, 13, 14, 15, 16, 17, 18];
 const DAY_NAMES = ["日", "月", "火", "水", "木", "金", "土"];
 const WEEKDAY_COLOR_INDEX = { "日":0, "月":1, "火":2, "水":3, "木":4, "金":5, "土":6 };
 
+const ALL_STORES_KEY = "__ALL__";
+// 個別店舗の表示順（この順に並べ、リストにない店舗名は末尾にアルファベット順で追加）
+const STORE_ORDER_PRIORITY = ["Zuid", "UvA", "CTH"];
+
 const state = {
   rawRows: [],
-  dateRows: [],       // 日付単位に集計した行
+  byStore: {},          // 店舗名 -> 日付単位に集計した行の配列（Zuid/UvA/CTH等、店舗ごとに完全分離）
+  allStoresRows: [],    // 全店舗合計（参考値）を日付単位に集計した行の配列
+  storeList: [],        // 実データに存在する店舗名の一覧（表示順）
+  selectedStore: null,  // 現在選択中の店舗名、または ALL_STORES_KEY（全店舗合計）
+  dateRows: [],        // 選択中の店舗の、日付単位に集計した行
   filtered: [],        // 期間フィルター後の日付単位の行
   filterMode: "week",  // week | month | custom
   from: null,          // Date（期間の開始、当日を含む）
@@ -372,6 +387,8 @@ const state = {
   tableWeather: "",
   chartByWeekday: false,
   confirmedPlans: [], // 過去の確定プラン履歴（日付降順）
+  plansFetchError: null,   // 確定プラン取得時のエラーメッセージ（nullなら正常）
+  analyticsFetchError: null, // 時間帯別実績取得時のエラーメッセージ（nullなら正常）
   planSortKey: "date",
   planSortDir: "desc",
   planLimit: 30,
@@ -453,9 +470,15 @@ async function fetchAnalyticsRows(){
   try{
     const res = await fetch(`${SCRIPT_URL}?type=analytics`, { cache: "no-store" });
     const json = await res.json();
+    if(json.error){
+      console.warn("分析データの取得でエラーが返されました:", json.error);
+      state.analyticsFetchError = json.error;
+      return [];
+    }
     return json.rows || [];
   }catch(e){
     console.warn("分析データの取得に失敗しました:", e);
+    state.analyticsFetchError = String(e && e.message || e);
     return [];
   }
 }
@@ -465,53 +488,129 @@ async function fetchConfirmedPlans(){
   try{
     const res = await fetch(`${SCRIPT_URL}?type=confirmedPlans`, { cache: "no-store" });
     const json = await res.json();
+    if(json.error){
+      console.warn("確定プラン履歴の取得でエラーが返されました:", json.error);
+      state.plansFetchError = json.error;
+      return [];
+    }
     return json.plans || [];
   }catch(e){
     console.warn("確定プラン履歴の取得に失敗しました:", e);
+    state.plansFetchError = String(e && e.message || e);
     return [];
   }
 }
 
-// 具材・店舗をまたいで日付単位に集計する
-function aggregateByDate(rows){
+// 「時間帯別実績」シートは1行＝1日×1店舗×1具材で記録されている（admin.html/cooking.htmlの
+// 保存単位に対応）。Zuidの列と、UvA枠が特別出店（CTHなど）に差し替わった時の列を区別するため、
+// 「店舗」列そのものではなく実際の「場所名」を店舗名として扱う
+// （index.htmlの「UvA 販売場所名」入力欄で "UvA" 以外を入力した場合、それが実店舗名になる）。
+function effectiveStoreName(row){
+  if(row.store === "Zuid") return "Zuid";
+  const loc = String(row.location || "").trim();
+  if(loc && loc !== "UvA") return loc;
+  return row.store || "不明";
+}
+
+// 1行（1日×1店舗×1具材）分の残数から、その行単独の時間帯別売上個数を算出する。
+// 【重要】以前はこの計算を店舗をまたいで合算した残数に対して行っており、
+// 異なる店舗・具材の残数を混ぜて差分を取ってしまうことで、あり得ないマイナス値が
+// 発生していた。必ず「同じ行（同じ店舗・同じ具材）の中だけ」で差分を取ること。
+function computeRowSold(row){
+  const remains = HOURLY_SLOTS.map(h => row[`r${h}`]);
+  const givens = HOURLY_SLOTS.map(h => Number(row[`given${h}`]) || 0);
+  return calcSoldFromRemains(row.total, remains, givens);
+}
+
+// 店舗を表示用の順序で並べる（Zuid→UvA→CTH→その他アルファベット順）
+function sortStoreNames(names){
+  return names.slice().sort((a, b) => {
+    const ia = STORE_ORDER_PRIORITY.indexOf(a);
+    const ib = STORE_ORDER_PRIORITY.indexOf(b);
+    if(ia !== -1 || ib !== -1) return (ia === -1 ? 999 : ia) - (ib === -1 ? 999 : ib);
+    return a < b ? -1 : (a > b ? 1 : 0);
+  });
+}
+
+// 日付×店舗ごとに集計する（具材違いの行はここで合算するが、これは既に正しく算出済みの
+// 「売れた個数」同士の合算なので問題ない。生の残数同士を混ぜて差分を取ることはしない）
+function aggregateByDateAndStore(rows){
   const map = {};
   rows.forEach(row => {
     if(!row.date) return;
-    if(!map[row.date]){
-      map[row.date] = {
+    const store = effectiveStoreName(row);
+    const key = `${row.date}::${store}`;
+    if(!map[key]){
+      map[key] = {
         date: row.date,
+        store,
         weekday: weekdayFromLabel(row.weekday),
         weather: row.weather || "",
         temps: [],
         totalMade: 0,
-        remainSum: [0,0,0,0,0,0,0],
-        remainCount: [0,0,0,0,0,0,0],
-        givenSum: [0,0,0,0,0,0,0],
-        soldOutTimes: [], // { store, time }
-        stores: new Set(),
+        soldSum: [0,0,0,0,0,0,0],
+        soldHasValue: [false,false,false,false,false,false,false],
+        soldOutTimes: [],
       };
     }
-    const agg = map[row.date];
+    const agg = map[key];
     agg.totalMade += Number(row.total) || 0;
     if(!agg.weather && row.weather) agg.weather = row.weather;
     if(row.temp !== "" && row.temp !== null && row.temp !== undefined) agg.temps.push(Number(row.temp));
-    if(row.store) agg.stores.add(row.store);
-    if(row.soldOutTime && !agg.soldOutTimes.some(s => s.store === row.store)){
-      agg.soldOutTimes.push({ store: row.store, time: row.soldOutTime });
-    }
-    HOURLY_SLOTS.forEach((h, i) => {
-      const v = row[`r${h}`];
-      if(v !== "" && v !== null && v !== undefined){
-        agg.remainSum[i] += Number(v);
-        agg.remainCount[i]++;
-      }
-      agg.givenSum[i] += Number(row[`given${h}`]) || 0;
+    if(row.soldOutTime) agg.soldOutTimes.push(row.soldOutTime);
+
+    const rowSold = computeRowSold(row);
+    rowSold.forEach((v, i) => {
+      if(v !== null){ agg.soldSum[i] += v; agg.soldHasValue[i] = true; }
     });
   });
 
   return Object.values(map).map(agg => {
-    const remains = agg.remainSum.map((sum, i) => agg.remainCount[i] > 0 ? sum : "");
-    const sold = calcSoldFromRemains(agg.totalMade, remains, agg.givenSum);
+    const sold = agg.soldSum.map((v, i) => agg.soldHasValue[i] ? v : null);
+    const totalSold = sold.some(v => v !== null) ? sold.reduce((s,v) => s + (v || 0), 0) : null;
+    const temp = agg.temps.length ? avg(agg.temps) : null;
+    const soldOutMinutesList = agg.soldOutTimes.map(timeToMinutes).filter(v => v !== null);
+    const soldOutTime = soldOutMinutesList.length ? minutesToTime(Math.max(...soldOutMinutesList)) : "";
+    return {
+      date: agg.date,
+      dateObj: parseIsoDate(agg.date),
+      store: agg.store,
+      weekday: agg.weekday,
+      weather: agg.weather,
+      temp,
+      totalMade: agg.totalMade,
+      sold,
+      totalSold,
+      soldOutTime,
+      soldOutDisplay: soldOutTime,
+    };
+  }).sort((a,b) => a.date < b.date ? -1 : (a.date > b.date ? 1 : 0));
+}
+
+// 店舗別に正しく算出済みの日付×店舗の行を、日付単位でさらに合算した「全店舗合計（参考値）」を作る。
+// ここでの合算対象は既に確定した「売れた個数」であり、生の残数ではないため、
+// 店舗をまたいで足し合わせても不整合（マイナス値）は発生しない。
+function aggregateAllStoresByDate(dateStoreRows){
+  const map = {};
+  dateStoreRows.forEach(r => {
+    if(!map[r.date]){
+      map[r.date] = {
+        date: r.date, dateObj: r.dateObj, weekday: r.weekday, weather: r.weather,
+        temps: [], totalMade: 0,
+        soldSum: [0,0,0,0,0,0,0], soldHasValue: [false,false,false,false,false,false,false],
+        soldOutTimes: [], // { store, time }
+      };
+    }
+    const agg = map[r.date];
+    agg.totalMade += r.totalMade;
+    if(!agg.weather && r.weather) agg.weather = r.weather;
+    if(r.temp !== null) agg.temps.push(r.temp);
+    if(r.soldOutTime) agg.soldOutTimes.push({ store: r.store, time: r.soldOutTime });
+    r.sold.forEach((v, i) => { if(v !== null){ agg.soldSum[i] += v; agg.soldHasValue[i] = true; } });
+  });
+
+  return Object.values(map).map(agg => {
+    const sold = agg.soldSum.map((v, i) => agg.soldHasValue[i] ? v : null);
     const totalSold = sold.some(v => v !== null) ? sold.reduce((s,v) => s + (v || 0), 0) : null;
     const temp = agg.temps.length ? avg(agg.temps) : null;
     const soldOutMinutesList = agg.soldOutTimes.map(s => timeToMinutes(s.time)).filter(v => v !== null);
@@ -521,19 +620,55 @@ function aggregateByDate(rows){
       : "";
     return {
       date: agg.date,
-      dateObj: parseIsoDate(agg.date),
+      dateObj: agg.dateObj,
+      store: ALL_STORES_KEY,
       weekday: agg.weekday,
       weather: agg.weather,
       temp,
       totalMade: agg.totalMade,
-      remains,
       sold,
       totalSold,
       soldOutTime,
       soldOutDisplay,
-      stores: Array.from(agg.stores),
     };
   }).sort((a,b) => a.date < b.date ? -1 : (a.date > b.date ? 1 : 0));
+}
+
+// rawRowsから店舗別データを一式（byStore・allStoresRows・storeList）組み立てる
+function buildStoreData(rawRows){
+  const byDateStore = aggregateByDateAndStore(rawRows);
+  const storeList = sortStoreNames(Array.from(new Set(byDateStore.map(r => r.store))));
+  const byStore = {};
+  storeList.forEach(store => { byStore[store] = byDateStore.filter(r => r.store === store); });
+  const allStoresRows = aggregateAllStoresByDate(byDateStore);
+  return { byStore, storeList, allStoresRows };
+}
+
+/* ---------- 店舗選択 ---------- */
+
+function storeRowsFor(store){
+  if(store === ALL_STORES_KEY) return state.allStoresRows;
+  return state.byStore[store] || [];
+}
+
+function renderStoreTabs(){
+  const el = document.getElementById("storeTabs");
+  const tabs = [...state.storeList, ALL_STORES_KEY];
+  el.innerHTML = tabs.map(store => {
+    const label = store === ALL_STORES_KEY ? "全店舗合計（参考）" : store;
+    const active = state.selectedStore === store ? " active" : "";
+    return `<button type="button" class="filter-mode-tab${active}" data-store="${store}">${label}</button>`;
+  }).join("");
+  el.querySelectorAll(".filter-mode-tab").forEach(btn => {
+    btn.addEventListener("click", () => selectStore(btn.dataset.store));
+  });
+}
+
+function selectStore(store){
+  state.selectedStore = store;
+  state.dateRows = storeRowsFor(store);
+  renderStoreTabs();
+  applyFilterAndRender();
 }
 
 /* ---------- 期間フィルター ---------- */
@@ -655,7 +790,7 @@ function setQuickRange(kind){
 }
 
 function setActiveTab(mode){
-  document.querySelectorAll(".filter-mode-tab").forEach(btn => {
+  document.querySelectorAll("#periodModeTabs .filter-mode-tab").forEach(btn => {
     btn.classList.toggle("active", btn.dataset.mode === mode);
   });
 }
@@ -681,7 +816,8 @@ function renderSummary(){
   const area = document.getElementById("summaryArea");
   const badge = document.getElementById("summaryPeriodBadge");
   const rows = state.filtered;
-  badge.textContent = `${rows.length}日分`;
+  const storeLabel = state.selectedStore === ALL_STORES_KEY ? "全店舗合計" : state.selectedStore;
+  badge.textContent = `${storeLabel}｜${rows.length}日分`;
 
   if(rows.length === 0){
     area.innerHTML = `<p class="off-note">この期間のデータがありません。</p>`;
@@ -878,7 +1014,10 @@ function renderDailyTable(){
     const slotCells = r.sold.map(v => {
       if(v !== null) runningTotal += v;
       const cumHtml = v !== null ? `<div class="cum-sub">(累計:${runningTotal})</div>` : "";
-      return `<td class="num"><div class="sold-main">${v !== null ? v : "—"}</div>${cumHtml}</td>`;
+      // マイナス値は残数記録の入力ミス等、実際にデータがおかしいことを示すサインなので
+      // 隠さずに赤字で目立たせる（一律に0クランプなどはしない）
+      const soldStyle = (v !== null && v < 0) ? ` style="color:#c9533f;font-weight:700;"` : "";
+      return `<td class="num"><div class="sold-main"${soldStyle}>${v !== null ? v : "—"}</div>${cumHtml}</td>`;
     }).join("");
     return `<tr>
       <td>${dt.getMonth()+1}/${dt.getDate()}</td>
@@ -1197,14 +1336,28 @@ function renderAll(){
   renderInsights();
 }
 
+function renderStoreDataErrors(){
+  const el = document.getElementById("storeDataErrorArea");
+  const msgs = [];
+  if(state.analyticsFetchError) msgs.push(`時間帯別実績の取得でエラーが発生しました：${state.analyticsFetchError}`);
+  if(state.plansFetchError) msgs.push(`確定プラン履歴の取得でエラーが発生しました：${state.plansFetchError}`);
+  el.innerHTML = msgs.length
+    ? msgs.map(m => `<p class="off-note" style="color:#c9533f;">⚠️ ${m}（通信環境を確認するか、時間をおいて再度お試しください）</p>`).join("")
+    : "";
+}
+
 async function init(){
   const [rawRows, confirmedPlans] = await Promise.all([
     fetchAnalyticsRows(),
     fetchConfirmedPlans(),
   ]);
   state.rawRows = rawRows;
-  state.dateRows = aggregateByDate(state.rawRows);
+  const { byStore, storeList, allStoresRows } = buildStoreData(state.rawRows);
+  state.byStore = byStore;
+  state.storeList = storeList;
+  state.allStoresRows = allStoresRows;
   state.confirmedPlans = confirmedPlans;
+  renderStoreDataErrors();
   renderPlanHistoryTable();
 
   document.getElementById("planHistoryLimitFilter").addEventListener("change", (e) => {
@@ -1219,7 +1372,7 @@ async function init(){
   document.getElementById("prodHistoryEnd").value = todayIso;
   initProdHistorySection();
 
-  document.querySelectorAll(".filter-mode-tab").forEach(btn => {
+  document.querySelectorAll("#periodModeTabs .filter-mode-tab").forEach(btn => {
     btn.addEventListener("click", () => {
       state.filterMode = btn.dataset.mode;
       setActiveTab(state.filterMode);
@@ -1241,6 +1394,12 @@ async function init(){
     state.tableWeather = e.target.value;
     renderDailyTable();
   });
+
+  // 初期表示：実データがある店舗のうち表示優先度が最も高いもの（Zuidなど）。
+  // 個別店舗のデータが1件もない場合のみ「全店舗合計」を初期表示にする
+  state.selectedStore = state.storeList.length ? state.storeList[0] : ALL_STORES_KEY;
+  state.dateRows = storeRowsFor(state.selectedStore);
+  renderStoreTabs();
 
   // 初期表示：直近4週間
   setQuickRange("last4weeks");
