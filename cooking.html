@@ -170,6 +170,12 @@
     line-height: 1;
   }
   .summary-num span{ font-size: 1rem; font-weight: normal; color: #666; margin-left: 2px; }
+  .summary-breakdown{
+    margin-top: 8px;
+    font-size: 0.74rem;
+    color: #888;
+    line-height: 1.5;
+  }
   .summary-note{
     text-align: center;
     font-size: 0.8rem;
@@ -222,10 +228,19 @@
 const SHIFT_SPREADSHEET_ID = "1PHf1o3smqIQdeFkhBHjBZUEub7VtRcynQLllmSR7w-s"; // 作業中プラン
 const CHISE_SPREADSHEET_ID = "1rQtRUSP5e7qOjnT4RPvMGfWrEFcFL89AsLe8cjGIW4U"; // チセさんの生産データ
 const DAY_NAMES = ["日", "月", "火", "水", "木", "金", "土"];
-const WEEKDAY_BUTTONS = [1, 2, 3, 4, 5]; // 月〜金
+// 月〜金（通常営業日）＋土（admin.htmlの「土日イベントを追加」でデータがある週のみ対象。
+// buildDateList()側でデータが無い週の土曜日はそもそもリストに含めないため、
+// 該当日が無い週では「土」ボタンを押しても対象0件で何も起きない）
+const WEEKDAY_BUTTONS = [1, 2, 3, 4, 5, 6];
 
 // 週2回の調理対象具材（この4種類のみ集計する）
 const TARGET_FILLINGS = ["テリヤキチキン", "サーモン", "ツナマヨ", "スパイシーツナマヨ"];
+
+// チセさんのシートに「具材のみ」（おにぎり本体ではなく具材だけ）の注文がある具材
+const KONOMI_TARGET_FILLINGS = ["テリヤキチキン", "サーモン"];
+
+// 「具材のみ」注文分を、調理量の合計に加算するかどうか
+const ADD_CHISE_KONOMI_TO_TOTAL = true;
 
 // CTH特別会場（期間限定）: admin.html/cth-calendar.htmlと同じ定義。
 // 作業中プランがまだ編集されていないCTH期間中の日は、UvA枠がCTH固定50個の標準比率按分に
@@ -258,7 +273,7 @@ const state = {
   dates: [],           // [{iso, dow, dateObj, weekLabel}]
   selected: new Set(),  // 選択中のiso
   draftByDate: {},      // iso -> {zuidFillingQty, uvaFillingQty, zuidOpen, uvaOpen}
-  chiseByLabel: {},     // "M/d" -> {breakdown, subtotal}
+  chiseByLabel: {},     // "M/d" -> {breakdown, konomiBreakdown}
 };
 
 function pad(n){ return String(n).padStart(2, "0"); }
@@ -304,18 +319,55 @@ function getThisWeekRemainingDates(){
   return dates;
 }
 
-// 直近2〜3週間分の営業日（今週の残り＋来週＋再来週、月〜金）の日付一覧を作る
+// 指定週（0=今週,1=来週,2=再来週）の土曜日（月曜+5日）を返す。
+// 今週分は、平日の「今週の残り」トリミングと同じ考え方で、既に過ぎていればnullを返す
+// （今日が日曜の場合、週の起点である月曜は「先週の月曜」になるため、その週の土曜日は
+// 　必然的に過去日になりnullが返る）
+function getSaturdayForWeek(weekIndex){
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const monday = getMonday(new Date());
+  monday.setDate(monday.getDate() + weekIndex * 7);
+  const sat = new Date(monday);
+  sat.setDate(monday.getDate() + 5);
+  if(weekIndex === 0 && sat < today) return null;
+  return sat;
+}
+
+// チセさんのシートに、該当日のデータ（おにぎり個数・具材のみのいずれか）が
+// 存在するかどうか
+function hasChiseDataForDate(iso){
+  const entry = state.chiseByLabel[mdLabel(new Date(`${iso}T00:00:00`))];
+  if(!entry) return false;
+  const hasOnigiri = entry.breakdown && Object.keys(entry.breakdown).length > 0;
+  const hasKonomi = entry.konomiBreakdown && Object.keys(entry.konomiBreakdown).length > 0;
+  return hasOnigiri || hasKonomi;
+}
+
+// 直近2〜3週間分の営業日（今週の残り＋来週＋再来週、月〜金）に、admin.htmlの
+// 「土日イベントを追加」で作業中プランにデータが保存されている土曜日、または
+// チセさんのシートにその土曜日のデータ（具材のみ含む）がある土曜日を、
+// その週の金曜日の直後に追加した一覧を作る。
+// （土曜日は通常の営業日と違い「イベント出店した週だけ存在する日」のため、
+// 　どちらのデータも無い週の土曜日は平日と同列には表示しない。日曜日は今回の対象外）
 function buildDateList(){
   const weeks = [
-    { label: "今週", dates: getThisWeekRemainingDates() },
-    { label: "来週", dates: getWeekDates(1) },
-    { label: "再来週", dates: getWeekDates(2) },
+    { label: "今週", weekIndex: 0, dates: getThisWeekRemainingDates() },
+    { label: "来週", weekIndex: 1, dates: getWeekDates(1) },
+    { label: "再来週", weekIndex: 2, dates: getWeekDates(2) },
   ];
   const list = [];
   weeks.forEach(week => {
     week.dates.forEach(d => {
       list.push({ iso: isoDate(d), dow: d.getDay(), dateObj: d, weekLabel: week.label });
     });
+    const sat = getSaturdayForWeek(week.weekIndex);
+    if(sat){
+      const satIso = isoDate(sat);
+      if(state.draftByDate[satIso] || hasChiseDataForDate(satIso)){
+        list.push({ iso: satIso, dow: sat.getDay(), dateObj: sat, weekLabel: week.label });
+      }
+    }
   });
   return list;
 }
@@ -374,7 +426,24 @@ function parseDraftByDate(json){
   return result;
 }
 
-// チセさんの生産データ（商品×日付の横持ち表）を解析する（admin.htmlのparseChiseSheetと同じロジック）
+// 「具材のみ」の行名（例: "テリヤキ(具材のみ)"）から、対応するおにぎりの具材名
+// （例: "テリヤキチキン"）を判定する。全角・半角どちらのカッコ表記にも対応する。
+// おにぎり側の行名（テリヤキチキン）と具材のみ側の行名（テリヤキ）で表記が完全には
+// 一致しないため、行名の先頭の文字列で判定する。
+const KONOMI_ROW_PATTERN = /[\(（]\s*具材のみ\s*[\)）]/;
+const KONOMI_ROW_PREFIXES = [
+  { prefix: "テリヤキ", filling: "テリヤキチキン" },
+  { prefix: "サーモン", filling: "サーモン" },
+];
+function matchKonomiFilling(rawName){
+  if(!KONOMI_ROW_PATTERN.test(rawName)) return null;
+  const match = KONOMI_ROW_PREFIXES.find(p => rawName.startsWith(p.prefix));
+  return match ? match.filling : null;
+}
+
+// チセさんの生産データ（商品×日付の横持ち表）を解析する（admin.htmlのparseChiseSheetと同じロジック）。
+// 「具材のみ」の行（例: "テリヤキ(具材のみ)"）は、おにぎり個数の集計（breakdown）とは
+// 混ぜず、別のkonomiBreakdownに保持する
 function parseChiseSheet(json){
   const result = {};
   const rawRows = (json && json.table && json.table.rows) || [];
@@ -398,19 +467,23 @@ function parseChiseSheet(json){
 
   dateCols.forEach(({ idx, label }) => {
     const breakdown = {};
+    const konomiBreakdown = {};
     for(let i = startRow; i < endRow; i++){
       const name = cellLabel(rows[i][0]);
       const rawQty = rows[i][idx];
       const qty = typeof rawQty === "number" ? rawQty
         : (typeof rawQty === "string" && rawQty.trim() !== "" && !isNaN(Number(rawQty)) ? Number(rawQty) : null);
-      if(name && qty !== null) breakdown[name] = qty;
+      if(!name || qty === null) continue;
+      const konomiFilling = matchKonomiFilling(name);
+      if(konomiFilling) konomiBreakdown[konomiFilling] = (konomiBreakdown[konomiFilling] || 0) + qty;
+      else breakdown[name] = qty;
     }
-    result[label] = { breakdown };
+    result[label] = { breakdown, konomiBreakdown };
   });
   return result;
 }
 
-// 指定した日付1日分の、対象具材ごとの必要数（Zuid＋UvA/CTH＋チセ）を返す
+// 指定した日付1日分の、対象具材ごとの「おにぎり分」必要数（Zuid＋UvA/CTH＋チセのおにぎり個数）を返す
 function fillingQtyForDate(iso){
   const draft = state.draftByDate[iso];
   const chiseEntry = state.chiseByLabel[mdLabel(new Date(`${iso}T00:00:00`))];
@@ -429,6 +502,15 @@ function fillingQtyForDate(iso){
   TARGET_FILLINGS.forEach(f => {
     result[f] = (zuidQty[f] || 0) + (uvaQty[f] || 0) + (chiseBreakdown[f] || 0);
   });
+  return result;
+}
+
+// 指定した日付1日分の、チセさんの「具材のみ」注文数を対象具材ごとに返す
+function konomiQtyForDate(iso){
+  const chiseEntry = state.chiseByLabel[mdLabel(new Date(`${iso}T00:00:00`))];
+  const konomiBreakdown = chiseEntry ? chiseEntry.konomiBreakdown : {};
+  const result = {};
+  KONOMI_TARGET_FILLINGS.forEach(f => { result[f] = (konomiBreakdown && konomiBreakdown[f]) || 0; });
   return result;
 }
 
@@ -499,21 +581,42 @@ function updateWeekdayButtonStates(){
 }
 
 function updateSummary(){
-  const totals = {};
-  TARGET_FILLINGS.forEach(f => { totals[f] = 0; });
+  const onigiriTotals = {};
+  const konomiTotals = {};
+  TARGET_FILLINGS.forEach(f => { onigiriTotals[f] = 0; });
+  KONOMI_TARGET_FILLINGS.forEach(f => { konomiTotals[f] = 0; });
 
   state.selected.forEach(iso => {
-    const qty = fillingQtyForDate(iso);
-    TARGET_FILLINGS.forEach(f => { totals[f] += qty[f] || 0; });
+    const onigiriQty = fillingQtyForDate(iso);
+    TARGET_FILLINGS.forEach(f => { onigiriTotals[f] += onigiriQty[f] || 0; });
+    const konomiQty = konomiQtyForDate(iso);
+    KONOMI_TARGET_FILLINGS.forEach(f => { konomiTotals[f] += konomiQty[f] || 0; });
   });
 
   const area = document.getElementById("summaryArea");
-  area.innerHTML = TARGET_FILLINGS.map(f => `
-    <div class="summary-item">
-      <div class="summary-label">${escapeHtml(f)}</div>
-      <div class="summary-num">${totals[f]}<span>個</span></div>
-    </div>
-  `).join("");
+  area.innerHTML = TARGET_FILLINGS.map(f => {
+    if(!KONOMI_TARGET_FILLINGS.includes(f)){
+      return `
+        <div class="summary-item">
+          <div class="summary-label">${escapeHtml(f)}</div>
+          <div class="summary-num">${onigiriTotals[f]}<span>個</span></div>
+        </div>
+      `;
+    }
+    const onigiri = onigiriTotals[f];
+    const konomi = konomiTotals[f];
+    const total = ADD_CHISE_KONOMI_TO_TOTAL ? onigiri + konomi : onigiri;
+    return `
+      <div class="summary-item">
+        <div class="summary-label">${escapeHtml(f)}（合計）</div>
+        <div class="summary-num">${total}<span>個</span></div>
+        <div class="summary-breakdown">
+          <div>おにぎり分：${onigiri}個</div>
+          <div>具材のみ分（チセ）：${konomi}個</div>
+        </div>
+      </div>
+    `;
+  }).join("");
 
   const noteEl = document.getElementById("summaryNote");
   noteEl.textContent = state.selected.size === 0
@@ -534,6 +637,11 @@ async function init(){
     ]);
     state.draftByDate = parseDraftByDate(draftJson);
     state.chiseByLabel = parseChiseSheet(chiseJson);
+    // 作業中プランが取得できた時点で初めて「どの週の土曜日にデータがあるか」が分かるため、
+    // 日付一覧を土曜日込みで作り直して再描画する（選択済みのチェック状態はstate.selectedに
+    // 保持されたままなので、既に選んでいた平日のチェックは再描画後も残る）
+    state.dates = buildDateList();
+    renderDateList();
     updateSummary();
   }catch(e){
     console.error("調理計算のデータ取得に失敗しました", e);
