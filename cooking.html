@@ -222,7 +222,10 @@
 const SHIFT_SPREADSHEET_ID = "1PHf1o3smqIQdeFkhBHjBZUEub7VtRcynQLllmSR7w-s"; // 作業中プラン
 const CHISE_SPREADSHEET_ID = "1rQtRUSP5e7qOjnT4RPvMGfWrEFcFL89AsLe8cjGIW4U"; // チセさんの生産データ
 const DAY_NAMES = ["日", "月", "火", "水", "木", "金", "土"];
-const WEEKDAY_BUTTONS = [1, 2, 3, 4, 5]; // 月〜金
+// 月〜金（通常営業日）＋土（admin.htmlの「土日イベントを追加」でデータがある週のみ対象。
+// buildDateList()側でデータが無い週の土曜日はそもそもリストに含めないため、
+// 該当日が無い週では「土」ボタンを押しても対象0件で何も起きない）
+const WEEKDAY_BUTTONS = [1, 2, 3, 4, 5, 6];
 
 // 週2回の調理対象具材（この4種類のみ集計する）
 const TARGET_FILLINGS = ["テリヤキチキン", "サーモン", "ツナマヨ", "スパイシーツナマヨ"];
@@ -304,18 +307,44 @@ function getThisWeekRemainingDates(){
   return dates;
 }
 
-// 直近2〜3週間分の営業日（今週の残り＋来週＋再来週、月〜金）の日付一覧を作る
+// 指定週（0=今週,1=来週,2=再来週）の土曜日（月曜+5日）を返す。
+// 今週分は、平日の「今週の残り」トリミングと同じ考え方で、既に過ぎていればnullを返す
+// （今日が日曜の場合、週の起点である月曜は「先週の月曜」になるため、その週の土曜日は
+// 　必然的に過去日になりnullが返る）
+function getSaturdayForWeek(weekIndex){
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const monday = getMonday(new Date());
+  monday.setDate(monday.getDate() + weekIndex * 7);
+  const sat = new Date(monday);
+  sat.setDate(monday.getDate() + 5);
+  if(weekIndex === 0 && sat < today) return null;
+  return sat;
+}
+
+// 直近2〜3週間分の営業日（今週の残り＋来週＋再来週、月〜金）に、admin.htmlの
+// 「土日イベントを追加」で作業中プランにデータが保存されている土曜日のみを
+// その週の金曜日の直後に追加した一覧を作る。
+// （土曜日は通常の営業日と違い「イベント出店した週だけ存在する日」のため、
+// 　データが無い週の土曜日は平日と同列には表示しない。日曜日は今回の対象外）
 function buildDateList(){
   const weeks = [
-    { label: "今週", dates: getThisWeekRemainingDates() },
-    { label: "来週", dates: getWeekDates(1) },
-    { label: "再来週", dates: getWeekDates(2) },
+    { label: "今週", weekIndex: 0, dates: getThisWeekRemainingDates() },
+    { label: "来週", weekIndex: 1, dates: getWeekDates(1) },
+    { label: "再来週", weekIndex: 2, dates: getWeekDates(2) },
   ];
   const list = [];
   weeks.forEach(week => {
     week.dates.forEach(d => {
       list.push({ iso: isoDate(d), dow: d.getDay(), dateObj: d, weekLabel: week.label });
     });
+    const sat = getSaturdayForWeek(week.weekIndex);
+    if(sat){
+      const satIso = isoDate(sat);
+      if(state.draftByDate[satIso]){
+        list.push({ iso: satIso, dow: sat.getDay(), dateObj: sat, weekLabel: week.label });
+      }
+    }
   });
   return list;
 }
@@ -534,6 +563,11 @@ async function init(){
     ]);
     state.draftByDate = parseDraftByDate(draftJson);
     state.chiseByLabel = parseChiseSheet(chiseJson);
+    // 作業中プランが取得できた時点で初めて「どの週の土曜日にデータがあるか」が分かるため、
+    // 日付一覧を土曜日込みで作り直して再描画する（選択済みのチェック状態はstate.selectedに
+    // 保持されたままなので、既に選んでいた平日のチェックは再描画後も残る）
+    state.dates = buildDateList();
+    renderDateList();
     updateSummary();
   }catch(e){
     console.error("調理計算のデータ取得に失敗しました", e);
