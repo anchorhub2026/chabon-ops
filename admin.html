@@ -1601,6 +1601,12 @@ function mdLabel(d){
   return `${d.getMonth() + 1}/${d.getDate()}`;
 }
 
+// 「具材のみ」の行名（例: "テリヤキ(具材のみ)"）かどうかを判定する。全角・半角どちらの
+// カッコ表記にも対応する。この行はおにぎりの個数ではなく具材そのものの注文のため、
+// チセ分の総生産数（breakdown・subtotal）には含めない
+// （具材のみ分はcooking.htmlの調理計算でのみ使う。admin.html側では使用しない）。
+const CHISE_KONOMI_ROW_PATTERN = /[\(（]\s*具材のみ\s*[\)）]/;
+
 // チセさんの生産表（商品×日付の横持ち表）を解析。キーは "6/23" 形式の文字列。
 function parseChiseSheet(json){
   const rawRows = json.table.rows || [];
@@ -1631,16 +1637,17 @@ function parseChiseSheet(json){
     for(let i = startRow; i < endRow; i++){
       // 商品名は前後の空白・全角スペースをtrimして具材名の表記揺れを吸収する
       const name = cellLabel(rows[i][0]);
+      // 「具材のみ」の行はおにぎりの個数ではないため、breakdownには含めない
+      if(CHISE_KONOMI_ROW_PATTERN.test(name)) continue;
       const rawQty = rows[i][idx];
       // 個数が数値型ではなく数字の文字列で入力されている場合にも対応する
       const qty = typeof rawQty === "number" ? rawQty
         : (typeof rawQty === "string" && rawQty.trim() !== "" && !isNaN(Number(rawQty)) ? Number(rawQty) : null);
       if(name && qty !== null) breakdown[name] = qty;
     }
-    const subtotalCell = rows[endRow][idx];
-    const subtotal = typeof subtotalCell === "number"
-      ? subtotalCell
-      : Object.values(breakdown).reduce((s, v) => s + v, 0);
+    // SUB TOTAL列は「具材のみ」分も合算された値のため使わず、常におにぎりの行
+    // （breakdownの各値）の合計をチセ分の総生産数とする
+    const subtotal = Object.values(breakdown).reduce((s, v) => s + v, 0);
     byLabel[label] = { breakdown, subtotal };
   });
 
