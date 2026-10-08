@@ -432,15 +432,18 @@ function tempBucket(temp){
 
 // 作った数と各時間帯残数から、隣接差分で時間帯ごとの売れた数を算出する
 // （Code.gsのcalcHourlySoldAndCumulativeと同じロジックをクライアント側でも使用）
-// givens[i] が渡された場合、その時間帯の「あげた数」分を売れた数から除外する
-function calcSoldFromRemains(made, remains, givens){
+// givens[i] が渡された場合、その時間帯の「あげた数」分を売れた数から除外する。
+// receiveds[i] が渡された場合、その時間帯にUvAからZuidへ合流した分を残数の増加要因として
+// 加算してから差分を取る（Zuid以外の店舗はreceivedsを渡さないため常に0扱いになる）
+function calcSoldFromRemains(made, remains, givens, receiveds){
   const sold = [];
   let prev = made;
   remains.forEach((curr, i) => {
     const hasCurr = curr !== "" && curr !== null && curr !== undefined;
     const hasPrev = prev !== "" && prev !== null && prev !== undefined;
     const deduction = (givens && givens[i]) || 0;
-    sold.push(hasCurr && hasPrev ? (Number(prev) - Number(curr) - deduction) : null);
+    const received = (receiveds && receiveds[i]) || 0;
+    sold.push(hasCurr && hasPrev ? (Number(prev) + received - Number(curr) - deduction) : null);
     prev = curr;
   });
   return sold;
@@ -519,7 +522,19 @@ function effectiveStoreName(row){
 function computeRowSold(row){
   const remains = HOURLY_SLOTS.map(h => row[`r${h}`]);
   const givens = HOURLY_SLOTS.map(h => Number(row[`given${h}`]) || 0);
-  return calcSoldFromRemains(row.total, remains, givens);
+  const receiveds = HOURLY_SLOTS.map(h => Number(row[`received${h}`]) || 0);
+  return calcSoldFromRemains(row.total, remains, givens, receiveds);
+}
+
+// 行のr12〜r18のうち、最後に実際に記録されている残数（＝営業終了時点の売れ残り）を返す。
+// 全て未記録ならnull
+function lastKnownRemain(row){
+  let last = null;
+  HOURLY_SLOTS.forEach(h => {
+    const v = row[`r${h}`];
+    if(v !== "" && v !== null && v !== undefined) last = Number(v);
+  });
+  return last;
 }
 
 // 店舗を表示用の順序で並べる（Zuid→UvA→CTH→その他アルファベット順）
@@ -551,6 +566,8 @@ function aggregateByDateAndStore(rows){
         soldSum: [0,0,0,0,0,0,0],
         soldHasValue: [false,false,false,false,false,false,false],
         soldOutTimes: [],
+        movedTotal: 0,       // Zuidへ移動した数の合計（UvA系の店舗のみ値を持つ）
+        finalRemainTotal: 0, // 各具材の最終記録残数（＝移動前の売れ残り）の合計
       };
     }
     const agg = map[key];
@@ -558,6 +575,9 @@ function aggregateByDateAndStore(rows){
     if(!agg.weather && row.weather) agg.weather = row.weather;
     if(row.temp !== "" && row.temp !== null && row.temp !== undefined) agg.temps.push(Number(row.temp));
     if(row.soldOutTime) agg.soldOutTimes.push(row.soldOutTime);
+    agg.movedTotal += Number(row.movedToZuid) || 0;
+    const finalRemain = lastKnownRemain(row);
+    if(finalRemain !== null) agg.finalRemainTotal += finalRemain;
 
     const rowSold = computeRowSold(row);
     rowSold.forEach((v, i) => {
@@ -571,6 +591,9 @@ function aggregateByDateAndStore(rows){
     const temp = agg.temps.length ? avg(agg.temps) : null;
     const soldOutMinutesList = agg.soldOutTimes.map(timeToMinutes).filter(v => v !== null);
     const soldOutTime = soldOutMinutesList.length ? minutesToTime(Math.max(...soldOutMinutesList)) : "";
+    // 売れ残り＝最終記録残数からZuidへ移動した分を差し引いたもの（移動分は「移動」として
+    // 別枠で計上するため、売れ残りには二重に含めない）
+    const leftoverTotal = Math.max(0, agg.finalRemainTotal - agg.movedTotal);
     return {
       date: agg.date,
       dateObj: parseIsoDate(agg.date),
@@ -583,6 +606,8 @@ function aggregateByDateAndStore(rows){
       totalSold,
       soldOutTime,
       soldOutDisplay: soldOutTime,
+      movedTotal: agg.movedTotal,
+      leftoverTotal,
     };
   }).sort((a,b) => a.date < b.date ? -1 : (a.date > b.date ? 1 : 0));
 }
@@ -599,6 +624,7 @@ function aggregateAllStoresByDate(dateStoreRows){
         temps: [], totalMade: 0,
         soldSum: [0,0,0,0,0,0,0], soldHasValue: [false,false,false,false,false,false,false],
         soldOutTimes: [], // { store, time }
+        movedTotal: 0, leftoverTotal: 0,
       };
     }
     const agg = map[r.date];
@@ -606,6 +632,8 @@ function aggregateAllStoresByDate(dateStoreRows){
     if(!agg.weather && r.weather) agg.weather = r.weather;
     if(r.temp !== null) agg.temps.push(r.temp);
     if(r.soldOutTime) agg.soldOutTimes.push({ store: r.store, time: r.soldOutTime });
+    agg.movedTotal += r.movedTotal || 0;
+    agg.leftoverTotal += r.leftoverTotal || 0;
     r.sold.forEach((v, i) => { if(v !== null){ agg.soldSum[i] += v; agg.soldHasValue[i] = true; } });
   });
 
@@ -630,6 +658,8 @@ function aggregateAllStoresByDate(dateStoreRows){
       totalSold,
       soldOutTime,
       soldOutDisplay,
+      movedTotal: agg.movedTotal,
+      leftoverTotal: agg.leftoverTotal,
     };
   }).sort((a,b) => a.date < b.date ? -1 : (a.date > b.date ? 1 : 0));
 }
@@ -979,6 +1009,8 @@ function renderDailyTable(){
     else if(sortKey === "temp"){ av = a.temp ?? -999; bv = b.temp ?? -999; }
     else if(sortKey === "totalMade"){ av = a.totalMade; bv = b.totalMade; }
     else if(sortKey === "totalSold"){ av = a.totalSold ?? -999; bv = b.totalSold ?? -999; }
+    else if(sortKey === "movedTotal"){ av = a.movedTotal || 0; bv = b.movedTotal || 0; }
+    else if(sortKey === "leftoverTotal"){ av = a.leftoverTotal || 0; bv = b.leftoverTotal || 0; }
     else if(sortKey === "soldOutTime"){ av = timeToMinutes(a.soldOutTime) ?? 9999; bv = timeToMinutes(b.soldOutTime) ?? 9999; }
     else if(sortKey.startsWith("slot")){
       const i = Number(sortKey.slice(4));
@@ -998,6 +1030,8 @@ function renderDailyTable(){
     { key: "soldOutTime", label: "完売時刻" },
     ...HOURLY_SLOTS.map((h, i) => ({ key: `slot${i}`, label: `${h}時` })),
     { key: "totalSold", label: "売上合計" },
+    { key: "movedTotal", label: "移動" },
+    { key: "leftoverTotal", label: "売れ残り" },
   ];
 
   const headerHtml = cols.map(c => {
@@ -1028,6 +1062,8 @@ function renderDailyTable(){
       <td>${r.soldOutDisplay || "—"}</td>
       ${slotCells}
       <td class="num"><strong>${r.totalSold !== null ? r.totalSold : "—"}</strong></td>
+      <td class="num">${r.movedTotal ? `${r.movedTotal}個` : "—"}</td>
+      <td class="num">${r.leftoverTotal ? `${r.leftoverTotal}個` : "—"}</td>
     </tr>`;
   }).join("");
 
