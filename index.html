@@ -475,6 +475,8 @@
   .slot-subhead{ font-weight: normal; font-size: 0.6rem; opacity: 0.75; }
   .slot-extra-row{ display: flex; gap: 2px; justify-content: center; margin-top: 2px; }
   .given-input{ width: 32px !important; font-size: 0.68rem !important; padding: 2px 1px !important; color: #a35; }
+  .received-input{ width: 32px !important; font-size: 0.68rem !important; padding: 2px 1px !important; color: #358; }
+  .moved-input{ width: 56px !important; color: #358; }
   .total-row td{ background: #f5f2ec; font-weight: bold; font-size: 0.8rem; color: #555; border-top: 2px solid #d0c8b8; }
   .total-cell{ min-width: 52px; }
   .notes-area{ margin-top: 8px; }
@@ -1373,7 +1375,12 @@ function getStoreTotals(plan, draftForecast){
 }
 
 function buildStoreTable(storeKey, fillings, totals){
-  const slotHeaders = HOURLY_SLOTS.map(h => `<th>${h}時<br><span class="slot-subhead">残り／あげ</span></th>`).join("");
+  // ZuidのみUvAからの合流分「受け取った数」を時間帯ごとに入力できる。
+  // UvAのみ、営業終了時に残った分をZuidへ運ぶ「Zuidへ移動した数」を1日1回（具材ごと）入力できる。
+  const showReceived = storeKey === "Zuid";
+  const showMoved = storeKey === "UvA";
+  const slotSubhead = showReceived ? "残り／あげ／受取" : "残り／あげ";
+  const slotHeaders = HOURLY_SLOTS.map(h => `<th>${h}時<br><span class="slot-subhead">${slotSubhead}</span></th>`).join("");
   const rows = fillings.map((f, fi) => {
     const slotCells = HOURLY_SLOTS.map((h, si) => `
       <td>
@@ -1384,15 +1391,22 @@ function buildStoreTable(storeKey, fillings, totals){
           <input type="number" class="given-input" title="あげた数"
                  data-store="${storeKey}" data-filling="${f}" data-slot="${si}"
                  min="0" placeholder="あげ" value="0">
+          ${showReceived ? `<input type="number" class="received-input" title="受け取った数（UvAから）"
+                 data-store="${storeKey}" data-filling="${f}" data-slot="${si}"
+                 min="0" placeholder="受取" value="0">` : ""}
         </div>
         <div class="sold-display" id="sold-${storeKey}-${fi}-${si}"></div>
         <div class="cum-display" id="cum-${storeKey}-${fi}-${si}"></div>
       </td>`).join("");
+    const movedCell = showMoved ? `<td><input type="number" class="moved-input" title="Zuidへ移動した数"
+                 data-store="${storeKey}" data-filling="${f}"
+                 min="0" placeholder="0" value="0"></td>` : "";
     return `<tr>
       <td class="col-name">${f}</td>
       <td><input type="number" class="made-input"
                  data-store="${storeKey}" data-filling="${f}"
                  value="${totals[f]}" min="0"></td>
+      ${movedCell}
       ${slotCells}
     </tr>`;
   }).join("");
@@ -1402,13 +1416,15 @@ function buildStoreTable(storeKey, fillings, totals){
     `<td class="total-cell"><span id="total-sold-${storeKey}-${si}"></span></td>`).join("");
   const cumCells = HOURLY_SLOTS.map((h, si) =>
     `<td class="total-cell"><span id="total-cum-${storeKey}-${si}"></span></td>`).join("");
+  const movedHeader = showMoved ? `<th>Zuidへ<br>移動</th>` : "";
+  const movedTotalCell = showMoved ? `<td class="total-cell"><span id="total-moved-${storeKey}"></span></td>` : "";
   return `<table class="hourly-table">
-    <thead><tr><th class="col-name">具材</th><th>作った数</th>${slotHeaders}</tr></thead>
+    <thead><tr><th class="col-name">具材</th><th>作った数</th>${movedHeader}${slotHeaders}</tr></thead>
     <tbody>
       ${rows}
-      <tr class="total-row"><td class="col-name">残り合計</td><td class="total-cell"><span id="total-made-${storeKey}"></span></td>${remainCells}</tr>
-      <tr class="total-row"><td class="col-name">売った合計</td><td class="total-cell"><span id="total-sold-grand-${storeKey}"></span></td>${soldCells}</tr>
-      <tr class="total-row"><td class="col-name">全具材累計売上</td><td>—</td>${cumCells}</tr>
+      <tr class="total-row"><td class="col-name">残り合計</td><td class="total-cell"><span id="total-made-${storeKey}"></span></td>${movedTotalCell}${remainCells}</tr>
+      <tr class="total-row"><td class="col-name">売った合計</td><td class="total-cell"><span id="total-sold-grand-${storeKey}"></span></td>${showMoved ? "<td>—</td>" : ""}${soldCells}</tr>
+      <tr class="total-row"><td class="col-name">全具材累計売上</td><td>—</td>${showMoved ? "<td>—</td>" : ""}${cumCells}</tr>
     </tbody>
   </table>`;
 }
@@ -1457,7 +1473,7 @@ function renderActualSales(){
     </div>
   `;
 
-  area.querySelectorAll(".hourly-input, .made-input, .given-input").forEach(inp =>
+  area.querySelectorAll(".hourly-input, .made-input, .given-input, .received-input, .moved-input").forEach(inp =>
     inp.addEventListener("input", () => updateSoldDisplay(fillings))
   );
   const saveZuidBtn = document.getElementById("saveZuidBtn");
@@ -1518,11 +1534,15 @@ function updateSoldDisplay(fillings){
     const soldCount = new Array(nSlots).fill(0);
     const cumCount = new Array(nSlots).fill(0);
     let madeTotal = 0;
+    let movedTotal = 0;
 
     fillings.forEach((f, fi) => {
       const madeEl = document.querySelector(`.made-input[data-store="${storeKey}"][data-filling="${f}"]`);
       const made = madeEl ? (parseInt(madeEl.value, 10) || 0) : 0;
       madeTotal += made;
+
+      const movedEl = document.querySelector(`.moved-input[data-store="${storeKey}"][data-filling="${f}"]`);
+      if(movedEl) movedTotal += (parseInt(movedEl.value, 10) || 0);
 
       // 完売後の自動ゼロ入力：残数が0になったら以降の空欄に0を入力
       let hitZero = false;
@@ -1539,6 +1559,7 @@ function updateSoldDisplay(fillings){
       });
 
       let givenSum = 0;
+      let receivedSum = 0;
       let lastKnownCum = null;
       HOURLY_SLOTS.forEach((h, si) => {
         const soldEl = document.getElementById(`sold-${storeKey}-${fi}-${si}`);
@@ -1546,15 +1567,20 @@ function updateSoldDisplay(fillings){
         const curr = vals[si];
         const givenEl = document.querySelector(`.given-input[data-store="${storeKey}"][data-filling="${f}"][data-slot="${si}"]`);
         const given = givenEl ? (parseInt(givenEl.value, 10) || 0) : 0;
+        const receivedEl = document.querySelector(`.received-input[data-store="${storeKey}"][data-filling="${f}"][data-slot="${si}"]`);
+        const received = receivedEl ? (parseInt(receivedEl.value, 10) || 0) : 0;
         if(curr !== null){
           remainTotals[si] += curr;
           remainCount[si]++;
         }
         givenSum += given;
-        // 累計売上 = 作った数 − その時点の残り個数 −（0〜今の時間帯までのあげた数の累計）
-        // （Code.gsのcalcHourlySoldAndCumulativeと同じ計算式）
+        receivedSum += received;
+        // 累計売上 = 作った数 ＋（0〜今の時間帯までのUvAからの受け取った数の累計）
+        //            − その時点の残り個数 −（0〜今の時間帯までのあげた数の累計）
+        // （Code.gsのcalcHourlySoldAndCumulativeと同じ計算式。UvAは受け取った数が常に0のため
+        //   Zuidだけ実質的に受け取り分が加味される）
         if(curr !== null){
-          const cum = made - curr - givenSum;
+          const cum = made + receivedSum - curr - givenSum;
           if(cumEl) cumEl.textContent = `累計:${cum}`;
           cumTotals[si] += cum;
           cumCount[si]++;
@@ -1574,8 +1600,9 @@ function updateSoldDisplay(fillings){
         if(curr === null){ if(soldEl) soldEl.textContent = ""; return; }
         const prev = si === 0 ? made : vals[si - 1];
         if(prev === null){ if(soldEl) soldEl.textContent = ""; return; }
-        // あげた数はその時間帯で実際に減った分から除外し、純粋な販売数を算出する
-        const sold = (prev - curr) - given;
+        // あげた数はその時間帯で実際に減った分から除外し、受け取った数（UvAからの合流分）は
+        // 残りが見かけ上増える要因なので加算してから、純粋な販売数を算出する
+        const sold = (prev + received - curr) - given;
         if(soldEl){
           soldEl.textContent = `売:${sold}`;
           soldEl.className = sold < 0 ? "sold-display sold-neg" : "sold-display";
@@ -1588,6 +1615,8 @@ function updateSoldDisplay(fillings){
     // 合計行を更新
     const mEl = document.getElementById(`total-made-${storeKey}`);
     if(mEl) mEl.textContent = String(madeTotal);
+    const movedEl = document.getElementById(`total-moved-${storeKey}`);
+    if(movedEl) movedEl.textContent = String(movedTotal);
     let soldGrandTotal = 0;
     let soldGrandCount = 0;
     HOURLY_SLOTS.forEach((h, si) => {
@@ -1622,6 +1651,7 @@ async function fetchHourlyData(dateIso){
 function restoreHourlyInputs(rows, todayIso){
   const slotKeys = ["r12","r13","r14","r15","r16","r17","r18"];
   const givenKeys = ["given12","given13","given14","given15","given16","given17","given18"];
+  const receivedKeys = ["received12","received13","received14","received15","received16","received17","received18"];
   const lunchKeys = ["lunch12","lunch13","lunch14","lunch15","lunch16","lunch17","lunch18"];
   const stampKeys = ["stamp12","stamp13","stamp14","stamp15","stamp16","stamp17","stamp18"];
   const noteRestored = {};
@@ -1633,7 +1663,12 @@ function restoreHourlyInputs(rows, todayIso){
     const madeEl = document.querySelector(`.made-input[data-store="${sk}"][data-filling="${f}"]`);
     if(madeEl && row.total !== "" && row.total !== null && row.total !== undefined)
       madeEl.value = row.total;
-    // 時間帯残数・あげた数を復元
+    // Zuidへ移動した数を復元（UvAのみ）
+    if(row.movedToZuid !== "" && row.movedToZuid !== null && row.movedToZuid !== undefined){
+      const movedEl = document.querySelector(`.moved-input[data-store="${sk}"][data-filling="${f}"]`);
+      if(movedEl) movedEl.value = String(row.movedToZuid);
+    }
+    // 時間帯残数・あげた数・受け取った数を復元
     slotKeys.forEach((key, si) => {
       const v = row[key];
       if(v !== "" && v !== null && v !== undefined){
@@ -1650,6 +1685,11 @@ function restoreHourlyInputs(rows, todayIso){
       if(givenV !== "" && givenV !== null && givenV !== undefined){
         const givenEl = document.querySelector(`.given-input[data-store="${sk}"][data-filling="${f}"][data-slot="${si}"]`);
         if(givenEl) givenEl.value = String(givenV);
+      }
+      const receivedV = row[receivedKeys[si]];
+      if(receivedV !== "" && receivedV !== null && receivedV !== undefined){
+        const receivedEl = document.querySelector(`.received-input[data-store="${sk}"][data-filling="${f}"][data-slot="${si}"]`);
+        if(receivedEl) receivedEl.value = String(receivedV);
       }
     });
     // 備考を復元（店舗ごとに1回）
@@ -1689,6 +1729,8 @@ async function saveStoreActual(storeKey){
   const items = fillings.map(f => {
     const madeEl = document.querySelector(`.made-input[data-store="${storeKey}"][data-filling="${f}"]`);
     const made = madeEl ? (parseInt(madeEl.value, 10) || 0) : 0;
+    const movedEl = document.querySelector(`.moved-input[data-store="${storeKey}"][data-filling="${f}"]`);
+    const moved = movedEl ? (parseInt(movedEl.value, 10) || 0) : 0;
     const sv = HOURLY_SLOTS.map((h, si) => {
       const el = document.querySelector(`.hourly-input[data-store="${storeKey}"][data-filling="${f}"][data-slot="${si}"]`);
       return (el && el.value !== "") ? parseInt(el.value, 10) : "";
@@ -1697,9 +1739,14 @@ async function saveStoreActual(storeKey){
       const el = document.querySelector(`.given-input[data-store="${storeKey}"][data-filling="${f}"][data-slot="${si}"]`);
       return el ? (parseInt(el.value, 10) || 0) : 0;
     });
-    return { filling: f, total: made,
+    const rv = HOURLY_SLOTS.map((h, si) => {
+      const el = document.querySelector(`.received-input[data-store="${storeKey}"][data-filling="${f}"][data-slot="${si}"]`);
+      return el ? (parseInt(el.value, 10) || 0) : 0;
+    });
+    return { filling: f, total: made, movedToZuid: moved,
       r12: sv[0], r13: sv[1], r14: sv[2], r15: sv[3], r16: sv[4], r17: sv[5], r18: sv[6],
-      given12: gv[0], given13: gv[1], given14: gv[2], given15: gv[3], given16: gv[4], given17: gv[5], given18: gv[6] };
+      given12: gv[0], given13: gv[1], given14: gv[2], given15: gv[3], given16: gv[4], given17: gv[5], given18: gv[6],
+      received12: rv[0], received13: rv[1], received14: rv[2], received15: rv[3], received16: rv[4], received17: rv[5], received18: rv[6] };
   });
 
   const payload = {

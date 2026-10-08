@@ -454,31 +454,43 @@ var HOURLY_SHEET_HEADER = ["日付", "曜日", "天気", "気温", "店舗", "�
   "12時ランチ", "12時スタンプ", "13時ランチ", "13時スタンプ", "14時ランチ", "14時スタンプ",
   "15時ランチ", "15時スタンプ", "16時ランチ", "16時スタンプ", "17時ランチ", "17時スタンプ",
   "18時ランチ", "18時スタンプ",
-  "12時あげた数", "13時あげた数", "14時あげた数", "15時あげた数", "16時あげた数", "17時あげた数", "18時あげた数"];
+  "12時あげた数", "13時あげた数", "14時あげた数", "15時あげた数", "16時あげた数", "17時あげた数", "18時あげた数",
+  "12時受取", "13時受取", "14時受取", "15時受取", "16時受取", "17時受取", "18時受取",
+  "Zuidへ移動"];
 // 「あげた数」列（単一）・「〇時ランチ」「〇時スタンプ」列は、時間帯ごとの
 // 「〇時あげた数」列（ランチ・スタンプ統合）に置き換えられたため以後は書き込まない
 // （既存行の後方互換のため列自体は残す。過去データの読み取り時はgetHourlySheetRowsで
 // 　新列が空なら旧ランチ・スタンプ列の合計にフォールバックする）
+// 「〇時受取」（Zuidのみ・UvAからの合流分）・「Zuidへ移動」（UvAのみ・1日1回）は
+// 末尾に追加した列。過去の行はこれらの列を持たないため、読み込み時は空欄=0として扱う
+// （getHourlySheetRowsのv()が""を返し、calcHourlySoldAndCumulative/analytics.html側で
+// 　Number("")=0相当に扱われる）。
 
-// 各時間帯残数と、その時間帯の「あげた数」から、時間帯ごとの売れた数・累計売上を算出する。
-// あげた数はその時間帯で実際に減った分から除外し、「純粋な販売数」を算出する。
-// 売れた数[i] = (i==0 ? 作った数 : 直前の残数) - 残数[i] - あげた数[i]
+// 各時間帯残数と、その時間帯の「あげた数」「受け取った数」から、時間帯ごとの売れた数・
+// 累計売上を算出する。あげた数はその時間帯で実際に減った分から除外し、受け取った数
+// （UvAからZuidへの合流分）は見かけ上残数が増える要因のため加算してから、
+// 「純粋な販売数」を算出する。receivedsを省略した場合は常に0として扱われ、
+// 受け取りの無いUvA側は従来通りの計算式になる。
+// 売れた数[i] = (i==0 ? 作った数 : 直前の残数) + 受け取った数[i] - 残数[i] - あげた数[i]
 //              （残数の前後どちらかが未入力なら空欄）
-// 累計売上[i] = 作った数 - 残数[i] - (0〜iのあげた数の累計)（残数が未入力なら空欄）
-function calcHourlySoldAndCumulative(made, remains, givens) {
+// 累計売上[i] = 作った数 + (0〜iの受け取った数の累計) - 残数[i] - (0〜iのあげた数の累計)（残数が未入力なら空欄）
+function calcHourlySoldAndCumulative(made, remains, givens, receiveds) {
   var sold = [];
   var cumulative = [];
   var prev = made;
   var givenSum = 0;
+  var receivedSum = 0;
   for (var i = 0; i < remains.length; i++) {
     var curr = remains[i];
     var hasCurr = curr !== "" && curr !== null && curr !== undefined;
     var hasPrev = prev !== "" && prev !== null && prev !== undefined;
     var given = Number(givens[i] || 0);
-    sold.push(hasCurr && hasPrev ? (Number(prev) - Number(curr) - given) : "");
+    var received = Number((receiveds && receiveds[i]) || 0);
+    sold.push(hasCurr && hasPrev ? (Number(prev) + received - Number(curr) - given) : "");
     givenSum += given;
+    receivedSum += received;
     var hasMade = made !== "" && made !== null && made !== undefined;
-    cumulative.push(hasCurr && hasMade ? (Number(made) - Number(curr) - givenSum) : "");
+    cumulative.push(hasCurr && hasMade ? (Number(made) + receivedSum - Number(curr) - givenSum) : "");
     prev = curr;
   }
   return { sold: sold, cumulative: cumulative };
@@ -515,11 +527,13 @@ function handleSaveHourly(ss, data) {
         .map(function(v) { return v === "" ? "" : v; });
       var givens = [item.given12, item.given13, item.given14, item.given15, item.given16, item.given17, item.given18]
         .map(function(v) { return Number(v || 0); });
+      var receiveds = [item.received12, item.received13, item.received14, item.received15, item.received16, item.received17, item.received18]
+        .map(function(v) { return Number(v || 0); });
 
       // 既存行がある場合、今回の送信で空欄（未入力）になっているスロットは
       // 保存済みデータの復元がまだ完了していないタイミングで保存ボタンが押された
       // 可能性がある。その場合でも過去に保存済みの実績を空欄で上書きして消してしまわないよう、
-      // 送信側が空欄のスロットに限りシート上の既存値を保持する。
+      // 送信側が空欄のスロットに限りシート上の既存値を保持する（あげた数・受け取った数も同様）。
       if (existing) {
         for (var k = 0; k < remains.length; k++) {
           if (remains[k] === "") {
@@ -527,6 +541,8 @@ function handleSaveHourly(ss, data) {
             if (existingRemain !== "" && existingRemain !== null && existingRemain !== undefined) {
               remains[k] = existingRemain;
               givens[k] = givenOrLegacySum(existing[46 + k], existing[32 + k * 2], existing[33 + k * 2]) || 0;
+              var existingReceived = existing[53 + k];
+              receiveds[k] = (existingReceived !== "" && existingReceived !== null && existingReceived !== undefined) ? Number(existingReceived) : 0;
             }
           }
         }
@@ -538,7 +554,16 @@ function handleSaveHourly(ss, data) {
         total = existing[7];
       }
 
-      var calc = calcHourlySoldAndCumulative(total, remains, givens);
+      // Zuidへ移動した数（UvAのみ・1日1回）。未入力（""や未指定）の場合は、保存済みの
+      // 既存値をそのまま保持する（受け取った数と同じ理由の保護）。明示的な0は尊重する。
+      var moved;
+      if (item.movedToZuid === "" || item.movedToZuid === null || item.movedToZuid === undefined) {
+        moved = existing ? (Number(existing[60]) || 0) : 0;
+      } else {
+        moved = Number(item.movedToZuid) || 0;
+      }
+
+      var calc = calcHourlySoldAndCumulative(total, remains, givens, receiveds);
       var row = [
         data.date, data.weekday, data.weather, data.temp,
         storeData.store, storeData.location,
@@ -550,7 +575,9 @@ function handleSaveHourly(ss, data) {
         storeData.note || "",
         "", // あげた数（単一・廃止、後方互換のため列のみ維持）
         "", "", "", "", "", "", "", "", "", "", "", "", "", "", // 〇時ランチ・〇時スタンプ（廃止、後方互換のため列のみ維持）
-        givens[0], givens[1], givens[2], givens[3], givens[4], givens[5], givens[6]
+        givens[0], givens[1], givens[2], givens[3], givens[4], givens[5], givens[6],
+        receiveds[0], receiveds[1], receiveds[2], receiveds[3], receiveds[4], receiveds[5], receiveds[6],
+        moved
       ];
       if (foundRow > 0) {
         sheet.getRange(foundRow, 1, 1, row.length).setValues([row]);
@@ -656,6 +683,11 @@ function getHourlySheetRows(ss, dateFilter) {
       given16: givenOrLegacySum(v(50), r[40], r[41]),
       given17: givenOrLegacySum(v(51), r[42], r[43]),
       given18: givenOrLegacySum(v(52), r[44], r[45]),
+      // 「〇時受取」（Zuidのみ・UvAからの合流分）・「Zuidへ移動」（UvAのみ）は後から追加した
+      // 列のため、それより前に保存された行では空文字になる（0として扱われる）
+      received12: v(53), received13: v(54), received14: v(55), received15: v(56),
+      received16: v(57), received17: v(58), received18: v(59),
+      movedToZuid: v(60),
     });
   }
   return result;
