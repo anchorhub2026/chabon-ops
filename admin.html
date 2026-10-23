@@ -1036,6 +1036,53 @@
   }
   .shift-config-status.error{ color: var(--accent); }
 
+  /* ── 今月のおにぎり担当 ── */
+  .monthly-onigiri-row{
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    padding: 8px 0;
+    border-bottom: 1px solid var(--line);
+    flex-wrap: wrap;
+  }
+  .monthly-onigiri-row:last-child{ border-bottom: none; }
+  .monthly-onigiri-month{
+    font-weight: bold;
+    color: var(--main-dark);
+    min-width: 90px;
+  }
+  .monthly-onigiri-row select{
+    font-family: inherit;
+    font-size: 0.9rem;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    padding: 6px 10px;
+    background: #fff;
+    color: var(--ink);
+  }
+  .monthly-onigiri-remove-btn{
+    background: none;
+    border: 1px solid var(--line);
+    border-radius: 100px;
+    padding: 5px 12px;
+    font-size: 0.8rem;
+    color: #888;
+    cursor: pointer;
+    font-family: inherit;
+  }
+  .monthly-onigiri-remove-btn:hover{ color: var(--accent); border-color: var(--accent); }
+  .monthly-onigiri-add-row{ margin-top: 10px; }
+  .monthly-onigiri-empty{ color: #999; font-size: 0.88rem; padding: 10px 0; }
+  .monthly-onigiri-recalc-notice{
+    background: #fff6e0;
+    border: 1px solid #e8c468;
+    border-radius: 8px;
+    padding: 10px 14px;
+    font-size: 0.85rem;
+    color: #7a5c00;
+    margin: 0 0 12px;
+  }
+
   /* CTHシフト入力 */
   .cth-shift-add-row{
     display: flex;
@@ -1156,6 +1203,7 @@
     <a href="index.html">← スタッフ画面</a>
     <a href="shift.html">シフト入力</a>
     <a href="#shiftConfigSection">シフト期間設定</a>
+    <a href="#monthlyOnigiriSection">今月のおにぎり担当</a>
     <a href="#cthShiftSection">CTHシフト入力</a>
     <a href="#cthProductsSection">CTH商品ラインナップ</a>
     <a href="#paymentSection">月次支払い</a>
@@ -1191,6 +1239,31 @@
       <button type="button" class="shift-config-save-btn" id="shiftConfigSaveBtn">設定を保存</button>
     </div>
     <p class="shift-config-status" id="shiftConfigStatus"></p>
+  </section>
+
+  <section id="monthlyOnigiriSection">
+    <h2>今月のおにぎり担当<span class="badge">月ごとに1人へ全数割り振り</span></h2>
+    <p id="monthlyOnigiriRecalcNotice" class="monthly-onigiri-recalc-notice" style="display:none;"></p>
+    <div id="monthlyOnigiriList"><p class="loading">データを読み込み中...</p></div>
+    <div class="shift-config-controls monthly-onigiri-add-row">
+      <label class="shift-config-field">
+        対象月
+        <input type="month" id="monthlyOnigiriNewMonth">
+      </label>
+      <label class="shift-config-field">
+        担当者
+        <select id="monthlyOnigiriNewAssignee">
+          <option value="YUMI">YUMI</option>
+          <option value="MARI">MARI</option>
+          <option value="CHIKAKO">CHIKAKO</option>
+          <option value="YUKARI">YUKARI</option>
+          <option value="MIKI">MIKI</option>
+          <option value="本部">本部</option>
+        </select>
+      </label>
+      <button type="button" class="shift-config-save-btn" id="monthlyOnigiriAddBtn">＋ 追加・変更</button>
+    </div>
+    <p class="shift-config-status" id="monthlyOnigiriStatus"></p>
   </section>
 
   <section id="cthShiftSection">
@@ -1321,6 +1394,7 @@ const state = {
   weatherDaily: null,    // buildDays()の再実行用にAPIレスポンスをキャッシュ（土日イベント切り替え時に再取得不要にする）
   hourlyByDate: {},      // 同上
   draftData: null,       // 同上（「作業中プラン」から取得したドラフト一覧）
+  monthlyOnigiriAssignments: {}, // "YYYY-MM" -> 担当者名（または"本部"）。「今月のおにぎり担当」シート由来
 };
 
 const weekCollapsed = { 1: false, 2: false };
@@ -1861,6 +1935,19 @@ function toggleWeekendEvent(weekIndex){
 const ALWAYS_HQ_FILLINGS = ["枝豆", "梅", "うなぎ"];
 const ALLOC_FILLINGS = FILLINGS.filter(f => !ALWAYS_HQ_FILLINGS.includes(f));
 
+// 今月のおにぎり：月ごとに1人の担当者へ全数割り振るための設定。
+// state.monthlyOnigiriAssignments は "YYYY-MM" -> "CHIKAKO"等(本部を含む) のマップ。
+// 未設定の月（該当行が無い月）は従来どおりMEMBER_PRIORITYによる通常割り振りにフォールバックする。
+const MONTHLY_ONIGIRI_FILLING = "今月のおにぎり";
+
+function monthKeyForDay(day){
+  return day.iso ? day.iso.slice(0, 7) : "";
+}
+
+function getMonthlyOnigiriAssignee(day){
+  return (state.monthlyOnigiriAssignments || {})[monthKeyForDay(day)] || null;
+}
+
 // 生産割り振りの優先順位（MARI最優先→CHIKAKO→YUMI→MIKI）。
 // 総生産数が全員分の希望を満たせない場合、最低保証(30個)をこの順で確保する。
 // リストに無いメンバー（YUKARIなど）は最優先度リストの誰よりも後（最下位）として扱う。
@@ -1926,12 +2013,34 @@ function uvaFinal(day){ return day.uvaOpen ? sumQtyMap(day.uvaFillingQty) : 0; }
 // 合計だけを比較する判定では、具材ごとの配分が変わっても総合計自体は変わらないケースを
 // 検知できず、本部の割り振りが特定の具材だけマイナスになる不具合の原因になっていたため、
 // 具材単位でチェックする。
+// 今月のおにぎりの月次担当ルールが導入された後、保存済みの内訳がそのルールに
+// 違反している（担当者以外にも割り振られている等）日付のISO一覧。
+// 画面読み込み時の自動再計算（このチェックの不合格による復元拒否）が
+// どの日付で発生したかを松木さんに報告するために集める。
+let recalculatedOnigiriDates = [];
+
 function isProdSnapshotConsistent(day, memberFillingQty){
   if(!memberFillingQty) return true;
-  return FILLINGS.every(f => {
+  const fillingOk = FILLINGS.every(f => {
     const savedForFilling = Object.values(memberFillingQty).reduce((s, qtyMap) => s + ((qtyMap && qtyMap[f]) || 0), 0);
     return savedForFilling <= neededQtyFor(day, f);
   });
+  if(!fillingOk) return false;
+
+  // 今月のおにぎりの月次担当が設定されている月は、担当者（本部が担当の場合は誰も）以外の
+  // メンバーに「今月のおにぎり」が割り振られている保存データを古いデータとみなす
+  const monthlyAssignee = getMonthlyOnigiriAssignee(day);
+  if(monthlyAssignee){
+    const violatesConcentration = Object.entries(memberFillingQty).some(([name, qtyMap]) => {
+      if(name === monthlyAssignee) return false;
+      return ((qtyMap && qtyMap[MONTHLY_ONIGIRI_FILLING]) || 0) > 0;
+    });
+    if(violatesConcentration){
+      if(day.iso && !recalculatedOnigiriDates.includes(day.iso)) recalculatedOnigiriDates.push(day.iso);
+      return false;
+    }
+  }
+  return true;
 }
 
 function getManualQty(day, name){
@@ -2456,6 +2565,7 @@ function buildProductionPlan(day, working, memberCaps){
   const memberBreakdowns = working.map(() => ({}));
   const fillingTypeCount = working.map(() => 0);
   const hqBreakdown = {};
+  let monthlyOnigiriWarning = null;
 
   // iがjより優先されるべきならtrue
   function isBetterCandidate(i, j, f){
@@ -2510,6 +2620,31 @@ function buildProductionPlan(day, working, memberCaps){
     remaining[mi] -= qty;
   }
 
+  // 今月のおにぎり：月次担当者が設定されている月は、通常の優先順位ループより先に
+  // 担当者のcapから全数（Zuid＋UvA＋チセを合わせた必要数すべて）を確保する。
+  // 担当者のcapで足りない分・担当者がシフトに入っていない分（本部が担当の月を含む）は
+  // ここでは割り振らず、下のALLOC_FILLINGSからも除外することで、computeDaySnapshot側の
+  // 「必要数－ニギニギ隊生産量」の差分計算により自動的に本部へ回る。
+  const monthlyAssignee = getMonthlyOnigiriAssignee(day);
+  if(monthlyAssignee){
+    const monthlyNeed = neededQtyFor(day, MONTHLY_ONIGIRI_FILLING);
+    if(monthlyNeed > 0 && MEMBERS.includes(monthlyAssignee)){
+      const assigneeIdx = working.indexOf(monthlyAssignee);
+      if(assigneeIdx === -1){
+        // シフトに入っていない（cap=0）→ 全数を本部に回す
+        monthlyOnigiriWarning = `今月のおにぎり：担当者のcap不足のため本部に${monthlyNeed}個`;
+      } else {
+        const take = Math.min(monthlyNeed, remaining[assigneeIdx]);
+        give(assigneeIdx, MONTHLY_ONIGIRI_FILLING, take);
+        if(take < monthlyNeed){
+          monthlyOnigiriWarning = `今月のおにぎり：担当者のcap不足のため本部に${monthlyNeed - take}個`;
+        }
+      }
+    }
+    // monthlyAssignee === "本部" の場合は意図的な設定のため、ここでは何もせず
+    // （誰にも割り振らない）、全数が自動的に本部へ回る。警告も表示しない。
+  }
+
   // CTH特別期間（UvA枠がCTH固定50個になる日）かどうか。CTH向け必要数(day.uvaFillingQty)は
   // 下の通常ループでは扱わず、通常ループの後でCTH専用ロジックにより
   // 各メンバーの「残りcap」を使って埋める。処理順序を「通常割り振り→CTH割り振り」にすることで、
@@ -2517,6 +2652,7 @@ function buildProductionPlan(day, working, memberCaps){
   const isCthDay = day.uvaVenueLabel === CTH_VENUE_NAME && day.uvaOpen;
 
   const itemsByNeedDesc = ALLOC_FILLINGS
+    .filter(f => !(monthlyAssignee && f === MONTHLY_ONIGIRI_FILLING))
     .map(f => {
       // CTHの日はUvA枠（=CTH向け必要数）を上の専用ロジックで処理済みのため、
       // 通常優先順位ループにはZuid・チセ向けの残り必要数だけを渡す
@@ -2563,6 +2699,7 @@ function buildProductionPlan(day, working, memberCaps){
     const mariIdx = working.indexOf("MARI");
     let hqCthRemaining = HQ_CTH_DAILY_CAP;
     ALLOC_FILLINGS
+      .filter(f => !(monthlyAssignee && f === MONTHLY_ONIGIRI_FILLING))
       .map(f => ({ f, need: day.uvaFillingQty[f] || 0 }))
       .sort((a, b) => b.need - a.need)
       .forEach(({ f, need }) => {
@@ -2591,7 +2728,7 @@ function buildProductionPlan(day, working, memberCaps){
     if(v > 0) hqBreakdown[f] = (hqBreakdown[f] || 0) + v;
   });
 
-  return { memberBreakdowns, memberQtys: totals, hqBreakdown };
+  return { memberBreakdowns, memberQtys: totals, hqBreakdown, monthlyOnigiriWarning };
 }
 
 // その日の最終生産割り振りの確定版データを1ヶ所で計算する（描画・確定保存の両方で共用）
@@ -2609,7 +2746,7 @@ function computeDaySnapshot(day){
   const allocationTarget = total;
   const isOverCap = capTotal > allocationTarget;
 
-  const { memberBreakdowns } = buildProductionPlan(day, working, memberCaps);
+  const { memberBreakdowns, monthlyOnigiriWarning } = buildProductionPlan(day, working, memberCaps);
   ensureMemberFillingQty(day, working, memberBreakdowns);
 
   // ニギニギ隊合計は「現在実際にテーブルに入っている個数」（手動編集も含む）の合計
@@ -2647,6 +2784,7 @@ function computeDaySnapshot(day){
   return {
     chiseQty, total, working, memberCaps, capTotal, allocationTarget, isOverCap,
     hqBreakdown, hqQty, memberTotals, ningiTotal, fillingOveredBy, hasFillingOverage,
+    monthlyOnigiriWarning,
   };
 }
 
@@ -2654,6 +2792,11 @@ function fillingOverageWarningHtml(snap){
   if(!snap.hasFillingOverage) return "";
   const detail = Object.entries(snap.fillingOveredBy).map(([f, over]) => `${f}(${over}個超過)`).join("、");
   return `<div class="warning-line">⚠️ ${detail}：ニギニギ隊への割り振りが必要数を超えています。ニギニギ隊側の個数を減らして調整してください</div>`;
+}
+
+function monthlyOnigiriWarningHtml(snap){
+  if(!snap.monthlyOnigiriWarning) return "";
+  return `<div class="warning-line">⚠️ ${snap.monthlyOnigiriWarning}</div>`;
 }
 
 function summaryHtmlFor(snap){
@@ -2664,6 +2807,7 @@ function summaryHtmlFor(snap){
     <div style="font-size:0.82em;color:#888;margin-top:2px;">${Math.ceil(snap.hqQty / 3)}合</div>
     ${snap.isOverCap ? `<div class="warning-line">⚠️ ニギニギ隊の希望数合計が総生産数を超えています</div>` : ""}
     ${fillingOverageWarningHtml(snap)}
+    ${monthlyOnigiriWarningHtml(snap)}
   `;
 }
 
@@ -3112,6 +3256,139 @@ function initShiftConfigSection(initialConfig){
       saveBtn.textContent = "設定を保存";
     }finally{
       saveBtn.disabled = false;
+    }
+  });
+}
+
+/* ---------- 今月のおにぎり担当（月ごとに1人へ全数割り振り） ---------- */
+
+const MONTHLY_ONIGIRI_ASSIGNEE_OPTIONS = ["YUMI", "MARI", "CHIKAKO", "YUKARI", "MIKI", "本部"];
+
+// 「今月のおにぎり担当」シートを "YYYY-MM" -> 担当者名 のマップにパースする
+function parseMonthlyOnigiriSheet(json){
+  const result = {};
+  if(!json || !json.table || !json.table.rows) return result;
+  json.table.rows.forEach(r => {
+    const c = r.c;
+    if(!c || !c[0] || !c[1]) return;
+    const month = String(c[0].v || "").trim();
+    const assignee = String(c[1].v || "").trim();
+    if(!month || !assignee) return;
+    result[month] = assignee;
+  });
+  return result;
+}
+
+async function saveMonthlyOnigiriAssignment(month, assignee){
+  const payload = { type: "saveMonthlyOnigiriAssignment", month, assignee };
+  await fetch(SCRIPT_URL, { method: "POST", mode: "no-cors", body: JSON.stringify(payload) });
+}
+
+function monthlyOnigiriOptionsHtml(selected){
+  return MONTHLY_ONIGIRI_ASSIGNEE_OPTIONS.map(name =>
+    `<option value="${name}" ${name === selected ? "selected" : ""}>${name}</option>`
+  ).join("");
+}
+
+function renderMonthlyOnigiriList(){
+  const area = document.getElementById("monthlyOnigiriList");
+  if(!area) return;
+  const months = Object.keys(state.monthlyOnigiriAssignments || {}).sort();
+  if(months.length === 0){
+    area.innerHTML = '<p class="monthly-onigiri-empty">設定されている月はありません。</p>';
+    return;
+  }
+  area.innerHTML = months.map(month => {
+    const [yr, mo] = month.split("-");
+    return `
+      <div class="monthly-onigiri-row" data-month="${month}">
+        <span class="monthly-onigiri-month">${yr}年${Number(mo)}月</span>
+        <select class="monthly-onigiri-select" data-month="${month}">
+          ${monthlyOnigiriOptionsHtml(state.monthlyOnigiriAssignments[month])}
+        </select>
+        <button type="button" class="monthly-onigiri-remove-btn" data-month="${month}">未設定にする</button>
+      </div>`;
+  }).join("");
+
+  area.querySelectorAll(".monthly-onigiri-select").forEach(sel => {
+    sel.addEventListener("change", async () => {
+      const month = sel.dataset.month;
+      const assignee = sel.value;
+      sel.disabled = true;
+      try{
+        await saveMonthlyOnigiriAssignment(month, assignee);
+        state.monthlyOnigiriAssignments[month] = assignee;
+        rebuildDaysAndRender();
+      }catch(e){
+        console.error("今月のおにぎり担当の保存に失敗しました", e);
+      }finally{
+        sel.disabled = false;
+      }
+    });
+  });
+
+  area.querySelectorAll(".monthly-onigiri-remove-btn").forEach(btn => {
+    btn.addEventListener("click", async () => {
+      const month = btn.dataset.month;
+      btn.disabled = true;
+      try{
+        await saveMonthlyOnigiriAssignment(month, "");
+        delete state.monthlyOnigiriAssignments[month];
+        renderMonthlyOnigiriList();
+        rebuildDaysAndRender();
+      }catch(e){
+        console.error("今月のおにぎり担当の削除に失敗しました", e);
+      }finally{
+        btn.disabled = false;
+      }
+    });
+  });
+}
+
+function renderMonthlyOnigiriRecalcNotice(){
+  const el = document.getElementById("monthlyOnigiriRecalcNotice");
+  if(!el) return;
+  if(recalculatedOnigiriDates.length === 0){
+    el.style.display = "none";
+    return;
+  }
+  const sorted = [...recalculatedOnigiriDates].sort();
+  el.textContent = `⚠️ 今月のおにぎり担当ルールに合わせて、次の作業中プランの日付を自動的に再計算しました：${sorted.join("、")}`;
+  el.style.display = "";
+}
+
+function initMonthlyOnigiriSection(){
+  renderMonthlyOnigiriList();
+  renderMonthlyOnigiriRecalcNotice();
+
+  const addBtn = document.getElementById("monthlyOnigiriAddBtn");
+  const statusEl = document.getElementById("monthlyOnigiriStatus");
+  if(!addBtn) return;
+
+  addBtn.addEventListener("click", async () => {
+    const monthVal = document.getElementById("monthlyOnigiriNewMonth").value;
+    const assigneeVal = document.getElementById("monthlyOnigiriNewAssignee").value;
+    if(!monthVal){
+      statusEl.textContent = "対象月を選択してください。";
+      statusEl.classList.add("error");
+      return;
+    }
+    statusEl.classList.remove("error");
+    addBtn.disabled = true;
+    addBtn.textContent = "保存中...";
+    try{
+      await saveMonthlyOnigiriAssignment(monthVal, assigneeVal);
+      state.monthlyOnigiriAssignments[monthVal] = assigneeVal;
+      renderMonthlyOnigiriList();
+      rebuildDaysAndRender();
+      statusEl.textContent = `✓ 保存しました（${monthVal}：${assigneeVal}）`;
+    }catch(e){
+      console.error("今月のおにぎり担当の保存に失敗しました", e);
+      statusEl.textContent = "保存に失敗しました。";
+      statusEl.classList.add("error");
+    }finally{
+      addBtn.disabled = false;
+      addBtn.textContent = "＋ 追加・変更";
     }
   });
 }
@@ -3755,7 +4032,7 @@ async function refreshAllData(){
 
     const thisYear = new Date().getFullYear();
     state.cellStatus = {};
-    const [weatherRes, chiseJson, shiftJson, holidaysByIso, nsDisruptionsByDate, bootstrap, cthShiftJson, cthProductsJson] = await Promise.all([
+    const [weatherRes, chiseJson, shiftJson, holidaysByIso, nsDisruptionsByDate, bootstrap, cthShiftJson, cthProductsJson, monthlyOnigiriJson] = await Promise.all([
       fetch(weatherUrl).then(r => r.json()),
       fetchSheetJson(null).catch(e => { console.error("チセさんシート取得失敗", e); return null; }),
       fetchSheetJson("シフト回答", SHIFT_SPREADSHEET_ID).catch(e => { console.error("シフト回答シート取得失敗", e); return null; }),
@@ -3767,6 +4044,7 @@ async function refreshAllData(){
       // 取得失敗時はapplyCthShiftData/applyCthProductsData側で空データとして扱う
       fetchSheetJson("CTHシフト", SHIFT_SPREADSHEET_ID).catch(() => null),
       fetchSheetJson("CTH商品", SHIFT_SPREADSHEET_ID).catch(() => null),
+      fetchSheetJson("今月のおにぎり担当", SHIFT_SPREADSHEET_ID).catch(() => null),
     ]);
     const draftData = bootstrap.drafts;
     state.draftData = draftData;
@@ -3781,6 +4059,10 @@ async function refreshAllData(){
     // 保存済みprod内訳の復元(loadProdAllocData/applyDraftToDay)より先にチセデータを反映しておく
     state.chiseByDate = chiseJson ? parseChiseSheet(chiseJson) : {};
     logChiseFillingNameCheck(state.chiseByDate);
+    // isProdSnapshotConsistent()が今月のおにぎりの月次担当ルールも判定できるよう、
+    // こちらも保存済みprod内訳の復元より先に反映しておく
+    state.monthlyOnigiriAssignments = parseMonthlyOnigiriSheet(monthlyOnigiriJson);
+    recalculatedOnigiriDates = [];
     // buildDays()より前に、土日イベントを表示する週を確定させる
     // （ローカル保存の状態 ＋ 実際に保存済みデータがある週は自動的に表示）
     state.weekendEventWeeks = { ...loadWeekendEventWeeksFromStorage(), ...detectWeekendEventWeeksFromDrafts(draftData) };
@@ -3817,6 +4099,8 @@ async function refreshAllData(){
     renderCombined();
     renderShiftTable();
     renderCellStatusTable();
+    renderMonthlyOnigiriList();
+    renderMonthlyOnigiriRecalcNotice();
 
     if(btn){ btn.textContent = "✓ 更新しました"; }
   }catch(e){
@@ -4054,10 +4338,10 @@ async function init(){
 
     const thisYear = new Date().getFullYear();
     initProgressDone = 0;
-    setInitProgress(0, 9);
-    const track = p => p.then(v => { setInitProgress(++initProgressDone, 9); return v; });
+    setInitProgress(0, 10);
+    const track = p => p.then(v => { setInitProgress(++initProgressDone, 10); return v; });
     state.cellStatus = {};
-    const [weatherRes, chiseJson, shiftJson, holidaysByIso, nsDisruptionsByDate, bootstrap, paymentPlanJson, cthShiftJson, cthProductsJson] = await Promise.all([
+    const [weatherRes, chiseJson, shiftJson, holidaysByIso, nsDisruptionsByDate, bootstrap, paymentPlanJson, cthShiftJson, cthProductsJson, monthlyOnigiriJson] = await Promise.all([
       track(fetch(weatherUrl).then(r => r.json())),
       track(fetchSheetJson(null).catch(e => { console.error("チセさんシート取得失敗", e); return null; })),
       track(fetchSheetJson("シフト回答", SHIFT_SPREADSHEET_ID).catch(e => { console.error("シフト回答シート取得失敗", e); return null; })),
@@ -4074,6 +4358,7 @@ async function init(){
       // 取得失敗時はapplyCthShiftData/applyCthProductsData側で空データとして扱う
       track(fetchSheetJson("CTHシフト", SHIFT_SPREADSHEET_ID).catch(() => null)),
       track(fetchSheetJson("CTH商品", SHIFT_SPREADSHEET_ID).catch(() => null)),
+      track(fetchSheetJson("今月のおにぎり担当", SHIFT_SPREADSHEET_ID).catch(() => null)),
     ]);
     const draftData = bootstrap.drafts;
     state.draftData = draftData;
@@ -4091,6 +4376,10 @@ async function init(){
     // 保存済みprod内訳の復元(loadProdAllocData/applyDraftToDay)より先にチセデータを反映しておく
     state.chiseByDate = chiseJson ? parseChiseSheet(chiseJson) : {};
     logChiseFillingNameCheck(state.chiseByDate);
+    // isProdSnapshotConsistent()が今月のおにぎりの月次担当ルールも判定できるよう、
+    // こちらも保存済みprod内訳の復元より先に反映しておく
+    state.monthlyOnigiriAssignments = parseMonthlyOnigiriSheet(monthlyOnigiriJson);
+    recalculatedOnigiriDates = [];
     // buildDays()より前に、土日イベントを表示する週を確定させる
     // （ローカル保存の状態 ＋ 実際に保存済みデータがある週は自動的に表示）
     state.weekendEventWeeks = { ...loadWeekendEventWeeksFromStorage(), ...detectWeekendEventWeeksFromDrafts(draftData) };
@@ -4119,6 +4408,7 @@ async function init(){
     renderCellStatusTable();
     initPaymentSection(paymentPlanJson);
     initShiftConfigSection(shiftConfig);
+    initMonthlyOnigiriSection();
 
     const refreshBtn = document.getElementById("refreshShiftBtn");
     if(refreshBtn) refreshBtn.addEventListener("click", refreshShiftData);

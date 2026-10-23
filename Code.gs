@@ -31,6 +31,8 @@ function doPost(e) {
       handleSaveCthShift(ss, data);
     } else if (data.type === "saveCthProducts") {
       handleSaveCthProducts(ss, data);
+    } else if (data.type === "saveMonthlyOnigiriAssignment") {
+      handleSaveMonthlyOnigiriAssignment(ss, data);
     } else {
       // type が無い場合（旧バージョンのshift.html等）もシフト回答として扱う
       handleShiftSubmit(ss, data);
@@ -354,6 +356,48 @@ function handleSaveCthProducts(ss, data) {
       values.push(row);
     }
   });
+}
+
+// 今月のおにぎりの月次担当（1ヶ月ごとに1人へ全数割り振る対象者）を「年月（YYYY-MM）｜担当者」で
+// 1ヶ月1行（月キーでupsert）保存する。初回作成時は初期データ（2026-10:CHIKAKO, 2026-11:YUMI）を
+// シードする。assigneeが空文字の場合はその月の行を削除する（＝未設定の月として従来の割り振りに戻す）。
+// 読み取りは他の低頻度シートと同様gviz経由で行う（admin.html側でtype=取得エンドポイントは用意しない）。
+function handleSaveMonthlyOnigiriAssignment(ss, data) {
+  var header = ["年月（YYYY-MM）", "担当者"];
+  var sheet = ss.getSheetByName("今月のおにぎり担当");
+  if (!sheet) {
+    sheet = ss.insertSheet("今月のおにぎり担当");
+    sheet.appendRow(header);
+    sheet.appendRow(["2026-10", "CHIKAKO"]);
+    sheet.appendRow(["2026-11", "YUMI"]);
+  } else {
+    sheet.getRange(1, 1, 1, header.length).setValues([header]);
+  }
+
+  var month = String(data.month || "").trim();
+  if (!month) return;
+  var assignee = String(data.assignee || "").trim();
+
+  var values = sheet.getDataRange().getValues();
+  var foundRow = -1;
+  for (var r = 1; r < values.length; r++) {
+    if (String(values[r][0]).trim() === month) {
+      foundRow = r + 1;
+      break;
+    }
+  }
+
+  if (!assignee) {
+    if (foundRow > 0) sheet.deleteRow(foundRow);
+    return;
+  }
+
+  var row = [month, assignee];
+  if (foundRow > 0) {
+    sheet.getRange(foundRow, 1, 1, row.length).setValues([row]);
+  } else {
+    sheet.appendRow(row);
+  }
 }
 
 function getShiftConfigData(ss) {
