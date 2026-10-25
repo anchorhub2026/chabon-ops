@@ -333,6 +333,12 @@
   </section>
 
   <section>
+    <h2>📚 UvA学事暦別 実績集計</h2>
+    <p class="off-note">「UvA学事暦」シートの区分（授業／試験前／試験／再試験／休み）ごとに、UvAの過去の営業日を集計します。売上はZuidへ移動した分を除いた「UvA実売」です。区分ごとの係数は「UvA学事暦設定」シート（admin.htmlから編集可）を決める参考にしてください。</p>
+    <div id="uvaAcademicReportArea" class="loading">読み込み中...</div>
+  </section>
+
+  <section>
     <h2>📜 過去の確定プラン履歴</h2>
     <div class="table-filter-row">
       表示件数：
@@ -369,6 +375,16 @@ const WEEKDAY_COLOR_INDEX = { "日":0, "月":1, "火":2, "水":3, "木":4, "金"
 const ALL_STORES_KEY = "__ALL__";
 // 個別店舗の表示順（この順に並べ、リストにない店舗名は末尾にアルファベット順で追加）
 const STORE_ORDER_PRIORITY = ["Zuid", "UvA", "CTH"];
+
+// UvA学事暦関連（gviz経由、SCRIPT_URL経由のApps Script Web Appとは別系統）
+const SHIFT_SPREADSHEET_ID = "1PHf1o3smqIQdeFkhBHjBZUEub7VtRcynQLllmSR7w-s";
+const UVA_ACADEMIC_CATEGORIES_ORDER = ["授業", "試験前", "試験", "再試験", "休み"];
+// 「UvA学事暦」シートが対象とする最初の週（2026-W36の月曜）より前の日付は、
+// このシート・このタスクの範囲では区分を判定する根拠がないため、集計から除外する
+// （推測で区分を当てはめない）
+const UVA_ACADEMIC_CALENDAR_COVERAGE_START = "2026-08-31";
+// データが少ない区分として明記する閾値（この日数未満なら「データが少ない」と注記する）
+const UVA_ACADEMIC_LOW_SAMPLE_THRESHOLD = 5;
 
 const state = {
   rawRows: [],
@@ -466,6 +482,162 @@ function avg(arr){
   return vals.reduce((s,v)=>s+v,0) / vals.length;
 }
 function round1(n){ return n === null ? null : Math.round(n * 10) / 10; }
+
+/* ---------- UvA学事暦（gviz経由） ---------- */
+
+async function fetchSheetJson(sheetName, spreadsheetId){
+  const url = `https://docs.google.com/spreadsheets/d/${spreadsheetId}/gviz/tq?tqx=out:json` +
+    (sheetName ? `&sheet=${encodeURIComponent(sheetName)}` : "");
+  const res = await fetch(url, { cache: "no-store" });
+  const text = await res.text();
+  const match = text.match(/setResponse\(([\s\S]*)\);\s*$/);
+  if(!match) throw new Error("シートの解析に失敗しました: " + sheetName);
+  return JSON.parse(match[1]);
+}
+
+function parseGvizDateCell(cell){
+  if(!cell || cell.v === null || cell.v === undefined) return null;
+  const v = cell.v;
+  if(typeof v === "string"){
+    const m = v.match(/^Date\((\d+),(\d+),(\d+)\)/);
+    if(m){
+      const y = parseInt(m[1], 10), mo = parseInt(m[2], 10) + 1, d = parseInt(m[3], 10);
+      return `${y}-${String(mo).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
+    }
+    if(/^\d{4}-\d{2}-\d{2}$/.test(v)) return v;
+  }
+  return null;
+}
+
+function getMonday(date){
+  const d = new Date(date);
+  const day = d.getDay();
+  const diff = day === 0 ? -6 : 1 - day;
+  d.setDate(d.getDate() + diff);
+  d.setHours(0, 0, 0, 0);
+  return d;
+}
+
+// 「UvA学事暦」シートを "YYYY-MM-DD"（週開始・月曜）-> 区分名 のマップにパースする
+function parseUvaAcademicCalendarSheet(json){
+  const result = {};
+  if(!json || !json.table || !json.table.rows) return result;
+  json.table.rows.forEach(r => {
+    const c = r.c;
+    if(!c || !c[0] || !c[2]) return;
+    const weekStart = parseGvizDateCell(c[0]);
+    const category = String(c[2].v || "").trim();
+    if(!weekStart || !category) return;
+    result[weekStart] = category;
+  });
+  return result;
+}
+
+// 「UvA学事暦設定」シートを 区分名 -> 係数 のマップにパースする
+function parseUvaAcademicCoefficientsSheet(json){
+  const result = {};
+  if(!json || !json.table || !json.table.rows) return result;
+  json.table.rows.forEach(r => {
+    const c = r.c;
+    if(!c || !c[0] || !c[1]) return;
+    const category = String(c[0].v || "").trim();
+    const coefficient = Number(c[1].v);
+    if(!category || !isFinite(coefficient)) return;
+    result[category] = coefficient;
+  });
+  return result;
+}
+
+// UvAの日付単位集計行（state.byStore["UvA"]、aggregateByDateAndStoreの出力）と学事暦マップから、
+// 区分ごとの営業日数・平均売上（Zuidへ移動した分を除く）・授業週平均に対する比率を算出する。
+// 学事暦シートのカバー範囲（UVA_ACADEMIC_CALENDAR_COVERAGE_START）より前の日付は、区分を
+// 判定する根拠がないため集計から除外し、その件数・日付一覧を別途返す（推測で埋めない）。
+function buildUvaAcademicReport(uvaDateRows, academicCalendarMap){
+  const buckets = {};
+  const excludedDates = [];
+
+  uvaDateRows.forEach(row => {
+    if(row.totalSold === null || row.totalSold === undefined) return; // 売上未記録の日は集計対象外
+    const monday = getMonday(parseIsoDate(row.date));
+    const mondayIso = toIso(monday);
+
+    if(mondayIso < UVA_ACADEMIC_CALENDAR_COVERAGE_START){
+      excludedDates.push(row.date);
+      return;
+    }
+    const category = academicCalendarMap[mondayIso] || "授業";
+    const trueSold = Math.max(0, row.totalSold - (row.movedTotal || 0));
+
+    if(!buckets[category]) buckets[category] = { count: 0, soldSum: 0 };
+    buckets[category].count += 1;
+    buckets[category].soldSum += trueSold;
+  });
+
+  const classroomBucket = buckets["授業"];
+  const classroomAvg = (classroomBucket && classroomBucket.count > 0) ? (classroomBucket.soldSum / classroomBucket.count) : null;
+
+  const rows = UVA_ACADEMIC_CATEGORIES_ORDER.map(category => {
+    const b = buckets[category];
+    if(!b || b.count === 0){
+      return { category, count: 0, avgSold: null, ratio: null, lowSample: false };
+    }
+    const avgSold = b.soldSum / b.count;
+    const ratio = classroomAvg ? avgSold / classroomAvg : null;
+    return {
+      category,
+      count: b.count,
+      avgSold,
+      ratio,
+      lowSample: b.count < UVA_ACADEMIC_LOW_SAMPLE_THRESHOLD,
+    };
+  });
+
+  return { rows, excludedCount: excludedDates.length, excludedDates };
+}
+
+function renderUvaAcademicReport(uvaDateRows, academicCalendarMap, coefficientsMap){
+  const area = document.getElementById("uvaAcademicReportArea");
+  if(!area) return;
+
+  if(!uvaDateRows || uvaDateRows.length === 0){
+    area.innerHTML = '<p class="off-note">UvAの実績データがありません。</p>';
+    return;
+  }
+
+  const { rows, excludedCount, excludedDates } = buildUvaAcademicReport(uvaDateRows, academicCalendarMap);
+
+  const bodyHtml = rows.map(r => {
+    const countLabel = r.count > 0 ? `${r.count}日${r.lowSample ? " ⚠️データが少ない" : ""}` : "データなし";
+    const avgLabel = r.avgSold !== null ? `${round1(r.avgSold)}個` : "—";
+    const ratioLabel = r.category === "授業"
+      ? "基準"
+      : (r.ratio !== null ? `×${round1(r.ratio)}` : "—");
+    const coeffLabel = r.category === "授業"
+      ? "×1.0（基準）"
+      : (coefficientsMap[r.category] !== undefined ? `×${coefficientsMap[r.category]}` : "未設定");
+    return `<tr>
+      <td>${r.category}</td>
+      <td>${countLabel}</td>
+      <td>${avgLabel}</td>
+      <td>${ratioLabel}</td>
+      <td>${coeffLabel}</td>
+    </tr>`;
+  }).join("");
+
+  const excludedNote = excludedCount > 0
+    ? `<p class="off-note">学事暦データの対象期間（${UVA_ACADEMIC_CALENDAR_COVERAGE_START}〜）より前の日付が${excludedCount}件あり、区分を判定する根拠がないため集計から除外しました（例：${excludedDates.slice(0, 5).join("、")}${excludedDates.length > 5 ? " 他" : ""}）。</p>`
+    : "";
+
+  area.innerHTML = `
+    <table>
+      <thead>
+        <tr><th>区分</th><th>営業日数</th><th>1日あたり平均売上（UvA実売）</th><th>授業週平均比</th><th>現在の係数設定（参考）</th></tr>
+      </thead>
+      <tbody>${bodyHtml}</tbody>
+    </table>
+    ${excludedNote}
+  `;
+}
 
 /* ---------- データ取得・集計 ---------- */
 
@@ -1383,9 +1555,11 @@ function renderStoreDataErrors(){
 }
 
 async function init(){
-  const [rawRows, confirmedPlans] = await Promise.all([
+  const [rawRows, confirmedPlans, uvaCalendarJson, uvaCoefficientsJson] = await Promise.all([
     fetchAnalyticsRows(),
     fetchConfirmedPlans(),
+    fetchSheetJson("UvA学事暦", SHIFT_SPREADSHEET_ID).catch(() => null),
+    fetchSheetJson("UvA学事暦設定", SHIFT_SPREADSHEET_ID).catch(() => null),
   ]);
   state.rawRows = rawRows;
   const { byStore, storeList, allStoresRows } = buildStoreData(state.rawRows);
@@ -1395,6 +1569,10 @@ async function init(){
   state.confirmedPlans = confirmedPlans;
   renderStoreDataErrors();
   renderPlanHistoryTable();
+
+  const uvaAcademicCalendar = parseUvaAcademicCalendarSheet(uvaCalendarJson);
+  const uvaAcademicCoefficients = parseUvaAcademicCoefficientsSheet(uvaCoefficientsJson);
+  renderUvaAcademicReport(byStore["UvA"] || [], uvaAcademicCalendar, uvaAcademicCoefficients);
 
   document.getElementById("planHistoryLimitFilter").addEventListener("change", (e) => {
     state.planLimit = Number(e.target.value) || 0;
