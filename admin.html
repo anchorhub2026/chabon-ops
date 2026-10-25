@@ -1060,6 +1060,16 @@
     background: #fff;
     color: var(--ink);
   }
+  .uva-academic-coeff-input{
+    font-family: inherit;
+    font-size: 0.9rem;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    padding: 6px 10px;
+    background: #fff;
+    color: var(--ink);
+    width: 90px;
+  }
   .monthly-onigiri-remove-btn{
     background: none;
     border: 1px solid var(--line);
@@ -1204,6 +1214,7 @@
     <a href="shift.html">シフト入力</a>
     <a href="#shiftConfigSection">シフト期間設定</a>
     <a href="#monthlyOnigiriSection">今月のおにぎり担当</a>
+    <a href="#uvaAcademicCoefficientsSection">UvA学事暦係数</a>
     <a href="#cthShiftSection">CTHシフト入力</a>
     <a href="#cthProductsSection">CTH商品ラインナップ</a>
     <a href="#paymentSection">月次支払い</a>
@@ -1264,6 +1275,12 @@
       <button type="button" class="shift-config-save-btn" id="monthlyOnigiriAddBtn">＋ 追加・変更</button>
     </div>
     <p class="shift-config-status" id="monthlyOnigiriStatus"></p>
+  </section>
+
+  <section id="uvaAcademicCoefficientsSection">
+    <h2>UvA学事暦係数設定<span class="badge">試験週等の販売数補正</span></h2>
+    <p class="off-note">「UvA学事暦」シート（年1回手動更新）の区分ごとに、UvAの販売予測数へ掛ける係数を設定します。授業週は基準（×1.0）のため対象外です。「UvA学事暦」シートの編集はスプレッドシート側で行ってください（この画面からは閲覧・係数設定のみ）。</p>
+    <div id="uvaAcademicCoefficientsList"><p class="loading">データを読み込み中...</p></div>
   </section>
 
   <section id="cthShiftSection">
@@ -1395,6 +1412,8 @@ const state = {
   hourlyByDate: {},      // 同上
   draftData: null,       // 同上（「作業中プラン」から取得したドラフト一覧）
   monthlyOnigiriAssignments: {}, // "YYYY-MM" -> 担当者名（または"本部"）。「今月のおにぎり担当」シート由来
+  uvaAcademicCalendar: {},    // "YYYY-MM-DD"（週開始・月曜）-> 区分名。「UvA学事暦」シート由来（閲覧専用）
+  uvaAcademicCoefficients: {}, // 区分名 -> 係数。「UvA学事暦設定」シート由来
 };
 
 const weekCollapsed = { 1: false, 2: false };
@@ -1582,6 +1601,22 @@ const CTH_SPECIAL_QTY = 50;
 const CTH_VENUE_NAME = "CTH";
 function isCthSpecialDay(iso, dow){
   return dow >= 1 && dow <= 5 && iso >= CTH_SPECIAL_START && iso <= CTH_SPECIAL_END;
+}
+
+/* ---------- UvA学事暦（授業週・試験前週・試験週・休み・再試験による販売数補正） ---------- */
+
+// state.uvaAcademicCalendar: "YYYY-MM-DD"（週開始・月曜）-> 区分名 のマップ（「UvA学事暦」シート由来）
+// state.uvaAcademicCoefficients: 区分名 -> 係数 のマップ（「UvA学事暦設定」シート由来）。
+// 「授業」は基準(1.0)固定のためこのマップには含まれない。
+// シートに該当週が無い日は「授業」として扱う（係数1.0・表示なし）。
+function getUvaAcademicWeekInfo(iso){
+  const monday = getMonday(new Date(`${iso}T00:00:00`));
+  const mondayIso = isoDate(monday);
+  const category = (state.uvaAcademicCalendar && state.uvaAcademicCalendar[mondayIso]) || "授業";
+  const coefficient = category === "授業"
+    ? 1
+    : ((state.uvaAcademicCoefficients && state.uvaAcademicCoefficients[category]) ?? 1);
+  return { category, coefficient };
 }
 
 // 「お弁当3」枠（旧・注文弁当）の画面表示ラベル切り替え日。
@@ -1836,6 +1871,15 @@ function buildDays(daily, hourlyByDate){
     if(nsDisruptions && nsDisruptions.length){
       applyNsPenalty(zuid, ZUID_MIN_GUARANTEE);
       if(!cthSpecial) applyNsPenalty(uva, UVA_MIN_GUARANTEE);
+    }
+    // UvA学事暦による補正：CTH特別会場の日（UvAの代わりにCTHで固定数販売）は対象外。
+    // Zuid・チセには反映しない（UvAのみ）。授業週は係数1.0のため計算・表示とも何もしない。
+    if(uva && !cthSpecial){
+      const weekInfo = getUvaAcademicWeekInfo(iso);
+      if(weekInfo.category !== "授業"){
+        uva.total = Math.round(uva.total * weekInfo.coefficient);
+        uva.reasons.push(`${weekInfo.category}週 ×${weekInfo.coefficient}`);
+      }
     }
 
     return {
@@ -3393,6 +3437,82 @@ function initMonthlyOnigiriSection(){
   });
 }
 
+/* ---------- UvA学事暦係数設定（試験週等の販売数補正） ---------- */
+
+const UVA_ACADEMIC_COEFFICIENT_CATEGORIES = ["試験前", "試験", "再試験", "休み"];
+
+// 「UvA学事暦」シートを "YYYY-MM-DD"（週開始・月曜）-> 区分名 のマップにパースする（閲覧専用）
+function parseUvaAcademicCalendarSheet(json){
+  const result = {};
+  if(!json || !json.table || !json.table.rows) return result;
+  json.table.rows.forEach(r => {
+    const c = r.c;
+    if(!c || !c[0] || !c[2]) return;
+    const weekStart = parseGvizDateCell(c[0]);
+    const category = String(c[2].v || "").trim();
+    if(!weekStart || !category) return;
+    result[weekStart] = category;
+  });
+  return result;
+}
+
+// 「UvA学事暦設定」シートを 区分名 -> 係数 のマップにパースする
+function parseUvaAcademicCoefficientsSheet(json){
+  const result = {};
+  if(!json || !json.table || !json.table.rows) return result;
+  json.table.rows.forEach(r => {
+    const c = r.c;
+    if(!c || !c[0] || !c[1]) return;
+    const category = String(c[0].v || "").trim();
+    const coefficient = Number(c[1].v);
+    if(!category || !isFinite(coefficient)) return;
+    result[category] = coefficient;
+  });
+  return result;
+}
+
+async function saveUvaAcademicCoefficient(category, coefficient){
+  const payload = { type: "saveUvaAcademicCoefficient", category, coefficient };
+  await fetch(SCRIPT_URL, { method: "POST", mode: "no-cors", body: JSON.stringify(payload) });
+}
+
+function renderUvaAcademicCoefficientsList(){
+  const area = document.getElementById("uvaAcademicCoefficientsList");
+  if(!area) return;
+  area.innerHTML = UVA_ACADEMIC_COEFFICIENT_CATEGORIES.map(category => {
+    const value = state.uvaAcademicCoefficients[category] ?? 1;
+    return `
+      <div class="monthly-onigiri-row" data-category="${category}">
+        <span class="monthly-onigiri-month">${category}</span>
+        <input type="number" class="uva-academic-coeff-input" data-category="${category}" min="0" step="0.1" value="${value}">
+        <button type="button" class="shift-config-save-btn uva-academic-coeff-save-btn" data-category="${category}">保存</button>
+      </div>`;
+  }).join("");
+
+  area.querySelectorAll(".uva-academic-coeff-save-btn").forEach(btn => {
+    btn.addEventListener("click", async () => {
+      const category = btn.dataset.category;
+      const input = area.querySelector(`.uva-academic-coeff-input[data-category="${category}"]`);
+      const coefficient = Number(input.value);
+      if(!isFinite(coefficient) || coefficient < 0) return;
+      btn.disabled = true;
+      try{
+        await saveUvaAcademicCoefficient(category, coefficient);
+        state.uvaAcademicCoefficients[category] = coefficient;
+        rebuildDaysAndRender();
+      }catch(e){
+        console.error("UvA学事暦係数の保存に失敗しました", e);
+      }finally{
+        btn.disabled = false;
+      }
+    });
+  });
+}
+
+function initUvaAcademicCoefficientsSection(){
+  renderUvaAcademicCoefficientsList();
+}
+
 /* ---------- CTH特別会場シフト入力（8/24〜9/11 月〜金） ---------- */
 
 function parseCthShiftSheet(json){
@@ -4032,7 +4152,7 @@ async function refreshAllData(){
 
     const thisYear = new Date().getFullYear();
     state.cellStatus = {};
-    const [weatherRes, chiseJson, shiftJson, holidaysByIso, nsDisruptionsByDate, bootstrap, cthShiftJson, cthProductsJson, monthlyOnigiriJson] = await Promise.all([
+    const [weatherRes, chiseJson, shiftJson, holidaysByIso, nsDisruptionsByDate, bootstrap, cthShiftJson, cthProductsJson, monthlyOnigiriJson, uvaCalendarJson, uvaCoefficientsJson] = await Promise.all([
       fetch(weatherUrl).then(r => r.json()),
       fetchSheetJson(null).catch(e => { console.error("チセさんシート取得失敗", e); return null; }),
       fetchSheetJson("シフト回答", SHIFT_SPREADSHEET_ID).catch(e => { console.error("シフト回答シート取得失敗", e); return null; }),
@@ -4045,6 +4165,8 @@ async function refreshAllData(){
       fetchSheetJson("CTHシフト", SHIFT_SPREADSHEET_ID).catch(() => null),
       fetchSheetJson("CTH商品", SHIFT_SPREADSHEET_ID).catch(() => null),
       fetchSheetJson("今月のおにぎり担当", SHIFT_SPREADSHEET_ID).catch(() => null),
+      fetchSheetJson("UvA学事暦", SHIFT_SPREADSHEET_ID).catch(() => null),
+      fetchSheetJson("UvA学事暦設定", SHIFT_SPREADSHEET_ID).catch(() => null),
     ]);
     const draftData = bootstrap.drafts;
     state.draftData = draftData;
@@ -4063,6 +4185,9 @@ async function refreshAllData(){
     // こちらも保存済みprod内訳の復元より先に反映しておく
     state.monthlyOnigiriAssignments = parseMonthlyOnigiriSheet(monthlyOnigiriJson);
     recalculatedOnigiriDates = [];
+    // buildDays()がUvA学事暦補正を計算できるよう、buildDays()より前に反映しておく
+    state.uvaAcademicCalendar = parseUvaAcademicCalendarSheet(uvaCalendarJson);
+    state.uvaAcademicCoefficients = parseUvaAcademicCoefficientsSheet(uvaCoefficientsJson);
     // buildDays()より前に、土日イベントを表示する週を確定させる
     // （ローカル保存の状態 ＋ 実際に保存済みデータがある週は自動的に表示）
     state.weekendEventWeeks = { ...loadWeekendEventWeeksFromStorage(), ...detectWeekendEventWeeksFromDrafts(draftData) };
@@ -4100,6 +4225,7 @@ async function refreshAllData(){
     renderShiftTable();
     renderCellStatusTable();
     renderMonthlyOnigiriList();
+    renderUvaAcademicCoefficientsList();
     renderMonthlyOnigiriRecalcNotice();
 
     if(btn){ btn.textContent = "✓ 更新しました"; }
@@ -4338,10 +4464,10 @@ async function init(){
 
     const thisYear = new Date().getFullYear();
     initProgressDone = 0;
-    setInitProgress(0, 10);
-    const track = p => p.then(v => { setInitProgress(++initProgressDone, 10); return v; });
+    setInitProgress(0, 12);
+    const track = p => p.then(v => { setInitProgress(++initProgressDone, 12); return v; });
     state.cellStatus = {};
-    const [weatherRes, chiseJson, shiftJson, holidaysByIso, nsDisruptionsByDate, bootstrap, paymentPlanJson, cthShiftJson, cthProductsJson, monthlyOnigiriJson] = await Promise.all([
+    const [weatherRes, chiseJson, shiftJson, holidaysByIso, nsDisruptionsByDate, bootstrap, paymentPlanJson, cthShiftJson, cthProductsJson, monthlyOnigiriJson, uvaCalendarJson, uvaCoefficientsJson] = await Promise.all([
       track(fetch(weatherUrl).then(r => r.json())),
       track(fetchSheetJson(null).catch(e => { console.error("チセさんシート取得失敗", e); return null; })),
       track(fetchSheetJson("シフト回答", SHIFT_SPREADSHEET_ID).catch(e => { console.error("シフト回答シート取得失敗", e); return null; })),
@@ -4359,6 +4485,8 @@ async function init(){
       track(fetchSheetJson("CTHシフト", SHIFT_SPREADSHEET_ID).catch(() => null)),
       track(fetchSheetJson("CTH商品", SHIFT_SPREADSHEET_ID).catch(() => null)),
       track(fetchSheetJson("今月のおにぎり担当", SHIFT_SPREADSHEET_ID).catch(() => null)),
+      track(fetchSheetJson("UvA学事暦", SHIFT_SPREADSHEET_ID).catch(() => null)),
+      track(fetchSheetJson("UvA学事暦設定", SHIFT_SPREADSHEET_ID).catch(() => null)),
     ]);
     const draftData = bootstrap.drafts;
     state.draftData = draftData;
@@ -4380,6 +4508,9 @@ async function init(){
     // こちらも保存済みprod内訳の復元より先に反映しておく
     state.monthlyOnigiriAssignments = parseMonthlyOnigiriSheet(monthlyOnigiriJson);
     recalculatedOnigiriDates = [];
+    // buildDays()がUvA学事暦補正を計算できるよう、buildDays()より前に反映しておく
+    state.uvaAcademicCalendar = parseUvaAcademicCalendarSheet(uvaCalendarJson);
+    state.uvaAcademicCoefficients = parseUvaAcademicCoefficientsSheet(uvaCoefficientsJson);
     // buildDays()より前に、土日イベントを表示する週を確定させる
     // （ローカル保存の状態 ＋ 実際に保存済みデータがある週は自動的に表示）
     state.weekendEventWeeks = { ...loadWeekendEventWeeksFromStorage(), ...detectWeekendEventWeeksFromDrafts(draftData) };
@@ -4409,6 +4540,7 @@ async function init(){
     initPaymentSection(paymentPlanJson);
     initShiftConfigSection(shiftConfig);
     initMonthlyOnigiriSection();
+    initUvaAcademicCoefficientsSection();
 
     const refreshBtn = document.getElementById("refreshShiftBtn");
     if(refreshBtn) refreshBtn.addEventListener("click", refreshShiftData);

@@ -15,6 +15,12 @@ function doPost(e) {
   var lock = LockService.getScriptLock();
   lock.waitLock(30000);
   try {
+    // UvA学事暦・UvA学事暦設定シートは、存在しなければここで初期データ付きで作成する
+    // （admin.htmlは「UvA学事暦」には書き込まないため、他のシートのように個別の保存
+    // 　ハンドラ内で遅延作成できない。doPostが呼ばれるたびの軽い存在チェックで対応する）
+    ensureUvaAcademicCalendarSheet(ss);
+    ensureUvaAcademicCoefficientsSheet(ss);
+
     if (data.type === "confirmPlan") {
       handleConfirmPlan(ss, data);
     } else if (data.type === "saveDraft") {
@@ -33,6 +39,8 @@ function doPost(e) {
       handleSaveCthProducts(ss, data);
     } else if (data.type === "saveMonthlyOnigiriAssignment") {
       handleSaveMonthlyOnigiriAssignment(ss, data);
+    } else if (data.type === "saveUvaAcademicCoefficient") {
+      handleSaveUvaAcademicCoefficient(ss, data);
     } else {
       // type が無い場合（旧バージョンのshift.html等）もシフト回答として扱う
       handleShiftSubmit(ss, data);
@@ -393,6 +401,102 @@ function handleSaveMonthlyOnigiriAssignment(ss, data) {
   }
 
   var row = [month, assignee];
+  if (foundRow > 0) {
+    sheet.getRange(foundRow, 1, 1, row.length).setValues([row]);
+  } else {
+    sheet.appendRow(row);
+  }
+}
+
+// UvA学事暦（週開始日｜ISO週番号｜区分｜メモ）の初期データ。
+// UvA公式の2026-2027年度アカデミックカレンダー（授業週・試験前週・試験週・休み）に基づく。
+// 7月分の再試験は未確定のため、意図的にこの一覧には含めない（空けておく）。
+// 年に1回、松木さんが直接スプレッドシート上で手で更新する前提のため、admin.htmlからの
+// 書き込みハンドラは用意しない（閲覧・予測計算への反映のみgviz経由で行う）。
+var UVA_ACADEMIC_CALENDAR_SEED_ROWS = [
+  ["2026-08-31", "2026-W36", "授業", ""],
+  ["2026-09-07", "2026-W37", "授業", ""],
+  ["2026-09-14", "2026-W38", "授業", ""],
+  ["2026-09-21", "2026-W39", "授業", ""],
+  ["2026-09-28", "2026-W40", "授業", ""],
+  ["2026-10-05", "2026-W41", "授業", ""],
+  ["2026-10-12", "2026-W42", "試験前", ""],
+  ["2026-10-19", "2026-W43", "試験", ""],
+  ["2026-10-26", "2026-W44", "授業", ""],
+  ["2026-11-02", "2026-W45", "授業", ""],
+  ["2026-11-09", "2026-W46", "授業", ""],
+  ["2026-11-16", "2026-W47", "授業", ""],
+  ["2026-11-23", "2026-W48", "授業", ""],
+  ["2026-11-30", "2026-W49", "授業", ""],
+  ["2026-12-07", "2026-W50", "試験前", ""],
+  ["2026-12-14", "2026-W51", "試験", ""],
+  ["2026-12-21", "2026-W52", "休み", ""],
+  ["2026-12-28", "2026-W53", "休み", ""],
+  ["2027-01-04", "2027-W01", "授業", ""],
+  ["2027-01-11", "2027-W02", "授業", ""],
+  ["2027-01-18", "2027-W03", "試験前", ""],
+  ["2027-01-25", "2027-W04", "試験", ""],
+  ["2027-02-01", "2027-W05", "授業", ""],
+  ["2027-02-08", "2027-W06", "授業", ""],
+  ["2027-02-15", "2027-W07", "授業", ""],
+  ["2027-02-22", "2027-W08", "授業", ""],
+  ["2027-03-01", "2027-W09", "授業", ""],
+  ["2027-03-08", "2027-W10", "授業", ""],
+  ["2027-03-15", "2027-W11", "試験前", ""],
+  ["2027-03-22", "2027-W12", "試験", ""],
+  ["2027-03-29", "2027-W13", "授業", ""],
+  ["2027-04-05", "2027-W14", "授業", ""],
+  ["2027-04-12", "2027-W15", "授業", ""],
+  ["2027-04-19", "2027-W16", "授業", ""],
+  ["2027-04-26", "2027-W17", "授業", ""],
+  ["2027-05-03", "2027-W18", "休み", ""],
+  ["2027-05-10", "2027-W19", "授業", ""],
+  ["2027-05-17", "2027-W20", "試験前", ""],
+  ["2027-05-24", "2027-W21", "試験", ""],
+  ["2027-05-31", "2027-W22", "授業", ""],
+  ["2027-06-07", "2027-W23", "授業", ""],
+  ["2027-06-14", "2027-W24", "試験前", ""],
+  ["2027-06-21", "2027-W25", "試験", ""]
+];
+
+function ensureUvaAcademicCalendarSheet(ss) {
+  var sheet = ss.getSheetByName("UvA学事暦");
+  if (sheet) return;
+  sheet = ss.insertSheet("UvA学事暦");
+  sheet.appendRow(["週開始日（月曜）", "ISO週番号", "区分", "メモ"]);
+  sheet.getRange(2, 1, UVA_ACADEMIC_CALENDAR_SEED_ROWS.length, 4).setValues(UVA_ACADEMIC_CALENDAR_SEED_ROWS);
+}
+
+// 区分ごとの係数設定。「授業」は基準(1.0固定)のためこのシートには含めない。
+// 初期値はすべて1.0（未設定）とし、松木さんがadmin.htmlから値を決めて入力する。
+var UVA_ACADEMIC_COEFFICIENT_CATEGORIES = ["試験前", "試験", "再試験", "休み"];
+
+function ensureUvaAcademicCoefficientsSheet(ss) {
+  var sheet = ss.getSheetByName("UvA学事暦設定");
+  if (sheet) return;
+  sheet = ss.insertSheet("UvA学事暦設定");
+  sheet.appendRow(["区分", "係数"]);
+  var rows = UVA_ACADEMIC_COEFFICIENT_CATEGORIES.map(function(cat) { return [cat, 1]; });
+  sheet.getRange(2, 1, rows.length, 2).setValues(rows);
+}
+
+// 区分ごとの係数を1件更新する（区分キーでupsert）。区分名はUVA_ACADEMIC_COEFFICIENT_CATEGORIES
+// に含まれるもののみ受け付ける（授業は基準固定のため対象外）。
+function handleSaveUvaAcademicCoefficient(ss, data) {
+  var category = String(data.category || "").trim();
+  if (UVA_ACADEMIC_COEFFICIENT_CATEGORIES.indexOf(category) === -1) return;
+  var coefficient = Number(data.coefficient);
+  if (!isFinite(coefficient) || coefficient < 0) return;
+
+  var sheet = ss.getSheetByName("UvA学事暦設定");
+  if (!sheet) { ensureUvaAcademicCoefficientsSheet(ss); sheet = ss.getSheetByName("UvA学事暦設定"); }
+
+  var values = sheet.getDataRange().getValues();
+  var foundRow = -1;
+  for (var r = 1; r < values.length; r++) {
+    if (String(values[r][0]).trim() === category) { foundRow = r + 1; break; }
+  }
+  var row = [category, coefficient];
   if (foundRow > 0) {
     sheet.getRange(foundRow, 1, 1, row.length).setValues([row]);
   } else {
