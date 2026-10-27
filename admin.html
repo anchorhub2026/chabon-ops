@@ -401,57 +401,11 @@
     margin-left: 4px;
   }
 
-  /* 最終生産割り振り */
-  .bulk-actions{
-    display: flex;
-    gap: 6px;
-    flex-wrap: wrap;
-    margin-bottom: 10px;
-  }
-  .bulk-btn{
-    border: 1px solid var(--line);
-    background: #f0eee8;
-    color: #777;
-    font-size: 0.76rem;
-    padding: 5px 12px;
-    border-radius: 100px;
-    cursor: pointer;
-  }
-  .bulk-btn.active{
-    background: var(--main);
-    color: #fff;
-    border-color: var(--main);
-    font-weight: bold;
-  }
   .week-heading-simple{
     font-size: 1rem;
     color: var(--main-dark);
     margin: 0 0 12px;
   }
-  .undo-btn{
-    margin-left: auto;
-  }
-  .undo-btn:disabled{
-    opacity: 0.4;
-    cursor: default;
-  }
-  .prod-table-wrap{ overflow-x: auto; }
-  table.prod-table{
-    width: 100%;
-    border-collapse: collapse;
-    font-size: 0.78rem;
-    min-width: 640px;
-  }
-  table.prod-table th, table.prod-table td{
-    border-bottom: 1px solid var(--line);
-    padding: 5px 4px;
-    text-align: center;
-  }
-  table.prod-table th{ color: var(--main-dark); font-weight: bold; background: var(--main-light); white-space: nowrap; }
-  table.prod-table td.f-name{ text-align: left; color: var(--ink); white-space: nowrap; }
-  table.prod-table td.cell-readonly{ color: #666; }
-  table.prod-table td.cell-row-total{ font-weight: bold; color: var(--main-dark); }
-  table.prod-table tfoot td{ font-weight: bold; color: var(--main-dark); border-bottom: none; border-top: 2px solid var(--main-light); padding-top: 6px; }
   .wish-hint{ display: block; font-weight: normal; color: #888; font-size: 0.66rem; }
   .prod-summary{
     font-size: 0.82rem;
@@ -616,8 +570,6 @@
   .day-block:hover{ box-shadow: 0 4px 18px rgba(74,124,89,0.1); }
   .week-this-week .day-block{ background: #fdf3e6; border-color: #e3c391; }
   .week-next-next .day-block{ background: #eef3f5; border-color: #c9d8dd; }
-
-  .day-block-bulk{ display: flex; gap: 5px; flex-wrap: wrap; margin-bottom: 6px; }
 
   /* 日付ブロック：フッター帯 */
   .day-block-footer{
@@ -882,10 +834,6 @@
   /* ── リセット推奨ボタン ── */
   .reset-recommend-btn{ transition: background 0.14s, border-color 0.14s; }
   .reset-recommend-btn:hover{ background: var(--main-light); border-color: var(--main); }
-
-  /* ── 一括割り振りボタン ── */
-  .bulk-btn:not(.active):hover{ background: #e0ddd6; border-color: #bbb; }
-  .bulk-btn.active:hover{ background: var(--main-dark); }
 
   /* ── 具材渡し済み/調理済みボタン ── */
   .status-btn{ transition: background 0.14s, color 0.14s, border-color 0.14s, box-shadow 0.14s; }
@@ -1359,6 +1307,7 @@
 
 <footer>Chabon Ops — Amsterdam Onigiri Truck（管理画面）</footer>
 
+<script src="confirmed-plan.js"></script>
 <script>
 const LAT = 52.3676, LON = 4.9041;
 const SPREADSHEET_ID = "1rQtRUSP5e7qOjnT4RPvMGfWrEFcFL89AsLe8cjGIW4U"; // チセさんの生産データ
@@ -1724,6 +1673,18 @@ async function fetchSheetJson(sheetName, spreadsheetId){
   return JSON.parse(match[1]);
 }
 
+// シートが存在しない・まだ一度も作られていない可能性があるシート専用のfetch。
+// gvizはシート名が無効な場合、例外を投げずに{status:"error"}を返すことがあるため、
+// その場合は「シートなし」として空の表を返す（＝設定なしのデフォルト値に委ねる。失敗として
+// 読み込み失敗バナーやブロックの対象にはしない）。
+// 一方、レスポンス自体の取得・解析に失敗した場合（シートはあるのに読み込みが失敗した場合を含む）は
+// 通常どおり例外を投げ、呼び出し側のcritical指定に従って読み込み失敗として扱う。
+async function fetchOptionalSheetJson(sheetName, spreadsheetId){
+  const json = await fetchSheetJson(sheetName, spreadsheetId);
+  if(json && json.status === "error") return { table: { rows: [] } };
+  return json;
+}
+
 // シート上の日付セルは「数値（シリアル値）」と「Date型」が混在しているため、
 // 型に関係なく常に存在する表示用フォーマット文字列（例："6/23"）を使って判定・マッチングする。
 function mdLabel(d){
@@ -1804,67 +1765,8 @@ function parseQtyNumber(qtyStr){
   return m ? parseInt(m[1], 10) : 0;
 }
 
-// "ツナマヨ×14 テリヤキチキン×25" 形式の文字列を {具材名: 個数} にパースする
-function parseFillingBreakdownString(str){
-  const result = {};
-  if(!str) return result;
-  String(str).trim().split(/\s+/).filter(Boolean).forEach(part => {
-    const [filling, qtyStr] = part.split("×");
-    if(filling) result[filling] = parseInt(qtyStr, 10) || 0;
-  });
-  return result;
-}
-
-// "名前:具材×個数 具材×個数；名前:..." 形式の文字列を {名前: {具材名: 個数}} にパースする
-function parseNingiBreakdownToMemberFillingQty(str){
-  const result = {};
-  if(!str) return result;
-  String(str).split("；").filter(Boolean).forEach(part => {
-    const idx = part.indexOf(":");
-    if(idx === -1) return;
-    const name = part.slice(0, idx).trim();
-    if(!name) return;
-    result[name] = parseFillingBreakdownString(part.slice(idx + 1));
-  });
-  return result;
-}
-
-// 「確定プラン」シートを "M/D" -> 確定内容 のマップにパースする。
-// 確定済みかどうか・確定プランの内容は、この結果（スプレッドシートの内容）を正とする。
-// 端末のlocalStorageには依存しない（どの端末で開いても同じ表示になる）。
-function parseConfirmedPlansSheet(json){
-  const result = {};
-  if(!json || !json.table || !json.table.rows) return result;
-  json.table.rows.forEach(r => {
-    const c = r.c;
-    if(!c || !c[0]) return;
-    const key = String((c[0] && (c[0].f || c[0].v)) || "").trim();
-    if(!key) return;
-    const memberFillingQtyRaw = parseNingiBreakdownToMemberFillingQty(c[5] ? c[5].v : "");
-    const memberFillingQty = {};
-    Object.keys(memberFillingQtyRaw).forEach(name => {
-      memberFillingQty[name] = { ...buildFillingDefaults(0), ...memberFillingQtyRaw[name] };
-    });
-    const zuidBreakdown = parseFillingBreakdownString(c[9] ? c[9].v : "");
-    const uvaBreakdown = parseFillingBreakdownString(c[10] ? c[10].v : "");
-    const chiseBreakdown = parseFillingBreakdownString(c[11] ? c[11].v : "");
-    result[key] = {
-      zuid: c[2] && c[2].v !== null && c[2].v !== "" ? Number(c[2].v) : 0,
-      uva: c[3] && c[3].v !== null && c[3].v !== "" ? Number(c[3].v) : 0,
-      chise: c[4] && c[4].v !== null && c[4].v !== "" ? Number(c[4].v) : 0,
-      memberNames: Object.keys(memberFillingQtyRaw),
-      memberFillingQty,
-      hqQty: c[6] && c[6].v !== null && c[6].v !== "" ? Number(c[6].v) : 0,
-      hqBreakdown: parseFillingBreakdownString(c[7] ? c[7].v : ""),
-      confirmedAtLabel: c[8] ? String(c[8].f || c[8].v || "") : "",
-      zuidBreakdown, uvaBreakdown, chiseBreakdown,
-      // Zuid/UvA/チセ内訳列は後から追加した列のため、古い確定行には無い場合がある。
-      // その場合は具材別の差分表示をせず、合計のみで比較する
-      hasDetailBreakdown: !!(c[9] && c[9].v) || !!(c[10] && c[10].v) || !!(c[11] && c[11].v),
-    };
-  });
-  return result;
-}
+// 確定プランの共通パース処理（parseFillingBreakdownString・parseNingiBreakdownToMemberFillingQty・
+// parseConfirmedPlansSheet）は confirmed-plan.js に共通化し、index.html・cooking.htmlと共用している。
 
 function getConfirmedPlanForDay(day){
   return (state.confirmedPlansByDate && state.confirmedPlansByDate[mdLabel(day.dateObj)]) || null;
@@ -2724,13 +2626,6 @@ function dayBlockHtml(day){
         </div>
         <div class="day-col-prod-head">
           <div class="col-section-title ut-prod-head">生産割り振り</div>
-          <div class="day-block-bulk">
-            <button type="button" class="bulk-btn ${day.bulkValue === 24 ? "active" : ""}" data-key="${day.dateKey}" data-val="24">全員24個</button>
-            <button type="button" class="bulk-btn ${day.bulkValue === 27 ? "active" : ""}" data-key="${day.dateKey}" data-val="27">全員27個</button>
-            <button type="button" class="bulk-btn ${day.bulkValue === 30 ? "active" : ""}" data-key="${day.dateKey}" data-val="30">全員30個</button>
-            <button type="button" class="bulk-btn ${day.bulkValue === 45 ? "active" : ""}" data-key="${day.dateKey}" data-val="45">全員45個</button>
-            <button type="button" class="bulk-btn undo-btn" data-key="${day.dateKey}" ${day.undoSnapshot ? "" : "disabled"}>↺ 元に戻す</button>
-          </div>
           <div class="prod-summary" id="summaryBlock-${day.dateKey}">${summaryHtmlFor(snap)}</div>
         </div>
       </div>
@@ -3091,112 +2986,6 @@ function prodCellStepperHtml(day, name, filling, qty){
   `;
 }
 
-// 生産割り振り表：列＝メンバー＋本部＋合計、行＝具材＋合計
-function productionTableHtml(day, snap){
-  const { working, memberCaps, hqBreakdown, hqQty, memberTotals, ningiTotal, fillingOveredBy } = snap;
-
-  const headerCells = working.map((name, i) => `<th>${name}<small class="wish-hint">希望:${memberCaps[i]}個</small></th>`).join("");
-
-  const rows = FILLINGS.map(f => {
-    const isFixedHq = ALWAYS_HQ_FILLINGS.includes(f);
-    const memberCells = working.map(name => {
-      const qty = (day.memberFillingQty[name] && day.memberFillingQty[name][f]) || 0;
-      return isFixedHq
-        ? `<td class="cell-readonly">—</td>`
-        : `<td>${prodCellStepperHtml(day, name, f, qty)}</td>`;
-    }).join("");
-    const hqVal = hqBreakdown[f] || 0;
-    const rowTotal = working.reduce((s, name) => s + ((day.memberFillingQty[name] && day.memberFillingQty[name][f]) || 0), 0) + hqVal;
-    const overQty = fillingOveredBy[f];
-    const hqDisplay = overQty
-      ? `<span class="hq-negative">${hqVal}<span class="hq-over-badge">⚠️${overQty}個超過</span></span>`
-      : `${hqVal}`;
-
-    return `
-      <tr>
-        <td class="f-name">${f}</td>
-        ${memberCells}
-        <td class="cell-readonly" id="prodHq-${day.dateKey}-${f}">${hqDisplay}</td>
-        <td class="cell-readonly cell-row-total" id="prodRowTotal-${day.dateKey}-${f}">${rowTotal}</td>
-      </tr>
-    `;
-  }).join("");
-
-  const colTotalCells = working.map((name, i) => `<td class="cell-readonly cell-row-total" id="prodColTotal-${day.dateKey}-${name}">${memberTotals[i]}</td>`).join("");
-  const grandTotal = ningiTotal + hqQty;
-
-  return `
-    <div class="prod-table-wrap">
-      <table class="prod-table">
-        <thead>
-          <tr><th>具材</th>${headerCells}<th>本部</th><th>合計</th></tr>
-        </thead>
-        <tbody>${rows}</tbody>
-        <tfoot>
-          <tr>
-            <td>合計</td>
-            ${colTotalCells}
-            <td class="cell-readonly" id="prodHqTotal-${day.dateKey}">${snap.hasFillingOverage ? `<span class="hq-negative">${hqQty}<span class="hq-over-badge">⚠️超過あり</span></span>` : hqQty}</td>
-            <td class="cell-readonly cell-row-total" id="prodGrandTotal-${day.dateKey}">${grandTotal}</td>
-          </tr>
-        </tfoot>
-      </table>
-    </div>
-  `;
-}
-
-// 1日分のメンバー×具材の個数をディープコピーで保存する（アンドゥ用に直前の状態を1つだけ保持）
-function snapshotMemberFillingQty(day){
-  return JSON.parse(JSON.stringify(day.memberFillingQty || {}));
-}
-
-// 全員の合計個数をvalに揃え、具材ごとの自動割り振りロジックでテーブルへ反映する
-function applyBulkValue(day, val){
-  const working = MEMBERS.filter(name => getManualQty(day, name) > 0);
-  if(working.length === 0) return;
-
-  const caps = working.map(() => val);
-  const { memberBreakdowns } = buildProductionPlan(day, working, caps);
-  day.memberFillingQty = {};
-  if(!day.prodManuallyEdited) day.prodManuallyEdited = {};
-  working.forEach((name, i) => {
-    const qtyMap = {};
-    FILLINGS.forEach(f => { qtyMap[f] = (memberBreakdowns[i] && memberBreakdowns[i][f]) || 0; });
-    day.memberFillingQty[name] = qtyMap;
-    day.prodManuallyEdited[name] = true;
-  });
-  day.bulkValue = val;
-}
-
-function productionDayHtml(day){
-  const snap = computeDaySnapshot(day);
-
-  const hasSavedProd = !!localStorage.getItem(`chabon_prod_${mdLabel(day.dateObj)}`);
-
-  const bulkActionsHtml = `
-    <div class="bulk-actions">
-      <button type="button" class="bulk-btn ${day.bulkValue === 24 ? "active" : ""}" data-key="${day.dateKey}" data-val="24">全員24個</button>
-      <button type="button" class="bulk-btn ${day.bulkValue === 27 ? "active" : ""}" data-key="${day.dateKey}" data-val="27">全員27個</button>
-      <button type="button" class="bulk-btn ${day.bulkValue === 30 ? "active" : ""}" data-key="${day.dateKey}" data-val="30">全員30個</button>
-      <button type="button" class="bulk-btn ${day.bulkValue === 45 ? "active" : ""}" data-key="${day.dateKey}" data-val="45">全員45個</button>
-      <button type="button" class="bulk-btn undo-btn" data-key="${day.dateKey}" ${day.undoSnapshot ? "" : "disabled"}>↺ 元に戻す</button>
-      ${hasSavedProd ? `<span class="saved-indicator">💾 保存済み</span>` : ""}
-      <button type="button" class="reset-prod-btn reset-day-btn" data-key="${day.dateKey}">🗑 割り振りリセット</button>
-    </div>
-  `;
-
-  const tableHtml = snap.working.length
-    ? productionTableHtml(day, snap)
-    : `<p class="off-note">出勤予定のメンバーがいません。</p>`;
-
-  return `
-    <div class="fd-head">${day.label}</div>
-    ${bulkActionsHtml}
-    <div class="prod-summary" id="summaryBlock-${day.dateKey}">${summaryHtmlFor(snap)}</div>
-    <div id="prodTableArea-${day.dateKey}">${tableHtml}</div>
-  `;
-}
-
 // セル個数の入力中に、テーブル自体は再生成せず、本部列・合計行・合計列・summaryだけを更新する（フォーカスを失わない）
 function refreshProductionCellDerived(day){
   const snap = computeDaySnapshot(day);
@@ -3262,52 +3051,12 @@ function bindProductionDayEvents(day){
     });
   });
 
-  container.querySelectorAll(".bulk-btn:not(.undo-btn)").forEach(btn => {
-    btn.addEventListener("click", () => {
-      const lockReason = getEditLockReason(day);
-      if(lockReason){ alert(lockReason); return; }
-
-      const val = parseInt(btn.dataset.val, 10);
-      if(!val) return;
-      const working = MEMBERS.filter(name => getManualQty(day, name) > 0);
-      if(working.length === 0) return;
-
-      // 誤タップ防止の確認（押し間違いで全員の個数が一括で変わってしまうため）
-      showConfirm(`全員の個数を${val}個にします。よろしいですか？`, () => {
-        day.undoSnapshot = {
-          memberFillingQty: snapshotMemberFillingQty(day),
-          prodManuallyEdited: JSON.parse(JSON.stringify(day.prodManuallyEdited || {})),
-          bulkValue: day.bulkValue,
-        };
-        applyBulkValue(day, val);
-        saveProdAlloc(day);
-        renderDayBlock(day);
-      });
-    });
-  });
-
-  container.querySelectorAll(".undo-btn").forEach(btn => {
-    btn.addEventListener("click", () => {
-      const lockReason = getEditLockReason(day);
-      if(lockReason){ alert(lockReason); return; }
-      if(!day.undoSnapshot) return;
-      day.memberFillingQty = day.undoSnapshot.memberFillingQty;
-      day.prodManuallyEdited = day.undoSnapshot.prodManuallyEdited || {};
-      day.bulkValue = day.undoSnapshot.bulkValue;
-      day.undoSnapshot = null;
-      saveProdAlloc(day);
-      renderDayBlock(day);
-    });
-  });
-
   // 生産割り振りのみリセット
   container.querySelectorAll(".reset-prod-btn").forEach(btn => {
     btn.addEventListener("click", () => {
       showConfirm(`${day.label}の生産割り振りをリセットしますか？`, () => {
         const dateStr = mdLabel(day.dateObj);
         try{ localStorage.removeItem(`chabon_prod_${dateStr}`); }catch(e){}
-        day.bulkValue = null;
-        day.undoSnapshot = null;
         day.memberFillingQty = {};
         day.prodManuallyEdited = {};
         renderDayBlock(day);
@@ -4132,8 +3881,6 @@ function resetDayData(day){
   day.zuidFillingQty = day.zuid ? buildFillingDefaults(day.zuid.total) : buildFillingDefaults(0);
   day.uvaOpen = day.uva !== null;
   day.uvaFillingQty = day.uva ? buildFillingDefaults(day.uva.total) : buildFillingDefaults(0);
-  day.bulkValue = null;
-  day.undoSnapshot = null;
   day.memberFillingQty = {};
   day.prodManuallyEdited = {};
   saveDraftToSheet(day);  // シートのドラフトもリセット状態で上書き
@@ -4473,8 +4220,8 @@ async function refreshAllData(){
       fetchSheetJson("CTHシフト", SHIFT_SPREADSHEET_ID).catch(() => null),
       fetchSheetJson("CTH商品", SHIFT_SPREADSHEET_ID).catch(() => null),
       fetchSheetJson("今月のおにぎり担当", SHIFT_SPREADSHEET_ID).catch(() => null).then(v => trackFetchResult("今月のおにぎり担当", true, v)),
-      fetchSheetJson("UvA学事暦", SHIFT_SPREADSHEET_ID).catch(() => null).then(v => trackFetchResult("UvA学事暦", true, v)),
-      fetchSheetJson("UvA学事暦設定", SHIFT_SPREADSHEET_ID).catch(() => null).then(v => trackFetchResult("UvA学事暦設定", true, v)),
+      fetchOptionalSheetJson("UvA学事暦", SHIFT_SPREADSHEET_ID).catch(() => null).then(v => trackFetchResult("UvA学事暦", true, v)),
+      fetchOptionalSheetJson("UvA学事暦設定", SHIFT_SPREADSHEET_ID).catch(() => null).then(v => trackFetchResult("UvA学事暦設定", true, v)),
       fetchSheetJson("確定プラン", SHIFT_SPREADSHEET_ID).catch(e => { console.error("確定プラン取得失敗", e); return null; }).then(v => trackFetchResult("確定プラン", true, v)),
     ]);
     const draftData = bootstrap.drafts;
@@ -4803,8 +4550,8 @@ async function init(){
       track(fetchSheetJson("CTHシフト", SHIFT_SPREADSHEET_ID).catch(() => null)),
       track(fetchSheetJson("CTH商品", SHIFT_SPREADSHEET_ID).catch(() => null)),
       track(fetchSheetJson("今月のおにぎり担当", SHIFT_SPREADSHEET_ID).catch(() => null).then(v => trackFetchResult("今月のおにぎり担当", true, v))),
-      track(fetchSheetJson("UvA学事暦", SHIFT_SPREADSHEET_ID).catch(() => null).then(v => trackFetchResult("UvA学事暦", true, v))),
-      track(fetchSheetJson("UvA学事暦設定", SHIFT_SPREADSHEET_ID).catch(() => null).then(v => trackFetchResult("UvA学事暦設定", true, v))),
+      track(fetchOptionalSheetJson("UvA学事暦", SHIFT_SPREADSHEET_ID).catch(() => null).then(v => trackFetchResult("UvA学事暦", true, v))),
+      track(fetchOptionalSheetJson("UvA学事暦設定", SHIFT_SPREADSHEET_ID).catch(() => null).then(v => trackFetchResult("UvA学事暦設定", true, v))),
     ]);
     const draftData = bootstrap.drafts;
     state.draftData = draftData;
