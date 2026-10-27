@@ -23,6 +23,8 @@ function doPost(e) {
 
     if (data.type === "confirmPlan") {
       handleConfirmPlan(ss, data);
+    } else if (data.type === "reviseConfirmedDay") {
+      handleReviseConfirmedDay(ss, data);
     } else if (data.type === "saveDraft") {
       handleSaveDraft(ss, data);
     } else if (data.type === "saveStatus") {
@@ -64,40 +66,51 @@ function handleShiftSubmit(ss, data) {
   }
 }
 
-function handleConfirmPlan(ss, data) {
-  // Zuid内訳・UvA内訳・チセ内訳（後から追加した列）は、既存データの列位置を変えないよう
-  // 確定日時の後ろに追加した。過去に確定済みの行はこれらの列を持たないため、
-  // 具材別の店舗内訳は無く合計数のみになる（handleGetConfirmedPlansの呼び出し側で判定する）。
-  var headers = ["日付", "曜日", "Zuid確定数", "UvA確定数", "チセ分", "ニギニギ隊内訳", "本部製造数", "本部内訳", "確定日時", "Zuid内訳", "UvA内訳", "チセ内訳"];
+// 確定プランシートの日付列から、dateStr（"M/D"形式）に一致する行番号（1始まり）を探す。
+// Google Sheets が日付文字列を Date オブジェクトに自動変換する場合があるため、
+// normalizeDateCell で ISO 形式に揃えてから "M/D" 形式と比較する。見つからなければ -1。
+function findConfirmedPlanRow(values, dateStr) {
+  for (var r = 1; r < values.length; r++) {
+    var cellNorm = normalizeDateCell(values[r][0]);
+    var cellMD = "";
+    var parts = cellNorm.split("-");
+    if (parts.length === 3) {
+      cellMD = String(Number(parts[1])) + "/" + String(Number(parts[2]));
+    }
+    if (String(values[r][0]) === String(dateStr) || cellMD === String(dateStr)) {
+      return r + 1;
+    }
+  }
+  return -1;
+}
+
+// 確定プランシートのヘッダー行。Zuid内訳・UvA内訳・チセ内訳・修正日時（後から追加した列）は、
+// 既存データの列位置を変えないよう末尾に追加した。過去に確定済みの行はこれらの列を
+// 持たない場合があり、その場合は具材別の店舗内訳が無く合計数のみ・未修正として扱われる
+// （handleGetConfirmedPlans・confirmed-plan.jsの呼び出し側で判定する）。
+var CONFIRMED_PLAN_HEADERS = ["日付", "曜日", "Zuid確定数", "UvA確定数", "チセ分", "ニギニギ隊内訳", "本部製造数", "本部内訳", "確定日時", "Zuid内訳", "UvA内訳", "チセ内訳", "修正日時"];
+
+function ensureConfirmedPlanSheet(ss) {
   var sheet = ss.getSheetByName("確定プラン");
   if (!sheet) {
     sheet = ss.insertSheet("確定プラン");
-    sheet.appendRow(headers);
+    sheet.appendRow(CONFIRMED_PLAN_HEADERS);
   } else {
     // 列名の変更・追加（旧バージョンの列数が少ないシートも含む）を都度反映する。
     // データ行の列位置には影響しない
-    sheet.getRange(1, 1, 1, headers.length).setValues([headers]);
+    sheet.getRange(1, 1, 1, CONFIRMED_PLAN_HEADERS.length).setValues([CONFIRMED_PLAN_HEADERS]);
   }
+  return sheet;
+}
+
+function handleConfirmPlan(ss, data) {
+  var sheet = ensureConfirmedPlanSheet(ss);
   var values = sheet.getDataRange().getValues();
   var ts = new Date();
 
   for (var i = 0; i < data.days.length; i++) {
     var day = data.days[i];
-    var foundRow = -1;
-    for (var r = 1; r < values.length; r++) {
-      // Google Sheets が日付文字列を Date オブジェクトに自動変換する場合があるため
-      // normalizeDateCell で ISO 形式に揃えてから "M/D" 形式と比較する
-      var cellNorm = normalizeDateCell(values[r][0]);
-      var cellMD = "";
-      var parts = cellNorm.split("-");
-      if (parts.length === 3) {
-        cellMD = String(Number(parts[1])) + "/" + String(Number(parts[2]));
-      }
-      if (String(values[r][0]) === String(day.date) || cellMD === String(day.date)) {
-        foundRow = r + 1;
-        break;
-      }
-    }
+    var foundRow = findConfirmedPlanRow(values, day.date);
     var row = [
       day.date,
       day.day,
@@ -113,11 +126,59 @@ function handleConfirmPlan(ss, data) {
       day.chiseBreakdown || ""
     ];
     if (foundRow > 0) {
+      // 「修正日時」列（13列目）には触れない。週単位の確定（新規確定・まだ修正されていない日の
+      // 再送）はここに値を書き込まないことで、「修正済み」バッジは本当に修正操作が行われた
+      // 日にだけ表示されるようにする
       sheet.getRange(foundRow, 1, 1, row.length).setValues([row]);
     } else {
       sheet.appendRow(row);
     }
   }
+}
+
+// 確定済みの1日分だけを、admin.htmlの「修正を確定・公開する」から更新する。
+// 週単位のhandleConfirmPlanとは違い対象は1行だけで、かつ楽観的ロックを必須で確認する
+// （確定日時が読み込み時点から変わっていれば、他の端末が先に確定・修正している可能性があるため
+// 書き込まずに中断する＝「確定済みの日を自動の処理や競合した保存で書き換えない」の延長）。
+function handleReviseConfirmedDay(ss, data) {
+  var sheet = ss.getSheetByName("確定プラン");
+  if (!sheet) return; // 確定プランシート自体が無い＝修正対象の確定行も無い
+
+  var values = sheet.getDataRange().getValues();
+  var foundRow = findConfirmedPlanRow(values, data.date);
+  if (foundRow === -1) return; // 修正対象の確定行が見つからない（通常は起こらない）
+
+  // 楽観的ロック：クライアントが読み込んだ時点の確定日時(expectedConfirmedAt)と、
+  // 現在シート上の確定日時が一致しなければ、他の端末が先に確定・修正しているとみなして
+  // 書き込まない（expectedConfirmedAtが無い場合はチェックをスキップする）
+  if (data.expectedConfirmedAt) {
+    var currentConfirmedAtCell = values[foundRow - 1][8];
+    var currentConfirmedAtLiteral = currentConfirmedAtCell instanceof Date
+      ? dateToGvizLiteral(currentConfirmedAtCell) : String(currentConfirmedAtCell || "");
+    if (currentConfirmedAtLiteral && currentConfirmedAtLiteral !== String(data.expectedConfirmedAt)) {
+      return; // 競合：書き込まずに中断する
+    }
+  }
+
+  sheet.getRange(1, 1, 1, CONFIRMED_PLAN_HEADERS.length).setValues([CONFIRMED_PLAN_HEADERS]);
+
+  var ts = new Date();
+  var row = [
+    data.date,
+    data.day,
+    data.zuid,
+    data.uva,
+    data.chise || 0,
+    data.ningiBreakdown || "",
+    data.hqQty || 0,
+    data.hqBreakdown || "",
+    ts,
+    data.zuidBreakdown || "",
+    data.uvaBreakdown || "",
+    data.chiseBreakdown || "",
+    ts
+  ];
+  sheet.getRange(foundRow, 1, 1, row.length).setValues([row]);
 }
 
 // 「確定プラン」シートの全行を、analytics.htmlの「過去の確定プラン履歴」表示用に返す。

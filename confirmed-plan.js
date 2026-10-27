@@ -3,9 +3,11 @@
 //
 // 確定プランシートの列（0始まり）：
 //   0:日付 1:曜日 2:Zuid確定数 3:UvA確定数 4:チセ分 5:ニギニギ隊内訳 6:本部製造数 7:本部内訳
-//   8:確定日時 9:Zuid内訳 10:UvA内訳 11:チセ内訳
+//   8:確定日時 9:Zuid内訳 10:UvA内訳 11:チセ内訳 12:修正日時
 // 9〜11（具材別の内訳）は後から追加した列のため、古い確定行には無い場合がある
 // （hasDetailBreakdownで判定する）。
+// 12（修正日時）は、確定後にadmin.htmlの「この日を修正する」で内容を上書き公開した場合のみ
+// 書き込まれる（初回確定時は空のまま）。空ならその日はまだ一度も修正されていない。
 
 // "ツナマヨ×14 テリヤキチキン×25" 形式の文字列を {具材名: 個数} にパースする。
 // 内訳に無い具材は含めない（0埋めはしない。呼び出し側で `|| 0` で参照すること）。
@@ -56,11 +58,15 @@ function parseConfirmedPlansSheet(json){
       hqQty: c[6] && c[6].v !== null && c[6].v !== "" ? Number(c[6].v) : 0,
       hqBreakdown: parseFillingBreakdownString(c[7] ? c[7].v : ""),
       confirmedAtLabel: c[8] ? String(c[8].f || c[8].v || "") : "",
+      // 確定日時の生値（gvizの"Date(y,m,d,h,mi,s)"形式等）。保存直前の楽観的ロック確認用。
+      confirmedAtRaw: c[8] && c[8].v !== null && c[8].v !== undefined ? String(c[8].v) : "",
       zuidBreakdown, uvaBreakdown, chiseBreakdown,
       // Zuid/UvA/チセ内訳列は後から追加した列のため、古い確定行には無い場合がある。
       // その場合は具材別の数字を確定プランから取れないため、呼び出し側は
       // 作業中プラン等へのフォールバックを判断する
       hasDetailBreakdown: !!(c[9] && c[9].v) || !!(c[10] && c[10].v) || !!(c[11] && c[11].v),
+      // 確定後に「この日を修正する」で内容を公開した場合のみ入る（未修正なら空文字）
+      revisedAtLabel: c[12] ? String(c[12].f || c[12].v || "") : "",
     };
   });
   return result;

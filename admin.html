@@ -302,6 +302,68 @@
     padding: 2px 9px;
     border-radius: 100px;
   }
+  /* 修正済みバッジ（確定後に内容を更新した日。ニギニギ隊が気づけるよう確定済みバッジと色を変える） */
+  .revised-badge{
+    display: inline-block;
+    margin-top: 4px;
+    background: var(--accent);
+    color: #fff;
+    font-size: 0.64rem;
+    font-weight: bold;
+    padding: 2px 9px;
+    border-radius: 100px;
+  }
+  /* 修正中（未公開）バッジ：公開前の一時的な状態だと分かるよう、確定済み系とは別の色にする */
+  .revising-badge{
+    display: inline-block;
+    margin-top: 4px;
+    background: #c9853f;
+    color: #fff;
+    font-size: 0.64rem;
+    font-weight: bold;
+    padding: 2px 9px;
+    border-radius: 100px;
+  }
+  /* この日を修正する */
+  .revise-day-btn{
+    font-size: 0.75rem;
+    padding: 5px 14px;
+    border: 1px solid var(--accent);
+    border-radius: 100px;
+    background: #fff;
+    color: var(--accent);
+    cursor: pointer;
+    font-weight: bold;
+  }
+  .revise-day-btn:hover{ background: #fdecea; }
+  /* 修正を確定・公開する */
+  .publish-revision-btn{
+    border: none;
+    border-radius: 100px;
+    background: var(--accent);
+    color: #fff;
+    font-weight: bold;
+    font-size: 0.78rem;
+    padding: 7px 16px;
+    cursor: pointer;
+  }
+  .publish-revision-btn:hover{ background: #a8402f; }
+  /* 修正をやめる */
+  .cancel-revision-btn{
+    font-size: 0.75rem;
+    padding: 6px 14px;
+    border: 1px solid #ccc;
+    border-radius: 100px;
+    background: #fff;
+    color: #666;
+    cursor: pointer;
+  }
+  .cancel-revision-btn:hover{ background: #f2f2f2; }
+  .revise-status-msg{
+    font-size: 0.72rem;
+    color: var(--accent);
+    font-weight: bold;
+  }
   /* 確定済みの推奨数ボックスハイライト */
   .store-item.confirmed{
     background: var(--main-light);
@@ -1801,11 +1863,17 @@ function renderFetchFailureBanner(){
   el.style.display = "";
 }
 
-// 編集（販売予測数の変更・生産割り振りの手入力・プリセットボタン・リセット）をブロックすべき理由。
-// nullなら編集可能。確定済みの日を最優先し、次に生産割り振りの計算に必須なデータの取得失敗を見る
-// （cap不明なまま既定値で黙って計算することを防ぐ）。
+// 確定済みの内容をそのまま表示し編集をブロックすべきか（「この日を修正する」で
+// 修正中(day.isRevising)になっている間は、確定済みであってもブロックしない）
+function isDayLockedByConfirmedPlan(day){
+  return !!getConfirmedPlanForDay(day) && !day.isRevising;
+}
+
+// 編集（販売予測数の変更・生産割り振りの手入力・リセット）をブロックすべき理由。
+// nullなら編集可能。確定済み（かつ修正中でない）の日を最優先し、次に生産割り振りの計算に
+// 必須なデータの取得失敗を見る（cap不明なまま既定値で黙って計算することを防ぐ）。
 function getEditLockReason(day){
-  if(getConfirmedPlanForDay(day)) return "確定済みのため変更できません";
+  if(isDayLockedByConfirmedPlan(day)) return "確定済みのため変更できません";
   if(state.productionDataIncomplete) return "データの読み込みに失敗しているため変更できません。再読み込みしてください";
   return null;
 }
@@ -2455,7 +2523,7 @@ function confirmedForecastTableHtml(day, confirmed){
 
 function splitForecastTableHtml(day){
   const confirmed = getConfirmedPlanForDay(day);
-  if(confirmed) return confirmedForecastTableHtml(day, confirmed);
+  if(confirmed && !day.isRevising) return confirmedForecastTableHtml(day, confirmed);
 
   const showUva = day.uva !== null || day.isEventDay;
   const chise = state.chiseByDate[mdLabel(day.dateObj)];
@@ -2509,7 +2577,7 @@ function splitProdTableHtml(day){
   const snap = computeDaySnapshot(day);
   const { working, memberCaps, hqBreakdown, hqQty, memberTotals, ningiTotal, fillingOveredBy } = snap;
   const locked = !!getEditLockReason(day);
-  const capLabel = snap.isConfirmedPlan ? "確定" : "希望";
+  const capLabel = snap.isConfirmedPlan ? "確定" : (snap.isRevising ? "修正前" : "希望");
 
   const memberHeaderCells = working.map((name, i) =>
     `<th class="sub-prod-head">${name}<br><small class="wish-hint">${capLabel}:${memberCaps[i]}個</small></th>`
@@ -2600,13 +2668,39 @@ function storeBoxWithToggleHtml(day, store, label, result, isConfirmed, confirme
   return `<div class="store-item-with-toggle">${toggleBtn}${itemHtml}${resetBtn}</div>`;
 }
 
+// 確定済みバッジのHTML。「この日を修正する」で一度でも内容を公開した日は、
+// ニギニギ隊が変更に気づけるよう「修正済み」バッジ（確定済みバッジとは別色）を表示する
+function confirmedBadgeHtml(confirmedData, snap){
+  if(confirmedData && confirmedData.revisedAtLabel){
+    return `<span class="revised-badge">✏️ 修正済み（最終更新：${confirmedData.revisedAtLabel}）</span>`;
+  }
+  return `<span class="confirmed-badge">✓ 確定済み${snap.confirmedAtLabel ? `（${snap.confirmedAtLabel}）` : ""}</span>`;
+}
+
 function dayBlockHtml(day){
   const snap = computeDaySnapshot(day);
   const showUva = day.uva !== null || day.isEventDay;
   const isConfirmed = snap.isConfirmedPlan;
+  const confirmedData = getConfirmedPlanForDay(day);
+  const hasConfirmedPlan = !!confirmedData;
+  const isRevising = !!day.isRevising;
   const lockReason = getEditLockReason(day);
   const hasSavedForecast = !isConfirmed && !!localStorage.getItem(`chabon_forecast_${mdLabel(day.dateObj)}`);
   const hasSavedProd = !isConfirmed && !!localStorage.getItem(`chabon_prod_${mdLabel(day.dateObj)}`);
+
+  // 確定済みの日の生産割り振りを修正するための操作ボタン。
+  // 修正中は「修正を確定・公開する」「修正をやめる」、修正中でなければ「この日を修正する」のみ表示する
+  // （未確定の日はhasConfirmedPlanがfalseのため、これまでどおり何も表示しない）
+  let revisionActionsHtml = "";
+  if(isRevising){
+    revisionActionsHtml = `
+      <span class="revise-status-msg" id="reviseStatus-${day.dateKey}"></span>
+      <button type="button" class="publish-revision-btn" data-key="${day.dateKey}">修正を確定・公開する</button>
+      <button type="button" class="cancel-revision-btn" data-key="${day.dateKey}">修正をやめる</button>
+    `;
+  } else if(hasConfirmedPlan){
+    revisionActionsHtml = `<button type="button" class="revise-day-btn" data-key="${day.dateKey}">✏️ この日を修正する</button>`;
+  }
 
   return `
     <div class="day-block-body">
@@ -2617,11 +2711,11 @@ function dayBlockHtml(day){
             <div class="day-head">${day.label}</div>
             <div class="day-weather"><span class="weather-icon">${day.weatherIcon}</span><span class="weather-temp">${day.tempLabel}</span></div>
           </div>
-          ${(day.holidayName || (day.nsDisruptions && day.nsDisruptions.length) || isConfirmed) ? `<div class="day-badges">${day.holidayName ? `<span class="holiday-badge">🎉 祝日：${day.holidayName}</span>` : ""}${day.nsDisruptions && day.nsDisruptions.length ? `<span class="ns-badge">🚆 NSストライキ/運休</span>` : ""}${isConfirmed ? `<span class="confirmed-badge">✓ 確定済み${snap.confirmedAtLabel ? `（${snap.confirmedAtLabel}）` : ""}</span>` : ""}</div>` : ""}
+          ${(day.holidayName || (day.nsDisruptions && day.nsDisruptions.length) || isConfirmed || isRevising) ? `<div class="day-badges">${day.holidayName ? `<span class="holiday-badge">🎉 祝日：${day.holidayName}</span>` : ""}${day.nsDisruptions && day.nsDisruptions.length ? `<span class="ns-badge">🚆 NSストライキ/運休</span>` : ""}${isConfirmed ? confirmedBadgeHtml(confirmedData, snap) : ""}${isRevising ? `<span class="revising-badge">✏️ 修正中（未公開）</span>` : ""}</div>` : ""}
           ${confirmedForecastDiffHtml(snap)}
           <div class="store-stack-with-toggle">
-            ${storeBoxWithToggleHtml(day, "zuid", "Zuid", day.zuid, isConfirmed, isConfirmed ? getConfirmedPlanForDay(day).zuid : null)}
-            ${showUva ? storeBoxWithToggleHtml(day, "uva", day.uvaVenueLabel, day.uva, isConfirmed, isConfirmed ? getConfirmedPlanForDay(day).uva : null) : ""}
+            ${storeBoxWithToggleHtml(day, "zuid", "Zuid", day.zuid, isConfirmed, isConfirmed ? confirmedData.zuid : null)}
+            ${showUva ? storeBoxWithToggleHtml(day, "uva", day.uvaVenueLabel, day.uva, isConfirmed, isConfirmed ? confirmedData.uva : null) : ""}
           </div>
         </div>
         <div class="day-col-prod-head">
@@ -2642,8 +2736,9 @@ function dayBlockHtml(day){
       ${hasSavedForecast ? `<span class="saved-indicator">💾 予測保存済み</span>` : ""}
       ${hasSavedProd ? `<span class="saved-indicator">💾 割り振り保存済み</span>` : ""}
       <span class="draft-conflict-msg" id="draftConflict-${day.dateKey}"></span>
-      <button type="button" class="reset-day-btn" data-key="${day.dateKey}" ${lockReason ? "disabled" : ""}>🗑 全リセット</button>
-      <button type="button" class="reset-prod-btn" data-key="${day.dateKey}" ${lockReason ? "disabled" : ""}>🗑 割り振りリセット</button>
+      <button type="button" class="reset-day-btn" data-key="${day.dateKey}" ${(lockReason || isRevising) ? "disabled" : ""}>🗑 全リセット</button>
+      <button type="button" class="reset-prod-btn" data-key="${day.dateKey}" ${(lockReason || isRevising) ? "disabled" : ""}>🗑 割り振りリセット</button>
+      ${revisionActionsHtml}
     </div>
   `;
 }
@@ -2880,21 +2975,34 @@ function computeConfirmedDaySnapshot(day, confirmed){
   return {
     chiseQty, total, working, memberCaps: memberTotals, capTotal: ningiTotal, allocationTarget: total,
     isOverCap: false, hqBreakdown, hqQty, memberTotals, ningiTotal, fillingOveredBy: {}, hasFillingOverage: false,
-    monthlyOnigiriWarning: null, isConfirmedPlan: true, confirmedForecastDiff, confirmedAtLabel: confirmed.confirmedAtLabel,
+    monthlyOnigiriWarning: null, monthlyOnigiriMisassignedWarning: null, isConfirmedPlan: true, isRevising: false,
+    confirmedForecastDiff, confirmedAtLabel: confirmed.confirmedAtLabel,
   };
 }
 
 function computeDaySnapshot(day){
   const confirmed = getConfirmedPlanForDay(day);
-  if(confirmed) return computeConfirmedDaySnapshot(day, confirmed);
+  // 確定済みでも「この日を修正する」で修正中(day.isRevising)の間は、確定内容をそのまま
+  // 表示するcomputeConfirmedDaySnapshotではなく、通常の（編集可能な）計算経路を使う。
+  // 修正開始時にstartRevisingDay()が確定プランの内容をday.zuidFillingQty等に
+  // 複製済みのため、以下の計算はその複製された値から始まる。
+  if(confirmed && !day.isRevising) return computeConfirmedDaySnapshot(day, confirmed);
 
   day.isConfirmedPlan = false;
+  const isRevising = !!day.isRevising;
   const chise = state.chiseByDate[mdLabel(day.dateObj)];
   const chiseQty = chise ? chise.subtotal : 0;
   const total = (zuidFinal(day) || 0) + (uvaFinal(day) || 0) + chiseQty;
 
-  const working = MEMBERS.filter(name => getManualQty(day, name) > 0);
-  const memberCaps = working.map(name => getManualQty(day, name)); // 希望数（表として表示するだけで、実際の個数はセル編集で決まる）
+  // 修正中は、メンバー構成・担当表示数を修正開始時点（確定プラン）の内容に固定する
+  // （シフト回答の変動やライブの希望数再計算から始めない。day.revisingWorking/
+  // 　day.revisingMemberCapsはstartRevisingDay()で確定プランから作成済み）
+  const working = (isRevising && day.revisingWorking)
+    ? day.revisingWorking
+    : MEMBERS.filter(name => getManualQty(day, name) > 0);
+  const memberCaps = (isRevising && day.revisingMemberCaps)
+    ? working.map(name => day.revisingMemberCaps[name] || 0)
+    : working.map(name => getManualQty(day, name)); // 希望数（表として表示するだけで、実際の個数はセル編集で決まる）
 
   const capTotal = memberCaps.reduce((s, v) => s + v, 0);
 
@@ -2937,10 +3045,28 @@ function computeDaySnapshot(day){
   const hqQty = Object.values(hqBreakdown).reduce((s, v) => s + v, 0);
   const hasFillingOverage = Object.keys(fillingOveredBy).length > 0;
 
+  // 今月のおにぎりの担当ルール違反チェック：実際に入力されている個数（手動編集・修正中の
+  // 編集を含む）を見て、担当者以外に割り振られていないかを確認する。buildProductionPlanの
+  // monthlyOnigiriWarning（自動割り振りのシミュレーション結果）とは異なり、手動入力・
+  // 修正中の編集による違反も検知できる（入力自体は止めず、警告のみ表示する）。
+  const monthlyOnigiriMisassignedWarning = (() => {
+    const assignee = getMonthlyOnigiriAssignee(day);
+    if(!assignee) return null;
+    const misassigned = working.filter(name => name !== assignee &&
+      ((day.memberFillingQty[name] && day.memberFillingQty[name][MONTHLY_ONIGIRI_FILLING]) || 0) > 0);
+    if(misassigned.length === 0) return null;
+    return `今月のおにぎりは${assignee}さんの担当です（${misassigned.join("、")}に入力されています。担当者以外への割り振りがないか確認してください）`;
+  })();
+
   return {
     chiseQty, total, working, memberCaps, capTotal, allocationTarget, isOverCap,
     hqBreakdown, hqQty, memberTotals, ningiTotal, fillingOveredBy, hasFillingOverage,
-    monthlyOnigiriWarning, isConfirmedPlan: false, confirmedForecastDiff: [], confirmedAtLabel: "",
+    // 修正中は、buildProductionPlanのシミュレーション結果（cap不足等）は修正の文脈では
+    // 意味を持たないため表示しない。今月のおにぎりの担当違反は上の実値ベースの
+    // monthlyOnigiriMisassignedWarningで（修正中かどうかに関わらず）検知する
+    monthlyOnigiriWarning: isRevising ? null : monthlyOnigiriWarning,
+    monthlyOnigiriMisassignedWarning,
+    isConfirmedPlan: false, isRevising, confirmedForecastDiff: [], confirmedAtLabel: "",
   };
 }
 
@@ -2953,6 +3079,11 @@ function fillingOverageWarningHtml(snap){
 function monthlyOnigiriWarningHtml(snap){
   if(!snap.monthlyOnigiriWarning) return "";
   return `<div class="warning-line">⚠️ ${snap.monthlyOnigiriWarning}</div>`;
+}
+
+function monthlyOnigiriMisassignedWarningHtml(snap){
+  if(!snap.monthlyOnigiriMisassignedWarning) return "";
+  return `<div class="warning-line">⚠️ ${snap.monthlyOnigiriMisassignedWarning}</div>`;
 }
 
 // 確定済みの日で、確定後に予測数（具材別の必要数）が変わっている場合に差分だけ表示する。
@@ -2972,6 +3103,7 @@ function summaryHtmlFor(snap){
     ${snap.isOverCap ? `<div class="warning-line">⚠️ ニギニギ隊の希望数合計が総生産数を超えています</div>` : ""}
     ${fillingOverageWarningHtml(snap)}
     ${monthlyOnigiriWarningHtml(snap)}
+    ${monthlyOnigiriMisassignedWarningHtml(snap)}
   `;
 }
 
@@ -3064,6 +3196,171 @@ function bindProductionDayEvents(day){
       });
     });
   });
+
+  // 確定済みの日の修正（この日を修正する／修正を確定・公開する／修正をやめる）
+  const reviseBtn = container.querySelector(".revise-day-btn");
+  if(reviseBtn) reviseBtn.addEventListener("click", () => startRevisingDay(day));
+
+  const publishRevisionBtn = container.querySelector(".publish-revision-btn");
+  if(publishRevisionBtn) publishRevisionBtn.addEventListener("click", () => publishDayRevision(day));
+
+  const cancelRevisionBtn = container.querySelector(".cancel-revision-btn");
+  if(cancelRevisionBtn) cancelRevisionBtn.addEventListener("click", () => cancelRevisingDay(day));
+}
+
+/* ---------- 確定済みの日の修正（1日単位） ---------- */
+
+// 「この日を修正する」：確定プランの内容（予測数・具材別の内訳・ニギニギ隊の割り振り）を
+// day.zuidFillingQty等に複製してから編集可能にする。自動再計算や作業中プランの値からは
+// 一切始めない。day.isRevisingをtrueにすると、computeDaySnapshot/getEditLockReasonが
+// 通常の（編集可能な）計算経路を使うようになる
+function startRevisingDay(day){
+  const confirmed = getConfirmedPlanForDay(day);
+  if(!confirmed) return;
+
+  const working = confirmed.memberNames.slice();
+  const memberFillingQty = {};
+  const prodManuallyEdited = {};
+  const revisingMemberCaps = {};
+  working.forEach(name => {
+    const qtyMap = { ...buildFillingDefaults(0), ...(confirmed.memberFillingQty[name] || {}) };
+    memberFillingQty[name] = qtyMap;
+    prodManuallyEdited[name] = true; // 自動割り振りに書き換えられないよう、全員手動編集済み扱いにする
+    revisingMemberCaps[name] = FILLINGS.reduce((s, f) => s + (qtyMap[f] || 0), 0);
+  });
+
+  // 具材別内訳が無い古い確定行（hasDetailBreakdown=false）は、店舗合計をFILLING_RATIO等の
+  // 按分ではなく既定比率(buildFillingDefaults)でとりあえず埋める。実際の個数はこの後
+  // 手入力で調整してもらう想定（確定時点の正確な内訳が無いため、これ以上の精度は出せない）
+  day.zuidFillingQty = confirmed.hasDetailBreakdown
+    ? { ...buildFillingDefaults(0), ...confirmed.zuidBreakdown }
+    : buildFillingDefaults(confirmed.zuid);
+  day.uvaFillingQty = confirmed.hasDetailBreakdown
+    ? { ...buildFillingDefaults(0), ...confirmed.uvaBreakdown }
+    : buildFillingDefaults(confirmed.uva);
+  // 確定時点で販売実績があった店舗は「営業」扱いにする（土日イベント等でzuidOpen/uvaOpenの
+  // 既定値が休みになっている場合への対策。既に営業中であれば変更しない）
+  day.zuidOpen = day.zuidOpen || confirmed.zuid > 0;
+  day.uvaOpen = day.uvaOpen || confirmed.uva > 0;
+  day.memberFillingQty = memberFillingQty;
+  day.prodManuallyEdited = prodManuallyEdited;
+  day.revisingWorking = working;
+  day.revisingMemberCaps = revisingMemberCaps;
+  // 保存直前の楽観的ロック確認用：修正を開始した時点の確定日時を覚えておく
+  day.revisingExpectedConfirmedAtRaw = confirmed.confirmedAtRaw || null;
+  day.isRevising = true;
+
+  renderDayBlock(day);
+}
+
+// 「修正をやめる」：ローカルの編集を破棄し、確定プランの内容（表示）に戻す。
+// day.zuidFillingQty等はcomputeConfirmedDaySnapshotが参照しないため、isRevisingをfalseに
+// 戻すだけでよい（再度「この日を修正する」を押せば、スプレッドシート上の確定プランから
+// 改めて複製し直される＝今回の編集内容が残ることはない）
+function cancelRevisingDay(day){
+  showConfirm(`${day.label}の修正をやめて、確定済みの内容に戻しますか？\n（今回の変更は公開されず破棄されます）`, () => {
+    day.isRevising = false;
+    day.revisingWorking = null;
+    day.revisingMemberCaps = null;
+    day.revisingExpectedConfirmedAtRaw = null;
+    renderDayBlock(day);
+  });
+}
+
+// 指定した日（"M/D"形式）の確定プランの現在の確定日時(生値)をgviz経由で取得する
+// （保存直前の競合確認用）。行が無ければnull、確認自体に失敗した場合はundefinedを返す
+// （作業中プランのfetchDraftUpdatedAtと同じパターン）。
+async function fetchConfirmedPlanConfirmedAtRaw(mdLabelStr){
+  try{
+    const json = await fetchSheetJson("確定プラン", SHIFT_SPREADSHEET_ID);
+    const rows = json.table.rows || [];
+    for(const r of rows){
+      const c = r.c;
+      if(!c || !c[0]) continue;
+      const key = String((c[0].f || c[0].v) || "").trim();
+      if(key === mdLabelStr){
+        return (c[8] && c[8].v !== undefined && c[8].v !== null) ? String(c[8].v) : null;
+      }
+    }
+    return null;
+  }catch(e){
+    console.error("確定プランの更新日時確認に失敗しました", e);
+    return undefined;
+  }
+}
+
+// 「修正を確定・公開する」：この日だけ確定プランの行を更新する（確定日時・修正日時も更新）。
+// 保存直前に、修正を開始した時点からスプレッドシート側の確定日時が変わっていないか確認し、
+// 変わっていれば（他の端末が先に確定・修正していれば）保存せず警告を表示する
+// （2つの端末で同じ日を修正していた場合、後からの保存が先の保存を黙って上書きするのを防ぐ）。
+async function publishDayRevision(day){
+  const statusEl = document.getElementById(`reviseStatus-${day.dateKey}`);
+  const mdKey = mdLabel(day.dateObj);
+
+  if(statusEl) statusEl.textContent = "確認中...";
+  const currentConfirmedAt = await fetchConfirmedPlanConfirmedAtRaw(mdKey);
+  if(currentConfirmedAt !== undefined && day.revisingExpectedConfirmedAtRaw &&
+     currentConfirmedAt && currentConfirmedAt !== day.revisingExpectedConfirmedAtRaw){
+    if(statusEl) statusEl.textContent = "⚠️ 他の端末で更新されています。再読み込みしてください";
+    return;
+  }
+
+  const snap = computeDaySnapshot(day);
+  const ningiBreakdown = snap.working
+    .map(name => `${name}:${memberFillingToString(day.memberFillingQty[name])}`)
+    .join("；");
+  const chise = state.chiseByDate[mdKey];
+  const zuidBreakdown = day.zuidOpen ? day.zuidFillingQty : {};
+  const uvaBreakdown = day.uvaOpen ? day.uvaFillingQty : {};
+  const chiseBreakdown = chise ? chise.breakdown : {};
+  const zuidBreakdownStr = memberFillingToString(zuidBreakdown);
+  const uvaBreakdownStr = memberFillingToString(uvaBreakdown);
+  const chiseBreakdownStr = memberFillingToString(chiseBreakdown);
+
+  const payload = {
+    type: "reviseConfirmedDay",
+    date: mdKey,
+    day: `${DAY_NAMES[day.dow]}曜日`,
+    zuid: zuidFinal(day),
+    uva: uvaFinal(day),
+    chise: snap.chiseQty,
+    ningiBreakdown,
+    hqQty: snap.hqQty,
+    hqBreakdown: hqBreakdownToString(snap.hqBreakdown),
+    zuidBreakdown: zuidBreakdownStr,
+    uvaBreakdown: uvaBreakdownStr,
+    chiseBreakdown: chiseBreakdownStr,
+    expectedConfirmedAt: day.revisingExpectedConfirmedAtRaw || undefined,
+  };
+
+  if(statusEl) statusEl.textContent = "送信中...";
+  try{
+    await fetch(SCRIPT_URL, { method: "POST", mode: "no-cors", body: JSON.stringify(payload) });
+    // 確定済みかどうか・確定内容はスプレッドシートの「確定プラン」を正とするが、
+    // 再読み込みなしでも画面にすぐ反映されるよう、送信した内容でstate.confirmedPlansByDateも
+    // 即時更新する（次回の読み込み時にはgviz経由で取得した正確な日時に置き換わる）
+    const memberFillingQty = {};
+    snap.working.forEach(name => { memberFillingQty[name] = { ...buildFillingDefaults(0), ...(day.memberFillingQty[name] || {}) }; });
+    state.confirmedPlansByDate[mdKey] = {
+      zuid: zuidFinal(day), uva: uvaFinal(day), chise: snap.chiseQty,
+      memberNames: snap.working, memberFillingQty,
+      hqQty: snap.hqQty, hqBreakdown: { ...snap.hqBreakdown },
+      confirmedAtLabel: "たった今", confirmedAtRaw: "",
+      zuidBreakdown: parseFillingBreakdownString(zuidBreakdownStr),
+      uvaBreakdown: parseFillingBreakdownString(uvaBreakdownStr),
+      chiseBreakdown: parseFillingBreakdownString(chiseBreakdownStr),
+      hasDetailBreakdown: true,
+      revisedAtLabel: "たった今",
+    };
+    day.isRevising = false;
+    day.revisingWorking = null;
+    day.revisingMemberCaps = null;
+    day.revisingExpectedConfirmedAtRaw = null;
+    renderDayBlock(day);
+  }catch(e){
+    console.error("修正の公開に失敗しました:", e);
+    if(statusEl) statusEl.textContent = "送信に失敗しました";
+  }
 }
 
 // メンバー1人分の具材割り振りを文字列化（例："ツナマヨ×15 スパイシーツナマヨ×9"）
@@ -4040,7 +4337,16 @@ async function confirmWeek(weekIndex){
     alert("データの読み込みに失敗しているため確定できません。再読み込みしてください");
     return;
   }
-  const days = state.days.filter(d => d.weekIndex === weekIndex);
+  // 既に確定済みの日（修正中かどうかを問わない）は対象から除外する。
+  // 確定済みの日の修正は「この日を修正する」専用の経路（publishDayRevision）でのみ行い、
+  // 週単位の確定で確定済みの日を再送してライブ再計算の値で黙って上書きしないようにする
+  // （「確定済みの日を自動の処理で書き換えない」という方針を、週単位の確定ボタンにも適用する）。
+  const days = state.days.filter(d => d.weekIndex === weekIndex && !getConfirmedPlanForDay(d));
+  if(days.length === 0){
+    const statusEl = document.getElementById(`weekStatus${weekIndex}`);
+    if(statusEl) statusEl.textContent = "この週はすべて確定済みです（個別に修正する場合は「この日を修正する」を使ってください）";
+    return;
+  }
   const dayEntries = days.map(d => {
     const snap = computeDaySnapshot(d);
     const ningiBreakdown = snap.working
