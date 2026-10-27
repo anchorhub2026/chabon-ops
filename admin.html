@@ -551,6 +551,22 @@
     color: #aaa;
     margin-left: 6px;
   }
+  .draft-conflict-msg{
+    font-size: 0.72rem;
+    color: var(--accent);
+    font-weight: bold;
+  }
+  .draft-conflict-msg:empty{ display: none; }
+  .fetch-failure-banner{
+    background: #fdeceb;
+    border: 1px solid var(--accent);
+    color: #8a2e22;
+    border-radius: 10px;
+    padding: 10px 16px;
+    margin: 0 0 16px;
+    font-size: 0.88rem;
+    font-weight: bold;
+  }
 
   /* 週折りたたみ */
   .toggle-week-btn{
@@ -1227,6 +1243,8 @@
 
 <main>
 
+  <div id="fetchFailureBanner" class="fetch-failure-banner" style="display:none;"></div>
+
   <section>
     <h2>販売予測数・生産割り振り<span class="badge">来週・再来週 月〜金</span></h2>
     <div id="combinedArea"><p class="loading">データを読み込み中...</p></div>
@@ -1402,7 +1420,7 @@ const state = {
   chiseByDate: {},      // dateKey -> { breakdown:{product:qty}, subtotal }
   shiftByDate: {},      // dateKey -> { memberName: { qty:number, raw:string } }
   notesByName: {},      // memberName -> { note:string, supplies:string }
-  confirmedByDate: {},  // "M/D" -> { zuidTotal, uvaTotal, confirmed:true }
+  confirmedPlansByDate: {}, // "M/D" -> 確定プランシートの内容（スプレッドシートが正。端末・localStorageには依存しない）
   cellStatus: {},       // "M/D" -> { memberName: { fillingName: { handed:bool, cooked:bool } } }
   cthStaffNames: [],    // CTHシフト表の列（バイトさん名）
   cthShiftData: {},     // "yyyy-MM-dd" -> { name: "10:00-14:00", ... }
@@ -1414,6 +1432,8 @@ const state = {
   monthlyOnigiriAssignments: {}, // "YYYY-MM" -> 担当者名（または"本部"）。「今月のおにぎり担当」シート由来
   uvaAcademicCalendar: {},    // "YYYY-MM-DD"（週開始・月曜）-> 区分名。「UvA学事暦」シート由来（閲覧専用）
   uvaAcademicCoefficients: {}, // 区分名 -> 係数。「UvA学事暦設定」シート由来
+  fetchFailures: [],    // 読み込みに失敗したデータの表示名一覧（画面上部にエラー表示するため）
+  productionDataIncomplete: false, // シフト回答・今月のおにぎり担当等、生産割り振りの計算に必須なデータの取得に失敗したか
 };
 
 const weekCollapsed = { 1: false, 2: false };
@@ -1784,18 +1804,108 @@ function parseQtyNumber(qtyStr){
   return m ? parseInt(m[1], 10) : 0;
 }
 
-// localStorage から確定済みデータを読み込む。キー形式: chabon_confirmed_{M/D}
-function loadConfirmedFromStorage(){
+// "ツナマヨ×14 テリヤキチキン×25" 形式の文字列を {具材名: 個数} にパースする
+function parseFillingBreakdownString(str){
   const result = {};
-  try{
-    for(let i = 0; i < localStorage.length; i++){
-      const k = localStorage.key(i);
-      if(k && k.startsWith("chabon_confirmed_")){
-        result[k.replace("chabon_confirmed_", "")] = JSON.parse(localStorage.getItem(k));
-      }
-    }
-  }catch(e){ console.warn("localStorage読み込みエラー:", e); }
+  if(!str) return result;
+  String(str).trim().split(/\s+/).filter(Boolean).forEach(part => {
+    const [filling, qtyStr] = part.split("×");
+    if(filling) result[filling] = parseInt(qtyStr, 10) || 0;
+  });
   return result;
+}
+
+// "名前:具材×個数 具材×個数；名前:..." 形式の文字列を {名前: {具材名: 個数}} にパースする
+function parseNingiBreakdownToMemberFillingQty(str){
+  const result = {};
+  if(!str) return result;
+  String(str).split("；").filter(Boolean).forEach(part => {
+    const idx = part.indexOf(":");
+    if(idx === -1) return;
+    const name = part.slice(0, idx).trim();
+    if(!name) return;
+    result[name] = parseFillingBreakdownString(part.slice(idx + 1));
+  });
+  return result;
+}
+
+// 「確定プラン」シートを "M/D" -> 確定内容 のマップにパースする。
+// 確定済みかどうか・確定プランの内容は、この結果（スプレッドシートの内容）を正とする。
+// 端末のlocalStorageには依存しない（どの端末で開いても同じ表示になる）。
+function parseConfirmedPlansSheet(json){
+  const result = {};
+  if(!json || !json.table || !json.table.rows) return result;
+  json.table.rows.forEach(r => {
+    const c = r.c;
+    if(!c || !c[0]) return;
+    const key = String((c[0] && (c[0].f || c[0].v)) || "").trim();
+    if(!key) return;
+    const memberFillingQtyRaw = parseNingiBreakdownToMemberFillingQty(c[5] ? c[5].v : "");
+    const memberFillingQty = {};
+    Object.keys(memberFillingQtyRaw).forEach(name => {
+      memberFillingQty[name] = { ...buildFillingDefaults(0), ...memberFillingQtyRaw[name] };
+    });
+    const zuidBreakdown = parseFillingBreakdownString(c[9] ? c[9].v : "");
+    const uvaBreakdown = parseFillingBreakdownString(c[10] ? c[10].v : "");
+    const chiseBreakdown = parseFillingBreakdownString(c[11] ? c[11].v : "");
+    result[key] = {
+      zuid: c[2] && c[2].v !== null && c[2].v !== "" ? Number(c[2].v) : 0,
+      uva: c[3] && c[3].v !== null && c[3].v !== "" ? Number(c[3].v) : 0,
+      chise: c[4] && c[4].v !== null && c[4].v !== "" ? Number(c[4].v) : 0,
+      memberNames: Object.keys(memberFillingQtyRaw),
+      memberFillingQty,
+      hqQty: c[6] && c[6].v !== null && c[6].v !== "" ? Number(c[6].v) : 0,
+      hqBreakdown: parseFillingBreakdownString(c[7] ? c[7].v : ""),
+      confirmedAtLabel: c[8] ? String(c[8].f || c[8].v || "") : "",
+      zuidBreakdown, uvaBreakdown, chiseBreakdown,
+      // Zuid/UvA/チセ内訳列は後から追加した列のため、古い確定行には無い場合がある。
+      // その場合は具材別の差分表示をせず、合計のみで比較する
+      hasDetailBreakdown: !!(c[9] && c[9].v) || !!(c[10] && c[10].v) || !!(c[11] && c[11].v),
+    };
+  });
+  return result;
+}
+
+function getConfirmedPlanForDay(day){
+  return (state.confirmedPlansByDate && state.confirmedPlansByDate[mdLabel(day.dateObj)]) || null;
+}
+
+// 読み込みに失敗したデータを記録する。criticalなもの（生産割り振りの計算に必須）が1つでも
+// 失敗した場合は、既定値で黙って計算せず、画面上部にエラー表示し、編集もブロックする
+// （cap不明なまま24個等の既定値で計算してしまったバグの再発防止）。
+function trackFetchResult(label, critical, value){
+  if(value === null || value === undefined){
+    state.fetchFailures.push(label);
+    if(critical) state.productionDataIncomplete = true;
+  }
+  return value;
+}
+
+function resetFetchFailureTracking(){
+  state.fetchFailures = [];
+  state.productionDataIncomplete = false;
+}
+
+function renderFetchFailureBanner(){
+  const el = document.getElementById("fetchFailureBanner");
+  if(!el) return;
+  if(!state.fetchFailures || state.fetchFailures.length === 0){
+    el.style.display = "none";
+    el.innerHTML = "";
+    return;
+  }
+  const list = state.fetchFailures.join("、");
+  el.innerHTML = `⚠️ 次のデータの読み込みに失敗しました：${list}。${state.productionDataIncomplete ? "生産割り振りの計算に必要なデータが含まれるため、編集をブロックしています。" : ""}再読み込みしてください。`;
+  el.style.display = "";
+}
+
+// 編集（販売予測数の変更・生産割り振りの手入力・プリセットボタン・リセット）をブロックすべき理由。
+// nullなら編集可能。確定済みの日を最優先し、次に生産割り振りの計算に必須なデータの取得失敗を見る
+// （cap不明なまま既定値で黙って計算することを防ぐ）。
+function getEditLockReason(day){
+  if(getConfirmedPlanForDay(day)) return "確定済みのため変更できません";
+  if(state.productionDataIncomplete) return "データの読み込みに失敗しているため変更できません。再読み込みしてください";
+  return null;
 }
 
 // シフト回答シート（送信日時, 名前, 日付, 曜日, 個数, 備考, 必要物品）を解析。キーは "6/23" 形式
@@ -2136,7 +2246,7 @@ function storeBoxHtml(label, result, isConfirmed){
 }
 
 function recommendReasonHtml(day){
-  const isConfirmed = !!(state.confirmedByDate && state.confirmedByDate[mdLabel(day.dateObj)]);
+  const isConfirmed = !!getConfirmedPlanForDay(day);
   return `
     <div class="store-stack">
       ${storeBoxHtml("Zuid", day.zuid, isConfirmed)}
@@ -2399,12 +2509,58 @@ function renderProductionSection(){ renderCombined(); }
 
 /* ---------- 統合テーブル：1日分を1つの<table>で描画 ---------- */
 
+// 確定済みの日の販売予測数テーブル：確定プランの内訳をそのまま表示する読み取り専用版。
+// 具材別内訳の列（Zuid内訳・UvA内訳・チセ内訳）が無い古い確定データの場合は、
+// 具材ごとの内訳は「—」にし、合計行だけ確定数を表示する。
+function confirmedForecastTableHtml(day, confirmed){
+  const hasDetail = confirmed.hasDetailBreakdown;
+  const rows = FILLINGS.map(f => {
+    const zuidQty = hasDetail ? (confirmed.zuidBreakdown[f] || 0) : null;
+    const uvaQty = hasDetail ? (confirmed.uvaBreakdown[f] || 0) : null;
+    const chiseQty = hasDetail ? (confirmed.chiseBreakdown[f] || 0) : null;
+    const rowTotal = hasDetail ? (zuidQty + uvaQty + chiseQty) : null;
+    return `<tr>
+        <td class="f-name">${f}</td>
+        <td class="cell-readonly">${hasDetail ? zuidQty : "—"}</td>
+        <td class="cell-readonly">${hasDetail ? uvaQty : "—"}</td>
+        <td class="cell-readonly">${hasDetail ? chiseQty : "—"}</td>
+        <td class="cell-readonly cell-row-total">${hasDetail ? rowTotal : "—"}</td>
+      </tr>`;
+  }).join("");
+  return `<table class="day-sub-table">
+      <thead>
+        <tr>
+          <th class="f-name">具材</th>
+          <th class="sub-forecast-head">Zuid</th>
+          <th class="sub-forecast-head">${day.uvaVenueLabel}</th>
+          <th class="sub-forecast-head">チセ</th>
+          <th class="sub-forecast-head">販売計</th>
+        </tr>
+      </thead>
+      <tbody>${rows}</tbody>
+      <tfoot>
+        <tr>
+          <td>合計</td>
+          <td>${confirmed.zuid}</td>
+          <td>${confirmed.uva}</td>
+          <td>${confirmed.chise}</td>
+          <td class="cell-row-total">${confirmed.zuid + confirmed.uva + confirmed.chise}</td>
+        </tr>
+      </tfoot>
+    </table>
+    ${hasDetail ? "" : `<p class="off-note">この確定データには具材別内訳がありません（合計のみ）。</p>`}`;
+}
+
 function splitForecastTableHtml(day){
+  const confirmed = getConfirmedPlanForDay(day);
+  if(confirmed) return confirmedForecastTableHtml(day, confirmed);
+
   const showUva = day.uva !== null || day.isEventDay;
   const chise = state.chiseByDate[mdLabel(day.dateObj)];
   const chiseBreakdown = chise ? chise.breakdown : {};
   const chiseQty = chise ? chise.subtotal : 0;
 
+  const editable = !state.productionDataIncomplete;
   const rows = FILLINGS.map(f => {
     const zuidQty = day.zuidFillingQty[f] || 0;
     const uvaQty = showUva ? (day.uvaFillingQty[f] || 0) : 0;
@@ -2413,8 +2569,8 @@ function splitForecastTableHtml(day){
     const forecastRowTotal = (day.zuidOpen ? zuidQty : 0) + (day.uvaOpen ? uvaQty : 0) + chiseQtyForFilling;
     return `<tr>
         <td class="f-name">${f}</td>
-        <td>${qtyStepperHtml(day, "zuid", f, zuidQty, day.zuidOpen)}</td>
-        <td>${showUva ? qtyStepperHtml(day, "uva", f, uvaQty, day.uvaOpen) : "—"}</td>
+        <td>${qtyStepperHtml(day, "zuid", f, zuidQty, day.zuidOpen && editable)}</td>
+        <td>${showUva ? qtyStepperHtml(day, "uva", f, uvaQty, day.uvaOpen && editable) : "—"}</td>
         <td class="cell-readonly">${chiseQtyForFilling}</td>
         <td class="cell-readonly cell-row-total" id="rowTotal-${day.dateKey}-${f}">${forecastRowTotal}</td>
       </tr>`;
@@ -2450,17 +2606,19 @@ function splitForecastTableHtml(day){
 function splitProdTableHtml(day){
   const snap = computeDaySnapshot(day);
   const { working, memberCaps, hqBreakdown, hqQty, memberTotals, ningiTotal, fillingOveredBy } = snap;
+  const locked = !!getEditLockReason(day);
+  const capLabel = snap.isConfirmedPlan ? "確定" : "希望";
 
   const memberHeaderCells = working.map((name, i) =>
-    `<th class="sub-prod-head">${name}<br><small class="wish-hint">希望:${memberCaps[i]}個</small></th>`
+    `<th class="sub-prod-head">${name}<br><small class="wish-hint">${capLabel}:${memberCaps[i]}個</small></th>`
   ).join("");
 
   const rows = FILLINGS.map(f => {
     const isFixedHq = ALWAYS_HQ_FILLINGS.includes(f);
     const memberCells = working.map(name => {
       const qty = (day.memberFillingQty[name] && day.memberFillingQty[name][f]) || 0;
-      return isFixedHq
-        ? `<td class="cell-readonly">—</td>`
+      return (isFixedHq || locked)
+        ? `<td class="cell-readonly">${qty || "—"}</td>`
         : `<td>${prodCellStepperHtml(day, name, f, qty)}</td>`;
     }).join("");
     const hqVal = hqBreakdown[f] || 0;
@@ -2503,21 +2661,35 @@ function splitProdTableHtml(day){
     </table>`;
 }
 
-function storeBoxWithToggleHtml(day, store, label, result, isConfirmed){
+function storeBoxWithToggleHtml(day, store, label, result, isConfirmed, confirmedTotal){
+  // 確定済みの日は、確定プランの確定数をそのまま表示する（ライブの推奨計算は表示しない）。
+  // 営業/休みの切り替え・推奨に戻すボタンは確定後は意味を持たないため非表示にする。
+  if(isConfirmed){
+    const num = confirmedTotal != null ? confirmedTotal : 0;
+    return `<div class="store-item-with-toggle">
+        <div class="store-item confirmed">
+          <div class="store-item-header">
+            <span class="store-item-name">${label}</span>
+            <span class="store-item-num">${num}個</span>
+          </div>
+          <div class="store-item-reasons">確定済み</div>
+        </div>
+      </div>`;
+  }
+
   const isOpen = store === "zuid" ? day.zuidOpen : day.uvaOpen;
   const toggleBtn = `<button class="store-toggle-btn ${isOpen ? "on" : "off"}" data-key="${day.dateKey}" data-store="${store}">${isOpen ? "営業" : "休み"}</button>`;
   const resetBtn = result
     ? `<button type="button" class="reset-recommend-btn" data-key="${day.dateKey}" data-store="${store}" title="推奨に戻す">↺</button>` : "";
-  const confirmCls = isConfirmed ? " confirmed" : "";
   const itemHtml = result
-    ? `<div class="store-item${confirmCls}">
+    ? `<div class="store-item">
         <div class="store-item-header">
           <span class="store-item-name">${label}</span>
           <span class="store-item-num">${result.total}個</span>
         </div>
         ${result.reasons.map(r => compactReason(r)).join(" / ") ? `<div class="store-item-reasons">${result.reasons.map(r => compactReason(r)).join(" / ")}</div>` : ""}
       </div>`
-    : `<div class="store-item closed${confirmCls}">
+    : `<div class="store-item closed">
         <div class="store-item-header">
           <span class="store-item-name">${label}</span>
           <span class="store-item-num">—</span>
@@ -2529,9 +2701,10 @@ function storeBoxWithToggleHtml(day, store, label, result, isConfirmed){
 function dayBlockHtml(day){
   const snap = computeDaySnapshot(day);
   const showUva = day.uva !== null || day.isEventDay;
-  const isConfirmed = !!(state.confirmedByDate && state.confirmedByDate[mdLabel(day.dateObj)]);
-  const hasSavedForecast = !!localStorage.getItem(`chabon_forecast_${mdLabel(day.dateObj)}`);
-  const hasSavedProd = !!localStorage.getItem(`chabon_prod_${mdLabel(day.dateObj)}`);
+  const isConfirmed = snap.isConfirmedPlan;
+  const lockReason = getEditLockReason(day);
+  const hasSavedForecast = !isConfirmed && !!localStorage.getItem(`chabon_forecast_${mdLabel(day.dateObj)}`);
+  const hasSavedProd = !isConfirmed && !!localStorage.getItem(`chabon_prod_${mdLabel(day.dateObj)}`);
 
   return `
     <div class="day-block-body">
@@ -2542,10 +2715,11 @@ function dayBlockHtml(day){
             <div class="day-head">${day.label}</div>
             <div class="day-weather"><span class="weather-icon">${day.weatherIcon}</span><span class="weather-temp">${day.tempLabel}</span></div>
           </div>
-          ${(day.holidayName || (day.nsDisruptions && day.nsDisruptions.length) || isConfirmed) ? `<div class="day-badges">${day.holidayName ? `<span class="holiday-badge">🎉 祝日：${day.holidayName}</span>` : ""}${day.nsDisruptions && day.nsDisruptions.length ? `<span class="ns-badge">🚆 NSストライキ/運休</span>` : ""}${isConfirmed ? `<span class="confirmed-badge">✓ 確定済み</span>` : ""}</div>` : ""}
+          ${(day.holidayName || (day.nsDisruptions && day.nsDisruptions.length) || isConfirmed) ? `<div class="day-badges">${day.holidayName ? `<span class="holiday-badge">🎉 祝日：${day.holidayName}</span>` : ""}${day.nsDisruptions && day.nsDisruptions.length ? `<span class="ns-badge">🚆 NSストライキ/運休</span>` : ""}${isConfirmed ? `<span class="confirmed-badge">✓ 確定済み${snap.confirmedAtLabel ? `（${snap.confirmedAtLabel}）` : ""}</span>` : ""}</div>` : ""}
+          ${confirmedForecastDiffHtml(snap)}
           <div class="store-stack-with-toggle">
-            ${storeBoxWithToggleHtml(day, "zuid", "Zuid", day.zuid, isConfirmed)}
-            ${showUva ? storeBoxWithToggleHtml(day, "uva", day.uvaVenueLabel, day.uva, isConfirmed) : ""}
+            ${storeBoxWithToggleHtml(day, "zuid", "Zuid", day.zuid, isConfirmed, isConfirmed ? getConfirmedPlanForDay(day).zuid : null)}
+            ${showUva ? storeBoxWithToggleHtml(day, "uva", day.uvaVenueLabel, day.uva, isConfirmed, isConfirmed ? getConfirmedPlanForDay(day).uva : null) : ""}
           </div>
         </div>
         <div class="day-col-prod-head">
@@ -2572,8 +2746,9 @@ function dayBlockHtml(day){
     <div class="day-block-footer">
       ${hasSavedForecast ? `<span class="saved-indicator">💾 予測保存済み</span>` : ""}
       ${hasSavedProd ? `<span class="saved-indicator">💾 割り振り保存済み</span>` : ""}
-      <button type="button" class="reset-day-btn" data-key="${day.dateKey}">🗑 全リセット</button>
-      <button type="button" class="reset-prod-btn" data-key="${day.dateKey}">🗑 割り振りリセット</button>
+      <span class="draft-conflict-msg" id="draftConflict-${day.dateKey}"></span>
+      <button type="button" class="reset-day-btn" data-key="${day.dateKey}" ${lockReason ? "disabled" : ""}>🗑 全リセット</button>
+      <button type="button" class="reset-prod-btn" data-key="${day.dateKey}" ${lockReason ? "disabled" : ""}>🗑 割り振りリセット</button>
     </div>
   `;
 }
@@ -2776,7 +2951,49 @@ function buildProductionPlan(day, working, memberCaps){
 }
 
 // その日の最終生産割り振りの確定版データを1ヶ所で計算する（描画・確定保存の両方で共用）
+// 確定プランがある日は、その内容をそのまま表示する（ライブ再計算で上書きしない）。
+// 具材別内訳のある確定データであれば、現在の予測（neededQtyFor）との差分も合わせて返す。
+function computeConfirmedDaySnapshot(day, confirmed){
+  day.isConfirmedPlan = true;
+  day.memberFillingQty = confirmed.memberFillingQty;
+  day.prodManuallyEdited = {};
+
+  const working = confirmed.memberNames;
+  const memberTotals = working.map(name =>
+    FILLINGS.reduce((s, f) => s + ((confirmed.memberFillingQty[name] && confirmed.memberFillingQty[name][f]) || 0), 0)
+  );
+  const ningiTotal = memberTotals.reduce((s, v) => s + v, 0);
+
+  const hqBreakdown = {};
+  FILLINGS.forEach(f => { hqBreakdown[f] = confirmed.hqBreakdown[f] || 0; });
+  const hqQty = confirmed.hqQty;
+  const chiseQty = confirmed.chise;
+  const total = confirmed.zuid + confirmed.uva + confirmed.chise;
+
+  const confirmedForecastDiff = [];
+  if(confirmed.hasDetailBreakdown){
+    FILLINGS.forEach(f => {
+      const before = (confirmed.zuidBreakdown[f] || 0) + (confirmed.uvaBreakdown[f] || 0) + (confirmed.chiseBreakdown[f] || 0);
+      const after = neededQtyFor(day, f);
+      if(before !== after) confirmedForecastDiff.push({ filling: f, before, after });
+    });
+  } else {
+    const currentTotal = (day.zuidOpen ? sumQtyMap(day.zuidFillingQty) : 0) + (day.uvaOpen ? sumQtyMap(day.uvaFillingQty) : 0) + (state.chiseByDate[mdLabel(day.dateObj)] ? state.chiseByDate[mdLabel(day.dateObj)].subtotal : 0);
+    if(total !== currentTotal) confirmedForecastDiff.push({ filling: "合計", before: total, after: currentTotal });
+  }
+
+  return {
+    chiseQty, total, working, memberCaps: memberTotals, capTotal: ningiTotal, allocationTarget: total,
+    isOverCap: false, hqBreakdown, hqQty, memberTotals, ningiTotal, fillingOveredBy: {}, hasFillingOverage: false,
+    monthlyOnigiriWarning: null, isConfirmedPlan: true, confirmedForecastDiff, confirmedAtLabel: confirmed.confirmedAtLabel,
+  };
+}
+
 function computeDaySnapshot(day){
+  const confirmed = getConfirmedPlanForDay(day);
+  if(confirmed) return computeConfirmedDaySnapshot(day, confirmed);
+
+  day.isConfirmedPlan = false;
   const chise = state.chiseByDate[mdLabel(day.dateObj)];
   const chiseQty = chise ? chise.subtotal : 0;
   const total = (zuidFinal(day) || 0) + (uvaFinal(day) || 0) + chiseQty;
@@ -2828,7 +3045,7 @@ function computeDaySnapshot(day){
   return {
     chiseQty, total, working, memberCaps, capTotal, allocationTarget, isOverCap,
     hqBreakdown, hqQty, memberTotals, ningiTotal, fillingOveredBy, hasFillingOverage,
-    monthlyOnigiriWarning,
+    monthlyOnigiriWarning, isConfirmedPlan: false, confirmedForecastDiff: [], confirmedAtLabel: "",
   };
 }
 
@@ -2841,6 +3058,14 @@ function fillingOverageWarningHtml(snap){
 function monthlyOnigiriWarningHtml(snap){
   if(!snap.monthlyOnigiriWarning) return "";
   return `<div class="warning-line">⚠️ ${snap.monthlyOnigiriWarning}</div>`;
+}
+
+// 確定済みの日で、確定後に予測数（具材別の必要数）が変わっている場合に差分だけ表示する。
+// 確定プランの内容を上書き・再計算することは絶対にしない（表示のみ）。
+function confirmedForecastDiffHtml(snap){
+  if(!snap.isConfirmedPlan || !snap.confirmedForecastDiff || snap.confirmedForecastDiff.length === 0) return "";
+  const lines = snap.confirmedForecastDiff.map(d => `${d.filling} ${d.before}→${d.after}`).join("、");
+  return `<div class="warning-line">⚠️ 確定後に予測が変わっています（${lines}）</div>`;
 }
 
 function summaryHtmlFor(snap){
@@ -3039,24 +3264,32 @@ function bindProductionDayEvents(day){
 
   container.querySelectorAll(".bulk-btn:not(.undo-btn)").forEach(btn => {
     btn.addEventListener("click", () => {
+      const lockReason = getEditLockReason(day);
+      if(lockReason){ alert(lockReason); return; }
+
       const val = parseInt(btn.dataset.val, 10);
       if(!val) return;
       const working = MEMBERS.filter(name => getManualQty(day, name) > 0);
       if(working.length === 0) return;
 
-      day.undoSnapshot = {
-        memberFillingQty: snapshotMemberFillingQty(day),
-        prodManuallyEdited: JSON.parse(JSON.stringify(day.prodManuallyEdited || {})),
-        bulkValue: day.bulkValue,
-      };
-      applyBulkValue(day, val);
-      saveProdAlloc(day);
-      renderDayBlock(day);
+      // 誤タップ防止の確認（押し間違いで全員の個数が一括で変わってしまうため）
+      showConfirm(`全員の個数を${val}個にします。よろしいですか？`, () => {
+        day.undoSnapshot = {
+          memberFillingQty: snapshotMemberFillingQty(day),
+          prodManuallyEdited: JSON.parse(JSON.stringify(day.prodManuallyEdited || {})),
+          bulkValue: day.bulkValue,
+        };
+        applyBulkValue(day, val);
+        saveProdAlloc(day);
+        renderDayBlock(day);
+      });
     });
   });
 
   container.querySelectorAll(".undo-btn").forEach(btn => {
     btn.addEventListener("click", () => {
+      const lockReason = getEditLockReason(day);
+      if(lockReason){ alert(lockReason); return; }
       if(!day.undoSnapshot) return;
       day.memberFillingQty = day.undoSnapshot.memberFillingQty;
       day.prodManuallyEdited = day.undoSnapshot.prodManuallyEdited || {};
@@ -3098,7 +3331,48 @@ function scheduleDraftSave(day){
   }, 800);
 }
 
+// 指定した日の「作業中プラン」の現在の更新日時をgviz経由で取得する（保存直前の競合確認用）。
+// 行がまだ無い場合はnull、確認自体に失敗した場合（オフライン等）はundefinedを返す。
+async function fetchDraftUpdatedAt(iso){
+  try{
+    const json = await fetchSheetJson("作業中プラン", SHIFT_SPREADSHEET_ID);
+    const rows = json.table.rows || [];
+    for(const r of rows){
+      const c = r.c;
+      if(!c || !c[0]) continue;
+      if(parseGvizDateCell(c[0]) === iso){
+        return (c[3] && c[3].v !== undefined && c[3].v !== null) ? String(c[3].v) : null;
+      }
+    }
+    return null;
+  }catch(e){
+    console.error("作業中プランの更新日時確認に失敗しました", e);
+    return undefined;
+  }
+}
+
+function showDraftConflictMessage(day){
+  const el = document.getElementById(`draftConflict-${day.dateKey}`);
+  if(el) el.textContent = "⚠️ 他の端末で更新されています。再読み込みしてください";
+}
+
 async function saveDraftToSheet(day){
+  // 確定済みの日は、プリセットボタン・手入力のいずれが起点でも作業中プランに書き込まない
+  // （保存を予約した時点ではまだ未確定だったが、実行時には確定済みになっている可能性への対策）
+  if(getConfirmedPlanForDay(day)){
+    console.warn(`[admin.html] ${day.iso}: 確定済みのため作業中プランへの保存をスキップしました。`);
+    return;
+  }
+
+  // 保存直前に、読み込んだ時点からスプレッドシート側の更新日時が変わっていないか確認する
+  // （2つの端末で同じ日を開いていた場合、後からの保存が先の保存を黙って上書きするのを防ぐ）。
+  // 確認できなかった場合（オフライン等）は、保存自体はブロックしない。
+  const currentUpdatedAt = await fetchDraftUpdatedAt(day.iso);
+  if(currentUpdatedAt !== undefined && day.draftUpdatedAtRaw && currentUpdatedAt && currentUpdatedAt !== day.draftUpdatedAtRaw){
+    showDraftConflictMessage(day);
+    return;
+  }
+
   const payload = {
     type: "saveDraft",
     date: day.iso,
@@ -3109,9 +3383,14 @@ async function saveDraftToSheet(day){
       uvaOpen:  day.uvaOpen,
     },
     prod: day.memberFillingQty || {},
+    expectedUpdatedAt: day.draftUpdatedAtRaw || undefined,
   };
   try{
     await fetch(SCRIPT_URL, { method: "POST", mode: "no-cors", body: JSON.stringify(payload) });
+    // この端末自身が保存した内容を次回の比較基準にするため、保存後の最新の更新日時を再取得する
+    // （サーバー側はnew Date()で書き込むため、正確な値はここで読み直すまで分からない）
+    const latest = await fetchDraftUpdatedAt(day.iso);
+    if(latest !== undefined) day.draftUpdatedAtRaw = latest;
   }catch(e){ console.warn("ドラフト保存失敗:", e); }
 }
 
@@ -3171,6 +3450,10 @@ async function fetchBootstrap(){
           date: dateStr,
           forecast: JSON.parse((c[1] && c[1].v) || "{}"),
           prod: JSON.parse((c[2] && c[2].v) || "{}"),
+          // 楽観的ロック用：gvizが返す生の値をそのまま保持し、保存時にそのまま送り返す
+          // （Code.gs側もDateオブジェクトから同じ形式の文字列を作って比較するため、
+          // 　クライアント側で日時を再フォーマットする必要はない）
+          updatedAtRaw: (c[3] && c[3].v !== undefined && c[3].v !== null) ? String(c[3].v) : null,
         });
       }catch(e){ /* 壊れたJSON行は無視する */ }
     });
@@ -3221,6 +3504,9 @@ function applyStatusesToState(statuses){
 }
 
 function applyDraftToDay(day, draft){
+  // 楽観的ロック用：この日の作業中プランを読み込んだ時点の更新日時を保持しておく
+  // （保存直前に現在のシート上の値と比較し、他端末による更新を検知する）
+  day.draftUpdatedAtRaw = draft.updatedAtRaw || null;
   const fc = draft.forecast || {};
   if(fc.zuidFillingQty) day.zuidFillingQty = { ...buildFillingDefaults(0), ...fc.zuidFillingQty };
   if(fc.uvaFillingQty)  day.uvaFillingQty  = { ...buildFillingDefaults(0), ...fc.uvaFillingQty };
@@ -4003,32 +4289,43 @@ function hqBreakdownToString(hqBreakdown){
 }
 
 async function confirmWeek(weekIndex){
+  if(state.productionDataIncomplete){
+    alert("データの読み込みに失敗しているため確定できません。再読み込みしてください");
+    return;
+  }
   const days = state.days.filter(d => d.weekIndex === weekIndex);
+  const dayEntries = days.map(d => {
+    const snap = computeDaySnapshot(d);
+    const ningiBreakdown = snap.working
+      .map(name => `${name}:${memberFillingToString(d.memberFillingQty[name])}`)
+      .join("；");
+    const chise = state.chiseByDate[mdLabel(d.dateObj)];
+    const zuidBreakdown = d.zuidOpen ? d.zuidFillingQty : {};
+    const uvaBreakdown = d.uvaOpen ? d.uvaFillingQty : {};
+    const chiseBreakdown = chise ? chise.breakdown : {};
+
+    return {
+      date: mdLabel(d.dateObj),
+      day: `${DAY_NAMES[d.dow]}曜日`,
+      zuid: zuidFinal(d),
+      uva: uvaFinal(d),
+      chise: snap.chiseQty,
+      ningiBreakdown,
+      hqQty: snap.hqQty,
+      hqBreakdown: hqBreakdownToString(snap.hqBreakdown),
+      // 過去の生産実績（analytics.html）で店舗別の具材内訳を確認できるよう、
+      // 確定時点のZuid・UvA・チセ向けの具材別内訳もあわせて保存する
+      zuidBreakdown: memberFillingToString(zuidBreakdown),
+      uvaBreakdown: memberFillingToString(uvaBreakdown),
+      chiseBreakdown: memberFillingToString(chiseBreakdown),
+      // state.confirmedPlansByDateを即時反映するための生データ（送信ペイロードには含めない）
+      _local: { snap, zuidBreakdown, uvaBreakdown, chiseBreakdown },
+    };
+  });
+
   const payload = {
     type: "confirmPlan",
-    days: days.map(d => {
-      const snap = computeDaySnapshot(d);
-      const ningiBreakdown = snap.working
-        .map(name => `${name}:${memberFillingToString(d.memberFillingQty[name])}`)
-        .join("；");
-      const chise = state.chiseByDate[mdLabel(d.dateObj)];
-
-      return {
-        date: mdLabel(d.dateObj),
-        day: `${DAY_NAMES[d.dow]}曜日`,
-        zuid: zuidFinal(d),
-        uva: uvaFinal(d),
-        chise: snap.chiseQty,
-        ningiBreakdown,
-        hqQty: snap.hqQty,
-        hqBreakdown: hqBreakdownToString(snap.hqBreakdown),
-        // 過去の生産実績（analytics.html）で店舗別の具材内訳を確認できるよう、
-        // 確定時点のZuid・UvA・チセ向けの具材別内訳もあわせて保存する
-        zuidBreakdown: memberFillingToString(d.zuidOpen ? d.zuidFillingQty : {}),
-        uvaBreakdown: memberFillingToString(d.uvaOpen ? d.uvaFillingQty : {}),
-        chiseBreakdown: memberFillingToString(chise ? chise.breakdown : {}),
-      };
-    }),
+    days: dayEntries.map(({ _local, ...rest }) => rest),
   };
 
   const statusEl = document.getElementById(`weekStatus${weekIndex}`);
@@ -4045,14 +4342,24 @@ async function confirmWeek(weekIndex){
     });
     console.log("送信成功:", result);
     statusEl.textContent = "確定・公開しました ✓";
-    // localStorage に確定データを保存し、カレンダーを再描画
-    days.forEach(d => {
-      const dateStr = mdLabel(d.dateObj);
-      const entry = { zuidTotal: zuidFinal(d), uvaTotal: uvaFinal(d), confirmed: true };
-      try{ localStorage.setItem(`chabon_confirmed_${dateStr}`, JSON.stringify(entry)); }catch(e){}
-      state.confirmedByDate[dateStr] = entry;
+    // 確定済みかどうか・確定内容はスプレッドシートの「確定プラン」を正とするが、
+    // 再読み込みなしでも画面にすぐ反映されるよう、送信した内容でstate.confirmedPlansByDateも
+    // 即時更新する（次回の読み込み時にはgviz経由で取得した内容に置き換わる）
+    dayEntries.forEach(({ date, _local }) => {
+      const { snap, zuidBreakdown, uvaBreakdown, chiseBreakdown } = _local;
+      // ニギニギ隊の内訳は、確定時点の day.memberFillingQty（working分のみ）をそのままコピーする
+      const srcDay = days.find(d => mdLabel(d.dateObj) === date);
+      const memberFillingQty = {};
+      snap.working.forEach(name => { memberFillingQty[name] = { ...buildFillingDefaults(0), ...(srcDay.memberFillingQty[name] || {}) }; });
+      state.confirmedPlansByDate[date] = {
+        zuid: zuidFinal(srcDay), uva: uvaFinal(srcDay), chise: snap.chiseQty,
+        memberNames: snap.working, memberFillingQty,
+        hqQty: snap.hqQty, hqBreakdown: { ...snap.hqBreakdown },
+        confirmedAtLabel: "確定済み",
+        zuidBreakdown, uvaBreakdown, chiseBreakdown, hasDetailBreakdown: true,
+      };
     });
-    renderCalendar();
+    renderCombined();
   }catch(e){
     console.error("送信失敗:", e);
     statusEl.textContent = "送信に失敗しました";
@@ -4152,21 +4459,23 @@ async function refreshAllData(){
 
     const thisYear = new Date().getFullYear();
     state.cellStatus = {};
-    const [weatherRes, chiseJson, shiftJson, holidaysByIso, nsDisruptionsByDate, bootstrap, cthShiftJson, cthProductsJson, monthlyOnigiriJson, uvaCalendarJson, uvaCoefficientsJson] = await Promise.all([
+    resetFetchFailureTracking();
+    const [weatherRes, chiseJson, shiftJson, holidaysByIso, nsDisruptionsByDate, bootstrap, cthShiftJson, cthProductsJson, monthlyOnigiriJson, uvaCalendarJson, uvaCoefficientsJson, confirmedPlanJson] = await Promise.all([
       fetch(weatherUrl).then(r => r.json()),
-      fetchSheetJson(null).catch(e => { console.error("チセさんシート取得失敗", e); return null; }),
-      fetchSheetJson("シフト回答", SHIFT_SPREADSHEET_ID).catch(e => { console.error("シフト回答シート取得失敗", e); return null; }),
+      fetchSheetJson(null).catch(e => { console.error("チセさんシート取得失敗", e); return null; }).then(v => trackFetchResult("チセさんシート", true, v)),
+      fetchSheetJson("シフト回答", SHIFT_SPREADSHEET_ID).catch(e => { console.error("シフト回答シート取得失敗", e); return null; }).then(v => trackFetchResult("シフト回答", true, v)),
       fetchDutchHolidays([thisYear, thisYear + 1]),
       fetchNsDisruptions(),
       // 作業中プラン・具材ステータスをまとめて1回のリクエストで取得する
-      fetchBootstrap(),
+      fetchBootstrap().then(v => { trackFetchResult("作業中プラン・具材ステータス", true, v && v.drafts ? v.drafts : null); return v; }),
       // CTHシフト・CTH商品シートはまだ一度も保存されていない場合は存在しないため、
       // 取得失敗時はapplyCthShiftData/applyCthProductsData側で空データとして扱う
       fetchSheetJson("CTHシフト", SHIFT_SPREADSHEET_ID).catch(() => null),
       fetchSheetJson("CTH商品", SHIFT_SPREADSHEET_ID).catch(() => null),
-      fetchSheetJson("今月のおにぎり担当", SHIFT_SPREADSHEET_ID).catch(() => null),
-      fetchSheetJson("UvA学事暦", SHIFT_SPREADSHEET_ID).catch(() => null),
-      fetchSheetJson("UvA学事暦設定", SHIFT_SPREADSHEET_ID).catch(() => null),
+      fetchSheetJson("今月のおにぎり担当", SHIFT_SPREADSHEET_ID).catch(() => null).then(v => trackFetchResult("今月のおにぎり担当", true, v)),
+      fetchSheetJson("UvA学事暦", SHIFT_SPREADSHEET_ID).catch(() => null).then(v => trackFetchResult("UvA学事暦", true, v)),
+      fetchSheetJson("UvA学事暦設定", SHIFT_SPREADSHEET_ID).catch(() => null).then(v => trackFetchResult("UvA学事暦設定", true, v)),
+      fetchSheetJson("確定プラン", SHIFT_SPREADSHEET_ID).catch(e => { console.error("確定プラン取得失敗", e); return null; }).then(v => trackFetchResult("確定プラン", true, v)),
     ]);
     const draftData = bootstrap.drafts;
     state.draftData = draftData;
@@ -4176,7 +4485,9 @@ async function refreshAllData(){
 
     state.holidaysByIso = holidaysByIso;
     state.nsDisruptionsByDate = nsDisruptionsByDate;
-    state.confirmedByDate = loadConfirmedFromStorage();
+    // 確定済みかどうか・確定内容は、スプレッドシートの「確定プラン」を正とする
+    // （localStorageには依存しない。どの端末で開いても同じ表示になる）
+    state.confirmedPlansByDate = parseConfirmedPlansSheet(confirmedPlanJson);
     // isProdSnapshotConsistent()がチセさんの必要数も含めて現在の必要数合計を計算できるよう、
     // 保存済みprod内訳の復元(loadProdAllocData/applyDraftToDay)より先にチセデータを反映しておく
     state.chiseByDate = chiseJson ? parseChiseSheet(chiseJson) : {};
@@ -4197,12 +4508,16 @@ async function refreshAllData(){
     state.hourlyByDate = hourlyByDate;
     state.days = buildDays(weatherRes.daily, hourlyByDate);
     state.days.forEach(day => {
+      // 確定済みの日は、作業中プラン・localStorageのドラフトを一切反映しない
+      // （確定プランをそのまま表示する。ライブ再計算・古いドラフトでの上書きを防ぐ）
+      if(getConfirmedPlanForDay(day)) return;
       loadForecastData(day);
       loadProdAllocData(day);
     });
     console.log("取得したドラフト:", draftData);
     if(draftData){
       state.days.forEach(day => {
+        if(getConfirmedPlanForDay(day)) return;
         // ISO形式を優先し、旧M/D形式（後方互換）も照合する
         const draft = draftData.find(d => d.date === day.iso)
                    || draftData.find(d => d.date === mdLabel(day.dateObj));
@@ -4221,6 +4536,7 @@ async function refreshAllData(){
     state.shiftByDate  = shiftParsed.byDate;
     state.notesByName  = shiftParsed.notesByName;
 
+    renderFetchFailureBanner();
     renderCombined();
     renderShiftTable();
     renderCellStatusTable();
@@ -4467,26 +4783,28 @@ async function init(){
     setInitProgress(0, 12);
     const track = p => p.then(v => { setInitProgress(++initProgressDone, 12); return v; });
     state.cellStatus = {};
+    resetFetchFailureTracking();
     const [weatherRes, chiseJson, shiftJson, holidaysByIso, nsDisruptionsByDate, bootstrap, paymentPlanJson, cthShiftJson, cthProductsJson, monthlyOnigiriJson, uvaCalendarJson, uvaCoefficientsJson] = await Promise.all([
       track(fetch(weatherUrl).then(r => r.json())),
-      track(fetchSheetJson(null).catch(e => { console.error("チセさんシート取得失敗", e); return null; })),
-      track(fetchSheetJson("シフト回答", SHIFT_SPREADSHEET_ID).catch(e => { console.error("シフト回答シート取得失敗", e); return null; })),
+      track(fetchSheetJson(null).catch(e => { console.error("チセさんシート取得失敗", e); return null; }).then(v => trackFetchResult("チセさんシート", true, v))),
+      track(fetchSheetJson("シフト回答", SHIFT_SPREADSHEET_ID).catch(e => { console.error("シフト回答シート取得失敗", e); return null; }).then(v => trackFetchResult("シフト回答", true, v))),
       track(fetchDutchHolidays([thisYear, thisYear + 1])),
       track(fetchNsDisruptions()),
       // 作業中プラン・具材ステータス・シフト設定をまとめて1回のリクエストで取得する
       // （個別にtype=draft/status/shiftConfigを叩くとApps Script側の
       // 　SpreadsheetApp.openById()コストが呼び出し回数分だけ重複するため統合した）
-      track(fetchBootstrap()),
+      track(fetchBootstrap().then(v => { trackFetchResult("作業中プラン・具材ステータス", true, v && v.drafts ? v.drafts : null); return v; })),
       // 月次支払いセクション用の確定プランも、ここで他の取得と並列fetchしておく
       // （従来は描画後に別途fetchしていたため、その分だけ表示完了が遅れていた）
-      track(fetchSheetJson("確定プラン", SHIFT_SPREADSHEET_ID).catch(e => { console.error("確定プラン(支払い用)取得失敗", e); return null; })),
+      // 確定済みかどうか・確定内容の判定にも使うため、取得失敗はcriticalとして扱う
+      track(fetchSheetJson("確定プラン", SHIFT_SPREADSHEET_ID).catch(e => { console.error("確定プラン取得失敗", e); return null; }).then(v => trackFetchResult("確定プラン", true, v))),
       // CTHシフト・CTH商品シートはまだ一度も保存されていない場合は存在しないため、
       // 取得失敗時はapplyCthShiftData/applyCthProductsData側で空データとして扱う
       track(fetchSheetJson("CTHシフト", SHIFT_SPREADSHEET_ID).catch(() => null)),
       track(fetchSheetJson("CTH商品", SHIFT_SPREADSHEET_ID).catch(() => null)),
-      track(fetchSheetJson("今月のおにぎり担当", SHIFT_SPREADSHEET_ID).catch(() => null)),
-      track(fetchSheetJson("UvA学事暦", SHIFT_SPREADSHEET_ID).catch(() => null)),
-      track(fetchSheetJson("UvA学事暦設定", SHIFT_SPREADSHEET_ID).catch(() => null)),
+      track(fetchSheetJson("今月のおにぎり担当", SHIFT_SPREADSHEET_ID).catch(() => null).then(v => trackFetchResult("今月のおにぎり担当", true, v))),
+      track(fetchSheetJson("UvA学事暦", SHIFT_SPREADSHEET_ID).catch(() => null).then(v => trackFetchResult("UvA学事暦", true, v))),
+      track(fetchSheetJson("UvA学事暦設定", SHIFT_SPREADSHEET_ID).catch(() => null).then(v => trackFetchResult("UvA学事暦設定", true, v))),
     ]);
     const draftData = bootstrap.drafts;
     state.draftData = draftData;
@@ -4499,7 +4817,9 @@ async function init(){
 
     state.holidaysByIso = holidaysByIso;
     state.nsDisruptionsByDate = nsDisruptionsByDate;
-    state.confirmedByDate = loadConfirmedFromStorage();
+    // 確定済みかどうか・確定内容は、スプレッドシートの「確定プラン」を正とする
+    // （localStorageには依存しない。どの端末で開いても同じ表示になる）
+    state.confirmedPlansByDate = parseConfirmedPlansSheet(paymentPlanJson);
     // isProdSnapshotConsistent()がチセさんの必要数も含めて現在の必要数合計を計算できるよう、
     // 保存済みprod内訳の復元(loadProdAllocData/applyDraftToDay)より先にチセデータを反映しておく
     state.chiseByDate = chiseJson ? parseChiseSheet(chiseJson) : {};
@@ -4519,12 +4839,16 @@ async function init(){
     state.hourlyByDate = hourlyByDate;
     state.days = buildDays(weatherRes.daily, hourlyByDate);
     // localStorageから復元（オフライン時フォールバック）→ シートのドラフトで上書き
+    // 確定済みの日は、作業中プラン・localStorageのドラフトを一切反映しない
+    // （確定プランをそのまま表示する。ライブ再計算・古いドラフトでの上書きを防ぐ）
     state.days.forEach(day => {
+      if(getConfirmedPlanForDay(day)) return;
       loadForecastData(day);
       loadProdAllocData(day);
     });
     if(draftData){
       state.days.forEach(day => {
+        if(getConfirmedPlanForDay(day)) return;
         const draft = draftData.find(d => d.date === day.iso)
                    || draftData.find(d => d.date === mdLabel(day.dateObj));
         if(draft) applyDraftToDay(day, draft);
@@ -4534,6 +4858,7 @@ async function init(){
     state.shiftByDate  = shiftParsed.byDate;
     state.notesByName  = shiftParsed.notesByName;
 
+    renderFetchFailureBanner();
     renderCombined();
     renderShiftTable();
     renderCellStatusTable();

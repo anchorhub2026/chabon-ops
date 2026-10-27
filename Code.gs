@@ -207,6 +207,15 @@ function normalizeTimeCell(val) {
   return String(val);
 }
 
+// Dateオブジェクトを、gvizが日付型セルの値(cell.v)として返す "Date(y,m,d,h,mi,s)" 形式の
+// 文字列に変換する（月は0始まり）。クライアント側はgviz経由で読んだ際の値をそのまま
+// expectedUpdatedAtとして送り返すため、サーバー側もこの形式に合わせて比較する
+// （スクリプトとスプレッドシートのタイムゾーンが一致している前提）。
+function dateToGvizLiteral(d) {
+  return "Date(" + d.getFullYear() + "," + d.getMonth() + "," + d.getDate() + "," +
+    d.getHours() + "," + d.getMinutes() + "," + d.getSeconds() + ")";
+}
+
 function handleSaveDraft(ss, data) {
   var sheet = ss.getSheetByName("作業中プラン");
   if (!sheet) {
@@ -223,6 +232,20 @@ function handleSaveDraft(ss, data) {
       break;
     }
   }
+
+  // 楽観的ロック：クライアントが読み込んだ時点の更新日時(expectedUpdatedAt)を送ってきた場合、
+  // 現在シート上の更新日時と一致しなければ、他の端末が後から保存したとみなして書き込まない
+  // （2つのタブ/端末で同じ日を開いていた場合に、後からの保存が先の保存を黙って上書きするのを防ぐ）。
+  // expectedUpdatedAtが無い（従来互換・新規行）場合はチェックをスキップする。
+  if (foundRow > 0 && data.expectedUpdatedAt) {
+    var currentUpdatedAtCell = values[foundRow - 1][3];
+    var currentUpdatedAtLiteral = currentUpdatedAtCell instanceof Date
+      ? dateToGvizLiteral(currentUpdatedAtCell) : String(currentUpdatedAtCell || "");
+    if (currentUpdatedAtLiteral && currentUpdatedAtLiteral !== String(data.expectedUpdatedAt)) {
+      return; // 競合：書き込まずに中断する
+    }
+  }
+
   var row = [
     data.date,
     JSON.stringify(data.forecast || {}),
