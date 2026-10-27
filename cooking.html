@@ -224,6 +224,7 @@
   </section>
 </main>
 
+<script src="confirmed-plan.js"></script>
 <script>
 const SHIFT_SPREADSHEET_ID = "1PHf1o3smqIQdeFkhBHjBZUEub7VtRcynQLllmSR7w-s"; // 作業中プラン
 const CHISE_SPREADSHEET_ID = "1rQtRUSP5e7qOjnT4RPvMGfWrEFcFL89AsLe8cjGIW4U"; // チセさんの生産データ
@@ -274,6 +275,7 @@ const state = {
   selected: new Set(),  // 選択中のiso
   draftByDate: {},      // iso -> {zuidFillingQty, uvaFillingQty, zuidOpen, uvaOpen}
   chiseByLabel: {},     // "M/d" -> {breakdown, konomiBreakdown}
+  confirmedPlanByDate: {}, // "M/d" -> 確定プラン（confirmed-plan.js の parseConfirmedPlansSheet 参照）
 };
 
 function pad(n){ return String(n).padStart(2, "0"); }
@@ -402,9 +404,8 @@ function parseGvizDateCell(cell){
 }
 
 // 作業中プランから日付ごとのZuid/UvA(CTH)具材内訳・営業フラグを取り出す。
-// ※「確定プラン」シートは店舗ごとの合計数のみを保持し具材別の内訳を持たないため、
-// 　具材別の必要数は、常に最新の内訳を保持している「作業中プラン」から算出する
-// 　（admin.htmlで確定操作を行うと両シートは同じ内容に揃う）。
+// ※確定プランがある日は具材別の内訳も確定プランから取る（fillingQtyForDate参照）。
+// 　確定プランがまだ無い日のみ、この作業中プランの内訳を使う。
 function parseDraftByDate(json){
   const result = {};
   if(!json || !json.table || !json.table.rows) return result;
@@ -483,8 +484,20 @@ function parseChiseSheet(json){
   return result;
 }
 
-// 指定した日付1日分の、対象具材ごとの「おにぎり分」必要数（Zuid＋UvA/CTH＋チセのおにぎり個数）を返す
+// 指定した日付1日分の、対象具材ごとの「おにぎり分」必要数（Zuid＋UvA/CTH＋チセのおにぎり個数）を返す。
+// 確定プランがあり具材別の内訳を持つ日は、確定プランの内訳を最優先で使う
+// （作業中プランに別の値が入っていても確定プランを優先する）。
+// 確定プランが無い日・内訳列の無い古い確定行の日は、これまでどおり作業中プラン/CTHデフォルトを使う。
 function fillingQtyForDate(iso){
+  const confirmed = state.confirmedPlanByDate[mdLabel(new Date(`${iso}T00:00:00`))];
+  if(confirmed && confirmed.hasDetailBreakdown){
+    const result = {};
+    TARGET_FILLINGS.forEach(f => {
+      result[f] = (confirmed.zuidBreakdown[f] || 0) + (confirmed.uvaBreakdown[f] || 0) + (confirmed.chiseBreakdown[f] || 0);
+    });
+    return result;
+  }
+
   const draft = state.draftByDate[iso];
   const chiseEntry = state.chiseByLabel[mdLabel(new Date(`${iso}T00:00:00`))];
   const chiseBreakdown = chiseEntry ? chiseEntry.breakdown : {};
@@ -631,12 +644,14 @@ async function init(){
   updateSummary();
 
   try{
-    const [draftJson, chiseJson] = await Promise.all([
+    const [draftJson, chiseJson, confirmedJson] = await Promise.all([
       fetchGvizSheet(SHIFT_SPREADSHEET_ID, "作業中プラン").catch(() => null),
       fetchGvizSheet(CHISE_SPREADSHEET_ID, null).catch(() => null),
+      fetchGvizSheet(SHIFT_SPREADSHEET_ID, "確定プラン").catch(() => null),
     ]);
     state.draftByDate = parseDraftByDate(draftJson);
     state.chiseByLabel = parseChiseSheet(chiseJson);
+    state.confirmedPlanByDate = parseConfirmedPlansSheet(confirmedJson);
     // 作業中プランが取得できた時点で初めて「どの週の土曜日にデータがあるか」が分かるため、
     // 日付一覧を土曜日込みで作り直して再描画する（選択済みのチェック状態はstate.selectedに
     // 保持されたままなので、既に選んでいた平日のチェックは再描画後も残る）
