@@ -462,8 +462,12 @@
     .member-sep{ display: none; }
     .unit{ display: none; }
     /* TOTAL バー：コンパクト */
-    .cell-total{ padding: 2px 5px; border-radius: 4px; margin-top: 3px; }
-    .total-label{ font-size: 0.5rem; }
+    .cell-total{ padding: 2px 4px; border-radius: 4px; margin-top: 3px; }
+    /* 「TOTAL」のままだと3桁の個数（100個以上）と並べたときに幅が足りず、
+       セルのoverflow:hiddenで数字が見切れてしまうため、スマホでは「計」に短縮する
+       （テキストはJS側で変更せず、CSSのみでTOTALを非表示にして::beforeで差し替える） */
+    .total-label{ font-size: 0; }
+    .total-label::before{ content: "計"; font-size: 0.56rem; }
     .total-num{ font-size: 0.78rem; }
     /* タップヒント：スマホのみ表示 */
     .tap-hint{ display: block; font-size: 0.4rem; color: #ccc; text-align: right; margin-top: 2px; }
@@ -549,9 +553,29 @@ function parseMembers(str){
   });
 }
 
-function inferDate(mdStr){
-  const [m, d] = mdStr.split("/").map(Number);
-  if(!m || !d) return null;
+// 確定プランの日付セルから実際の日付（年も含む）を判定する。
+// セルが実際のDate型であれば.vは表示形式に関係なく常に"Date(Y,M,D)"形式で
+// シリアライズされているため、これを最優先で使う（年も直接取得できて確実）。
+// Date型に自動変換されず文字列のまま保存されている場合は、f||vのラベル文字列を
+// "M/D"（年なし。確定時はこの形式で送信されるため年は直近のものを推測する）・
+// "YYYY-M-D"（年あり。Google Sheetsの自動変換等でこの形式になる場合がある）の
+// どちらでもパースできるようにする。
+function inferDate(cell){
+  const raw = cell && cell.v;
+  if(typeof raw === "string"){
+    const dm = raw.match(/^Date\((\d+),(\d+),(\d+)\)/);
+    if(dm) return new Date(parseInt(dm[1], 10), parseInt(dm[2], 10), parseInt(dm[3], 10));
+  }
+
+  const label = String((cell && (cell.f || cell.v)) || "").trim();
+  if(!label) return null;
+
+  const iso = label.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
+  if(iso) return new Date(Number(iso[1]), Number(iso[2]) - 1, Number(iso[3]));
+
+  const md = label.match(/^(\d{1,2})\/(\d{1,2})$/);
+  if(!md) return null;
+  const m = Number(md[1]), d = Number(md[2]);
   const today = new Date();
   let yr = today.getFullYear();
   let cand = new Date(yr, m - 1, d);
@@ -575,7 +599,7 @@ async function loadData(){
     const chiseQty = Number(c[4]?.v) || 0;
     const members  = parseMembers(c[5]?.v);
     const total    = zuidQty + uvaQty + chiseQty;
-    const sortDate = inferDate(dateLabel);
+    const sortDate = inferDate(c[0]);
     byLabel.set(dateLabel, { dateLabel, members, total, sortDate });
   });
 
