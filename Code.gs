@@ -629,6 +629,10 @@ function handleGetBootstrap(ss) {
   })).setMimeType(ContentService.MimeType.JSON);
 }
 
+// 「メンバー」列は固定リストと照合しない自由文字列のため、ニギニギ隊の実名に加えて
+// cooking.htmlが使う"本部"・"チセ(おにぎり)"・"チセ(具材のみ)"のような渡し先名も
+// そのまま同じ列に保存できる（シート構造の変更不要。admin.html/index.htmlは実在する
+// メンバー名しか参照しないため、これらの行が増えても既存表示には影響しない）。
 function handleSaveStatus(ss, data) {
   var sheet = ss.getSheetByName("具材ステータス");
   if (!sheet) {
@@ -645,6 +649,20 @@ function handleSaveStatus(ss, data) {
       break;
     }
   }
+
+  // 楽観的ロック：クライアントが読み込んだ時点の更新日時(expectedUpdatedAt)を送ってきた場合、
+  // 現在シート上の更新日時と一致しなければ、他の端末が後から保存したとみなして書き込まない
+  // （cooking.htmlのチェックリストが、他端末・admin.htmlでの更新を黙って上書きするのを防ぐ）。
+  // expectedUpdatedAtが無い（従来互換のadmin.html/index.html等）場合はチェックをスキップする。
+  if (foundRow > 0 && data.expectedUpdatedAt) {
+    var currentUpdatedAtCell = values[foundRow - 1][5];
+    var currentUpdatedAtLiteral = currentUpdatedAtCell instanceof Date
+      ? dateToGvizLiteral(currentUpdatedAtCell) : String(currentUpdatedAtCell || "");
+    if (currentUpdatedAtLiteral && currentUpdatedAtLiteral !== String(data.expectedUpdatedAt)) {
+      return; // 競合：書き込まずに中断する
+    }
+  }
+
   var row = [data.date, data.member, data.filling, !!data.handed, !!data.cooked, new Date()];
   if (foundRow > 0) {
     sheet.getRange(foundRow, 1, 1, 6).setValues([row]);
