@@ -1,6 +1,6 @@
 // メンバーのパーソナルカラー定義。cooking.html・admin.html・production.html等で
 // 共通利用できるよう1か所にまとめている（現時点ではcooking.htmlのみ適用）。
-// 色を割り当てるメンバーのみ記載する。未記載のメンバー（YUKARI等）・本部・チセは
+// 色を割り当てるメンバーのみ記載する。未記載のメンバー・本部・チセは
 // 意図的に色を付けない（personalColorForがnullを返す）。
 // bar: 帯・強調用の濃い色 / bg: 背景用の淡い色 / text: bg上で読みやすい濃い文字色
 const PERSONAL_COLORS = {

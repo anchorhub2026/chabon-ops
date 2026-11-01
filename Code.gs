@@ -35,10 +35,6 @@ function doPost(e) {
       handleSaveHourly(ss, data);
     } else if (data.type === "saveShiftConfig") {
       handleSaveShiftConfig(ss, data);
-    } else if (data.type === "saveCthShift") {
-      handleSaveCthShift(ss, data);
-    } else if (data.type === "saveCthProducts") {
-      handleSaveCthProducts(ss, data);
     } else if (data.type === "saveMonthlyOnigiriAssignment") {
       handleSaveMonthlyOnigiriAssignment(ss, data);
     } else if (data.type === "saveUvaAcademicCoefficient") {
@@ -371,83 +367,6 @@ function handleSaveShiftConfig(ss, data) {
   } else {
     sheet.appendRow(row);
   }
-}
-
-// CTH期間限定シフト（日付×バイトさん名ごとの勤務時間帯）を保存する。
-// 読み取りはgviz経由（cth-calendar.html）で行うため、Apps Script側にはtype=cthShiftの
-// ような取得エンドポイントは用意しない（保存のみApps Script経由、他のシートと同じ方針）。
-function handleSaveCthShift(ss, data) {
-  var sheet = ss.getSheetByName("CTHシフト");
-  if (!sheet) {
-    sheet = ss.insertSheet("CTHシフト");
-    sheet.appendRow(["日付", "名前", "時間帯", "更新日時"]);
-  }
-  var values = sheet.getDataRange().getValues();
-  (data.entries || []).forEach(function(entry) {
-    var foundRow = -1;
-    for (var r = 1; r < values.length; r++) {
-      if (normalizeDateCell(values[r][0]) === String(entry.date) &&
-          String(values[r][1]) === String(entry.name)) {
-        foundRow = r + 1;
-        break;
-      }
-    }
-    var row = [entry.date, entry.name, entry.time || "", new Date()];
-    if (foundRow > 0) {
-      sheet.getRange(foundRow, 1, 1, row.length).setValues([row]);
-      values[foundRow - 1] = row;
-    } else {
-      sheet.appendRow(row);
-      values.push(row);
-    }
-  });
-}
-
-// CTH特別会場の商品ラインナップ（お弁当2種・サンドイッチの種類名・個数）を日付ごとに保存する。
-// 1日1行（日付キーでupsert）。読み取りは他の低頻度シートと同様gviz経由で行う。
-function handleSaveCthProducts(ss, data) {
-  // お弁当3（旧・注文弁当。後から追加した列）は、既存データの列位置を変えないよう
-  // 更新日時の後ろに追加した。列名は画面上の表示ラベル（日付により「注文弁当」/「お弁当3」を
-  // 切り替え表示）とは独立して「お弁当3名」「お弁当3個数」に統一している。
-  var header = ["日付", "お弁当1名", "お弁当1個数", "お弁当2名", "お弁当2個数", "サンドイッチ名", "サンドイッチ個数", "更新日時", "お弁当3名", "お弁当3個数"];
-  var sheet = ss.getSheetByName("CTH商品");
-  if (!sheet) {
-    sheet = ss.insertSheet("CTH商品");
-    sheet.appendRow(header);
-  } else {
-    // 列名の変更（例：注文弁当名→お弁当3名へのリネーム）を都度反映する。
-    // データ行の列位置には影響しない
-    sheet.getRange(1, 1, 1, header.length).setValues([header]);
-  }
-  var values = sheet.getDataRange().getValues();
-  (data.entries || []).forEach(function(entry) {
-    var foundRow = -1;
-    for (var r = 1; r < values.length; r++) {
-      if (normalizeDateCell(values[r][0]) === String(entry.date)) {
-        foundRow = r + 1;
-        break;
-      }
-    }
-    var row = [
-      entry.date,
-      entry.bento1Name || "",
-      Number(entry.bento1Qty) || 0,
-      entry.bento2Name || "",
-      Number(entry.bento2Qty) || 0,
-      entry.sandoName || "",
-      Number(entry.sandoQty) || 0,
-      new Date(),
-      entry.bento3Name || "",
-      Number(entry.bento3Qty) || 0
-    ];
-    if (foundRow > 0) {
-      sheet.getRange(foundRow, 1, 1, row.length).setValues([row]);
-      values[foundRow - 1] = row;
-    } else {
-      sheet.appendRow(row);
-      values.push(row);
-    }
-  });
 }
 
 // 今月のおにぎりの月次担当（1ヶ月ごとに1人へ全数割り振る対象者）を「年月（YYYY-MM）｜担当者」で

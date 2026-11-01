@@ -277,11 +277,6 @@
         <label for="nameSelect">ニギニギ隊メンバー</label>
         <select id="nameSelect" required>
           <option value="" disabled selected>選択してください</option>
-          <option value="YUMI">YUMI</option>
-          <option value="MARI">MARI</option>
-          <option value="CHIKAKO">CHIKAKO</option>
-          <option value="YUKARI">YUKARI</option>
-          <option value="MIKI">MIKI</option>
         </select>
       </div>
     </section>
@@ -359,6 +354,7 @@
 
 <footer>Chabon Ops — Amsterdam Onigiri Truck</footer>
 
+<script src="active-members.js"></script>
 <script>
 // TODO: シフト回答用スプレッドシート（1PHf1o3smqIQdeFkhBHjBZUEub7VtRcynQLllmSR7w-s）に
 // 紐づけたApps Script（Code.gs）のウェブアプリ公開URLに置き換えてください
@@ -366,6 +362,10 @@ const SCRIPT_URL = "https://script.google.com/macros/s/AKfycbyxbKMgM4ZiowaJu3cQ4
 
 const DAY_NAMES = ["日","月","火","水","木","金","土"];
 const QTY_OPTIONS = ["希望しない", "30個", "45個", "60個", "その他（自由入力）"];
+
+// 名前の選択肢を在籍中メンバー一覧（active-members.js）から生成する
+document.getElementById("nameSelect").insertAdjacentHTML("beforeend",
+  ACTIVE_MEMBERS.map(name => `<option value="${name}">${name}</option>`).join(""));
 
 // 「直近の未来の月曜日」を返す。今日が月曜なら今日+7日（次の週の月曜）、
 // 火〜日なら今週・来週のうち直近に訪れる月曜日（今日が日曜なら明日）。

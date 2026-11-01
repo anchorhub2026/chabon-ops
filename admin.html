@@ -1119,115 +1119,6 @@
     margin: 0 0 12px;
   }
 
-  /* CTHシフト入力 */
-  .cth-shift-add-row{
-    display: flex;
-    gap: 8px;
-    margin-bottom: 12px;
-    flex-wrap: wrap;
-  }
-  .cth-shift-add-row input[type="text"]{
-    font-family: inherit;
-    font-size: 0.88rem;
-    border: 1px solid var(--line);
-    border-radius: 8px;
-    padding: 7px 10px;
-    background: #fff;
-    color: var(--ink);
-    flex: 1;
-    min-width: 160px;
-  }
-  .cth-shift-add-btn{
-    background: var(--main-light);
-    color: var(--main-dark);
-    border: 1px solid var(--main);
-    border-radius: 100px;
-    padding: 7px 16px;
-    font-size: 0.85rem;
-    font-weight: bold;
-    cursor: pointer;
-    font-family: inherit;
-    white-space: nowrap;
-  }
-  .cth-shift-add-btn:hover{ background: var(--main); color: #fff; }
-  table.cth-shift-table{
-    width: 100%;
-    border-collapse: collapse;
-    font-size: 0.82rem;
-  }
-  table.cth-shift-table th, table.cth-shift-table td{
-    border-bottom: 1px solid var(--line);
-    padding: 6px 8px;
-    text-align: center;
-    white-space: nowrap;
-  }
-  table.cth-shift-table th{
-    color: var(--main-dark);
-    font-weight: bold;
-    background: var(--main-light);
-  }
-  table.cth-shift-table td.cth-date-cell{
-    text-align: left;
-    font-weight: bold;
-    color: var(--main-dark);
-    background: rgba(242,247,243,0.6);
-  }
-  .cth-remove-name-btn{
-    border: none;
-    background: transparent;
-    color: #999;
-    font-size: 0.8rem;
-    cursor: pointer;
-    margin-left: 4px;
-    padding: 0 2px;
-  }
-  .cth-remove-name-btn:hover{ color: var(--accent); }
-  .th-sub{ font-weight: normal; font-size: 0.75em; color: var(--main-dark); opacity: 0.75; }
-  .cth-product-row-label{
-    font-size: 0.72em;
-    color: var(--main-dark);
-    opacity: 0.75;
-    margin-bottom: 2px;
-    white-space: nowrap;
-  }
-  table.cth-shift-table input[type="text"],
-  table.cth-shift-table input[type="number"]{
-    width: 110px;
-    font-family: inherit;
-    font-size: 0.82rem;
-    border: 1px solid var(--line);
-    border-radius: 6px;
-    padding: 5px 7px;
-    text-align: center;
-    color: var(--ink);
-  }
-  table.cth-shift-table input[type="number"].cth-product-qty{ width: 60px; }
-  table.cth-shift-table input[type="text"]:focus,
-  table.cth-shift-table input[type="number"]:focus{
-    border-color: var(--main);
-    outline: none;
-    box-shadow: 0 0 0 2px rgba(74,124,89,0.18);
-  }
-  .cth-shift-save-btn{
-    background: var(--main);
-    color: #fff;
-    border: none;
-    border-radius: 100px;
-    padding: 9px 20px;
-    font-size: 0.85rem;
-    font-weight: bold;
-    cursor: pointer;
-    font-family: inherit;
-    margin-top: 14px;
-  }
-  .cth-shift-save-btn:hover{ background: var(--main-dark); }
-  .cth-shift-save-btn:disabled{ background: #aaa; cursor: default; }
-  .cth-shift-status{
-    margin: 10px 0 0;
-    font-size: 0.85rem;
-    color: var(--main-dark);
-  }
-  .cth-shift-status.error{ color: var(--accent); }
 </style>
 </head>
 <body>
@@ -1241,11 +1132,8 @@
     <a href="#shiftConfigSection">シフト期間設定</a>
     <a href="#monthlyOnigiriSection">今月のおにぎり担当</a>
     <a href="#uvaAcademicCoefficientsSection">UvA学事暦係数</a>
-    <a href="#cthShiftSection">CTHシフト入力</a>
-    <a href="#cthProductsSection">CTH商品ラインナップ</a>
     <a href="#paymentSection">月次支払い</a>
     <a href="analytics.html">📊 データ分析</a>
-    <a href="cth-calendar.html" target="_blank">🍙 CTHカレンダーを見る</a>
     <a href="cooking.html" target="_blank">🍳 調理計算</a>
   </nav>
   <div><button type="button" class="header-refresh-btn" id="headerRefreshBtn">🔄 データを更新</button></div>
@@ -1295,7 +1183,6 @@
           <option value="YUMI">YUMI</option>
           <option value="MARI">MARI</option>
           <option value="CHIKAKO">CHIKAKO</option>
-          <option value="YUKARI">YUKARI</option>
           <option value="MIKI">MIKI</option>
           <option value="本部">本部</option>
         </select>
@@ -1309,24 +1196,6 @@
     <h2>UvA学事暦係数設定<span class="badge">試験週等の販売数補正</span></h2>
     <p class="off-note">「UvA学事暦」シート（年1回手動更新）の区分ごとに、UvAの販売予測数へ掛ける係数を設定します。授業週は基準（×1.0）のため対象外です。「UvA学事暦」シートの編集はスプレッドシート側で行ってください（この画面からは閲覧・係数設定のみ）。</p>
     <div id="uvaAcademicCoefficientsList"><p class="loading">データを読み込み中...</p></div>
-  </section>
-
-  <section id="cthShiftSection">
-    <h2>CTHシフト入力<span class="badge">8/24〜9/11 月〜金</span></h2>
-    <div class="cth-shift-add-row">
-      <input type="text" id="cthStaffNameInput" placeholder="バイトさんの名前を入力">
-      <button type="button" class="cth-shift-add-btn" id="cthAddStaffBtn">＋ 追加</button>
-    </div>
-    <div id="cthShiftArea"><p class="loading">データを読み込み中...</p></div>
-    <button type="button" class="cth-shift-save-btn" id="cthShiftSaveBtn">CTHシフトを保存</button>
-    <p class="cth-shift-status" id="cthShiftStatus"></p>
-  </section>
-
-  <section id="cthProductsSection">
-    <h2>CTH商品ラインナップ設定<span class="badge">8/24〜9/11 月〜金</span></h2>
-    <div id="cthProductsArea"><p class="loading">データを読み込み中...</p></div>
-    <button type="button" class="cth-shift-save-btn" id="cthProductsSaveBtn">CTH商品ラインナップを保存</button>
-    <p class="cth-shift-status" id="cthProductsStatus"></p>
   </section>
 
   <section>
@@ -1370,6 +1239,7 @@
 <footer>Chabon Ops — Amsterdam Onigiri Truck（管理画面）</footer>
 
 <script src="confirmed-plan.js"></script>
+<script src="active-members.js"></script>
 <script>
 const LAT = 52.3676, LON = 4.9041;
 const SPREADSHEET_ID = "1rQtRUSP5e7qOjnT4RPvMGfWrEFcFL89AsLe8cjGIW4U"; // チセさんの生産データ
@@ -1378,7 +1248,7 @@ const SHIFT_SPREADSHEET_ID = "1PHf1o3smqIQdeFkhBHjBZUEub7VtRcynQLllmSR7w-s"; // 
 const SCRIPT_URL = "https://script.google.com/macros/s/AKfycbyxbKMgM4ZiowaJu3cQ4NdLhwSE9-Pet8DbYB3qvgEX2NS2h1Dosgfm62vu7-in52ZT/exec";
 
 const DAY_NAMES = ["日","月","火","水","木","金","土"];
-const MEMBERS = ["YUMI", "MARI", "CHIKAKO", "YUKARI", "MIKI"];
+const MEMBERS = ACTIVE_MEMBERS;
 const FILLINGS = ["ツナマヨ","スパイシーツナマヨ","テリヤキチキン","サーモン","スパイシー味噌","枝豆","梅","うなぎ","今月のおにぎり"];
 // 今月のおにぎり追加分(5%)は、枝豆・梅・うなぎの比率は変えず、変動具材5種の合計(0.89→0.84)を按分縮小して確保
 // （今月のおにぎりは本部固定ではなく、他の変動具材と同じくニギニギ隊にも割り振り可能）
@@ -1433,9 +1303,6 @@ const state = {
   notesByName: {},      // memberName -> { note:string, supplies:string }
   confirmedPlansByDate: {}, // "M/D" -> 確定プランシートの内容（スプレッドシートが正。端末・localStorageには依存しない）
   cellStatus: {},       // "M/D" -> { memberName: { fillingName: { handed:bool, cooked:bool } } }
-  cthStaffNames: [],    // CTHシフト表の列（バイトさん名）
-  cthShiftData: {},     // "yyyy-MM-dd" -> { name: "10:00-14:00", ... }
-  cthProductsByDate: {}, // "yyyy-MM-dd" -> { bento1Name, bento1Qty, bento2Name, bento2Qty, sandoName, sandoQty }
   weekendEventWeeks: {}, // weekIndex(0/1/2) -> bool。土日イベントを追加表示している週
   weatherDaily: null,    // buildDays()の再実行用にAPIレスポンスをキャッシュ（土日イベント切り替え時に再取得不要にする）
   hourlyByDate: {},      // 同上
@@ -1624,16 +1491,6 @@ const ZUID_MIN_GUARANTEE = 100;
 const UVA_MIN_GUARANTEE = 25;
 const HOLIDAY_PENALTY = 30;
 
-// 期間限定の特別会場設定：2026/8/24〜9/11の月〜金はUvAの代わりにCTHで固定50個販売する。
-// 天気・曜日による自動計算は行わず、対象期間外は従来通りcalcUvA()の自動計算のまま。
-const CTH_SPECIAL_START = "2026-08-24";
-const CTH_SPECIAL_END = "2026-09-11";
-const CTH_SPECIAL_QTY = 50;
-const CTH_VENUE_NAME = "CTH";
-function isCthSpecialDay(iso, dow){
-  return dow >= 1 && dow <= 5 && iso >= CTH_SPECIAL_START && iso <= CTH_SPECIAL_END;
-}
-
 /* ---------- UvA学事暦（授業週・試験前週・試験週・休み・再試験による販売数補正） ---------- */
 
 // state.uvaAcademicCalendar: "YYYY-MM-DD"（週開始・月曜）-> 区分名 のマップ（「UvA学事暦」シート由来）
@@ -1648,31 +1505,6 @@ function getUvaAcademicWeekInfo(iso){
     ? 1
     : ((state.uvaAcademicCoefficients && state.uvaAcademicCoefficients[category]) ?? 1);
   return { category, coefficient };
-}
-
-// 「お弁当3」枠（旧・注文弁当）の画面表示ラベル切り替え日。
-// データ構造・スプレッドシートの列名は「お弁当3名」「お弁当3個数」に統一しているが、
-// 画面上の表示ラベルだけは日付に応じて「注文弁当」（1・2週目）/「お弁当3」（3週目〜）を切り替える。
-const BENTO3_LABEL_SWITCH_DATE = "2026-09-07";
-function bento3Label(iso){
-  return iso >= BENTO3_LABEL_SWITCH_DATE ? "お弁当3" : "注文弁当";
-}
-
-// CTH特別期間内（8/24〜9/11）の月〜金の日付一覧を返す（CTHシフト入力表の行に使う）
-function getCthWeekdayDates(){
-  const pad = n => String(n).padStart(2, "0");
-  const dates = [];
-  const cursor = new Date(`${CTH_SPECIAL_START}T00:00:00`);
-  const end = new Date(`${CTH_SPECIAL_END}T00:00:00`);
-  while(cursor <= end){
-    const dow = cursor.getDay();
-    if(dow >= 1 && dow <= 5){
-      const iso = `${cursor.getFullYear()}-${pad(cursor.getMonth() + 1)}-${pad(cursor.getDate())}`;
-      dates.push({ iso, dow, dateObj: new Date(cursor) });
-    }
-    cursor.setDate(cursor.getDate() + 1);
-  }
-  return dates;
 }
 
 // 無料・APIキー不要のオランダ祝日API。CORS対応済みでブラウザから直接fetch可能
@@ -1938,23 +1770,18 @@ function buildDays(daily, hourlyByDate){
     const holidayName = (state.holidaysByIso && state.holidaysByIso[iso]) || null;
     const nsDisruptions = (state.nsDisruptionsByDate && state.nsDisruptionsByDate[iso]) || null;
     const zuid = calcZuid(dow, d.getMonth() + 1, salesWeather);
-    let uva = calcUvA(dow, salesWeather);
-    const cthSpecial = isCthSpecialDay(iso, dow);
-    if(cthSpecial){
-      // 期間限定特別会場：天気・曜日補正なしで固定50個
-      uva = { total: CTH_SPECIAL_QTY, reasons: [`${CTH_VENUE_NAME}固定 ${CTH_SPECIAL_QTY}個`] };
-    }
+    const uva = calcUvA(dow, salesWeather);
     if(holidayName){
       applyHolidayPenalty(zuid, ZUID_MIN_GUARANTEE);
-      if(!cthSpecial) applyHolidayPenalty(uva, UVA_MIN_GUARANTEE);
+      applyHolidayPenalty(uva, UVA_MIN_GUARANTEE);
     }
     if(nsDisruptions && nsDisruptions.length){
       applyNsPenalty(zuid, ZUID_MIN_GUARANTEE);
-      if(!cthSpecial) applyNsPenalty(uva, UVA_MIN_GUARANTEE);
+      applyNsPenalty(uva, UVA_MIN_GUARANTEE);
     }
-    // UvA学事暦による補正：CTH特別会場の日（UvAの代わりにCTHで固定数販売）は対象外。
-    // Zuid・チセには反映しない（UvAのみ）。授業週は係数1.0のため計算・表示とも何もしない。
-    if(uva && !cthSpecial){
+    // UvA学事暦による補正：Zuid・チセには反映しない（UvAのみ）。
+    // 授業週は係数1.0のため計算・表示とも何もしない。
+    if(uva){
       const weekInfo = getUvaAcademicWeekInfo(iso);
       if(weekInfo.category !== "授業"){
         uva.total = Math.round(uva.total * weekInfo.coefficient);
@@ -1976,7 +1803,7 @@ function buildDays(daily, hourlyByDate){
       nsDisruptions,
       zuid,
       uva,
-      uvaVenueLabel: cthSpecial ? CTH_VENUE_NAME : "UvA",
+      uvaVenueLabel: "UvA",
       isEventDay: !!isEventDay,
     };
   }).map(day => {
@@ -2074,16 +1901,10 @@ function getMonthlyOnigiriAssignee(day){
 
 // 生産割り振りの優先順位（MARI最優先→CHIKAKO→YUMI→MIKI）。
 // 総生産数が全員分の希望を満たせない場合、最低保証(30個)をこの順で確保する。
-// リストに無いメンバー（YUKARIなど）は最優先度リストの誰よりも後（最下位）として扱う。
+// リストに無いメンバーは最優先度リストの誰よりも後（最下位）として扱う。
 const MEMBER_PRIORITY = ["MARI", "CHIKAKO", "YUMI", "MIKI"];
 const PRODUCTION_FLOOR_QTY = 30;
 const MAX_FILLING_TYPES_PER_MEMBER = 2;
-
-// CTH特別期間（UvA枠がCTH向け固定50個になる日）専用の割り振り優先順位：
-// 1) MIKIさん（既存の希望数=capを上限） → 2) 本部（1日あたり固定30個まで） → 3) MARIさん。
-// 通常のMEMBER_PRIORITY（Zuid・チセ向けの割り振り）とは完全に独立したルールで、
-// CTH向け必要数（day.uvaFillingQty）にのみ適用する。
-const HQ_CTH_DAILY_CAP = 30;
 
 function memberPriorityRank(name){
   const idx = MEMBER_PRIORITY.indexOf(name);
@@ -2097,11 +1918,6 @@ function neededQtyFor(day, filling){
   const zuidQty = day.zuidOpen ? (day.zuidFillingQty[filling] || 0) : 0;
   const uvaQty = day.uvaOpen ? (day.uvaFillingQty[filling] || 0) : 0;
   return zuidQty + uvaQty + chiseAmount;
-}
-
-// 必要数を超えないよう3の倍数に切り捨てる。端数は呼び出し側で本部に加算する
-function floorToMultipleOf3(qty){
-  return Math.floor(qty / 3) * 3;
 }
 
 // メンバー×具材の個数（テーブルの各セル）を松木さんが手動編集できるようにするための編集状態を確保する。
@@ -2854,20 +2670,9 @@ function buildProductionPlan(day, working, memberCaps){
     // （誰にも割り振らない）、全数が自動的に本部へ回る。警告も表示しない。
   }
 
-  // CTH特別期間（UvA枠がCTH固定50個になる日）かどうか。CTH向け必要数(day.uvaFillingQty)は
-  // 下の通常ループでは扱わず、通常ループの後でCTH専用ロジックにより
-  // 各メンバーの「残りcap」を使って埋める。処理順序を「通常割り振り→CTH割り振り」にすることで、
-  // MARIさんの本来のZuid向け割り振り分がCTH分によって圧迫されないようにする。
-  const isCthDay = day.uvaVenueLabel === CTH_VENUE_NAME && day.uvaOpen;
-
   const itemsByNeedDesc = ALLOC_FILLINGS
     .filter(f => !(monthlyAssignee && f === MONTHLY_ONIGIRI_FILLING))
-    .map(f => {
-      // CTHの日はUvA枠（=CTH向け必要数）を上の専用ロジックで処理済みのため、
-      // 通常優先順位ループにはZuid・チセ向けの残り必要数だけを渡す
-      const cthPortion = isCthDay ? (day.uvaFillingQty[f] || 0) : 0;
-      return { f, need: neededQtyFor(day, f) - cthPortion };
-    })
+    .map(f => ({ f, need: neededQtyFor(day, f) }))
     .sort((a, b) => b.need - a.need);
 
   itemsByNeedDesc.forEach(({ f, need }) => {
@@ -2895,42 +2700,6 @@ function buildProductionPlan(day, working, memberCaps){
     }
     if(left > 0) hqBreakdown[f] = (hqBreakdown[f] || 0) + left;
   });
-
-  // CTH向け専用の割り振り（MIKI→本部固定30個→MARIの順）。
-  // 上のZuid・チセ向け通常ループが終わった「後」に実行することで、各メンバーの
-  // remaining（希望数capのうち未使用分）を使って埋める。これにより、MARIさんが
-  // 本来Zuid向けに握れたはずの分をCTH分が圧迫することはなく、MARIさんの合計は
-  // 「Zuid向け実績＋CTH向け残り」でcap上限まで最大限使い切られる。
-  // MIKI・MARIどちらのcapも本部の30個枠も超えて余った分は、既存の残差計算により
-  // 本部が無制限に引き受ける。
-  if(isCthDay){
-    const mikiIdx = working.indexOf("MIKI");
-    const mariIdx = working.indexOf("MARI");
-    let hqCthRemaining = HQ_CTH_DAILY_CAP;
-    ALLOC_FILLINGS
-      .filter(f => !(monthlyAssignee && f === MONTHLY_ONIGIRI_FILLING))
-      .map(f => ({ f, need: day.uvaFillingQty[f] || 0 }))
-      .sort((a, b) => b.need - a.need)
-      .forEach(({ f, need }) => {
-        let left = need;
-        if(left <= 0) return;
-        if(mikiIdx !== -1 && left > 0){
-          const take = floorToMultipleOf3(Math.min(left, remaining[mikiIdx]));
-          if(take > 0){ give(mikiIdx, f, take); left -= take; }
-        }
-        if(left > 0 && hqCthRemaining > 0){
-          const take = Math.min(left, hqCthRemaining);
-          hqCthRemaining -= take;
-          left -= take;
-        }
-        if(mariIdx !== -1 && left > 0){
-          const take = floorToMultipleOf3(Math.min(left, remaining[mariIdx]));
-          if(take > 0){ give(mariIdx, f, take); left -= take; }
-        }
-        // これでも残る分（本部の30個枠・MARIのcap双方を超える極端なケース）は
-        // 割り振らず、下の残差計算で本部が無制限に引き受ける。
-      });
-  }
 
   ALWAYS_HQ_FILLINGS.forEach(f => {
     const v = neededQtyFor(day, f);
@@ -3638,7 +3407,7 @@ function initShiftConfigSection(initialConfig){
 
 /* ---------- 今月のおにぎり担当（月ごとに1人へ全数割り振り） ---------- */
 
-const MONTHLY_ONIGIRI_ASSIGNEE_OPTIONS = ["YUMI", "MARI", "CHIKAKO", "YUKARI", "MIKI", "本部"];
+const MONTHLY_ONIGIRI_ASSIGNEE_OPTIONS = [...ACTIVE_MEMBERS, "本部"];
 
 // 「今月のおにぎり担当」シートを "YYYY-MM" -> 担当者名 のマップにパースする
 function parseMonthlyOnigiriSheet(json){
@@ -3843,282 +3612,6 @@ function renderUvaAcademicCoefficientsList(){
 
 function initUvaAcademicCoefficientsSection(){
   renderUvaAcademicCoefficientsList();
-}
-
-/* ---------- CTH特別会場シフト入力（8/24〜9/11 月〜金） ---------- */
-
-function parseCthShiftSheet(json){
-  const result = {};
-  const names = [];
-  if(!json || !json.table || !json.table.rows) return { data: result, names };
-  json.table.rows.forEach(r => {
-    const c = r.c;
-    if(!c || !c[0] || !c[1]) return;
-    const dateStr = parseGvizDateCell(c[0]);
-    const name = String((c[1] && c[1].v) || "").trim();
-    const time = c[2] ? String(c[2].v || "").trim() : "";
-    if(!dateStr || !name) return;
-    if(!result[dateStr]) result[dateStr] = {};
-    result[dateStr][name] = time;
-    if(!names.includes(name)) names.push(name);
-  });
-  return { data: result, names };
-}
-
-// 表を再描画する前に、まだ保存していない入力欄の値をstateに取り込んでおく
-// （列の追加・削除で表全体を作り直しても、入力途中のデータが消えないようにするため）
-function captureCthShiftInputs(){
-  const area = document.getElementById("cthShiftArea");
-  if(!area) return;
-  area.querySelectorAll(".cth-shift-input").forEach(input => {
-    const iso = input.dataset.iso;
-    const name = input.dataset.name;
-    if(!state.cthShiftData[iso]) state.cthShiftData[iso] = {};
-    state.cthShiftData[iso][name] = input.value;
-  });
-}
-
-function escapeHtmlAttr(str){
-  return String(str || "").replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-}
-
-function renderCthShiftTable(){
-  const area = document.getElementById("cthShiftArea");
-  if(!area) return;
-  const dates = getCthWeekdayDates();
-
-  if(state.cthStaffNames.length === 0){
-    area.innerHTML = `<p class="off-note">まずバイトさんの名前を追加してください。</p>`;
-    return;
-  }
-
-  const headerCells = state.cthStaffNames.map(name =>
-    `<th>${escapeHtmlAttr(name)}<button type="button" class="cth-remove-name-btn" data-name="${escapeHtmlAttr(name)}" title="列を削除">×</button></th>`
-  ).join("");
-
-  const rows = dates.map(d => {
-    const cells = state.cthStaffNames.map(name => {
-      const val = (state.cthShiftData[d.iso] && state.cthShiftData[d.iso][name]) || "";
-      return `<td><input type="text" class="cth-shift-input" data-iso="${d.iso}" data-name="${escapeHtmlAttr(name)}" value="${escapeHtmlAttr(val)}" placeholder="例:10:00-14:00"></td>`;
-    }).join("");
-    return `<tr><td class="cth-date-cell">${d.dateObj.getMonth() + 1}/${d.dateObj.getDate()}（${DAY_NAMES[d.dow]}）</td>${cells}</tr>`;
-  }).join("");
-
-  area.innerHTML = `
-    <div class="table-scroll">
-      <table class="cth-shift-table">
-        <thead><tr><th>日付</th>${headerCells}</tr></thead>
-        <tbody>${rows}</tbody>
-      </table>
-    </div>
-  `;
-
-  area.querySelectorAll(".cth-remove-name-btn").forEach(btn => {
-    btn.addEventListener("click", () => {
-      captureCthShiftInputs();
-      state.cthStaffNames = state.cthStaffNames.filter(n => n !== btn.dataset.name);
-      renderCthShiftTable();
-    });
-  });
-}
-
-// データの反映・再描画のみ行う（再読み込み時に呼んでもイベントリスナーは重複登録しない）
-function applyCthShiftData(cthShiftJson){
-  const parsed = parseCthShiftSheet(cthShiftJson);
-  state.cthShiftData = parsed.data;
-  state.cthStaffNames = parsed.names;
-  renderCthShiftTable();
-}
-
-// ボタンのイベントリスナー登録は初期化時に1度だけ行う
-function bindCthShiftControls(){
-  const addNameInput = document.getElementById("cthStaffNameInput");
-  const addNameBtn = document.getElementById("cthAddStaffBtn");
-  const saveBtn = document.getElementById("cthShiftSaveBtn");
-  const statusEl = document.getElementById("cthShiftStatus");
-  if(!addNameBtn || !saveBtn) return;
-
-  addNameBtn.addEventListener("click", () => {
-    const val = (addNameInput.value || "").trim();
-    if(!val) return;
-    if(state.cthStaffNames.includes(val)){ addNameInput.value = ""; return; }
-    captureCthShiftInputs();
-    state.cthStaffNames.push(val);
-    addNameInput.value = "";
-    renderCthShiftTable();
-  });
-  addNameInput.addEventListener("keydown", e => {
-    if(e.key === "Enter"){ e.preventDefault(); addNameBtn.click(); }
-  });
-
-  saveBtn.addEventListener("click", async () => {
-    captureCthShiftInputs();
-    const dates = getCthWeekdayDates();
-    const entries = [];
-    dates.forEach(d => {
-      state.cthStaffNames.forEach(name => {
-        const time = (state.cthShiftData[d.iso] && state.cthShiftData[d.iso][name]) || "";
-        entries.push({ date: d.iso, name, time });
-      });
-    });
-    if(entries.length === 0){
-      statusEl.textContent = "バイトさんを1人以上追加してください。";
-      statusEl.classList.add("error");
-      return;
-    }
-    statusEl.classList.remove("error");
-    saveBtn.disabled = true;
-    saveBtn.textContent = "保存中...";
-    try{
-      await fetch(SCRIPT_URL, { method: "POST", mode: "no-cors", body: JSON.stringify({ type: "saveCthShift", entries }) });
-      statusEl.textContent = "✓ 保存しました";
-      saveBtn.textContent = "CTHシフトを保存";
-    }catch(e){
-      console.error("CTHシフトの保存に失敗しました", e);
-      statusEl.textContent = "保存に失敗しました。";
-      statusEl.classList.add("error");
-      saveBtn.textContent = "CTHシフトを保存";
-    }finally{
-      saveBtn.disabled = false;
-    }
-  });
-}
-
-/* ---------- CTH商品ラインナップ設定（お弁当2種・サンドイッチ） ---------- */
-
-const CTH_PRODUCT_DEFAULTS = { bento1Qty: 10, bento2Qty: 10, sandoQty: 20 };
-
-function parseCthProductsSheet(json){
-  const result = {};
-  if(!json || !json.table || !json.table.rows) return result;
-  json.table.rows.forEach(r => {
-    const c = r.c;
-    if(!c || !c[0]) return;
-    const dateStr = parseGvizDateCell(c[0]);
-    if(!dateStr) return;
-    const qtyOrDefault = (cell, def) => (cell && cell.v !== null && cell.v !== undefined && cell.v !== "") ? Number(cell.v) : def;
-    result[dateStr] = {
-      bento1Name: String((c[1] && c[1].v) || ""),
-      bento1Qty: qtyOrDefault(c[2], CTH_PRODUCT_DEFAULTS.bento1Qty),
-      bento2Name: String((c[3] && c[3].v) || ""),
-      bento2Qty: qtyOrDefault(c[4], CTH_PRODUCT_DEFAULTS.bento2Qty),
-      sandoName: String((c[5] && c[5].v) || ""),
-      sandoQty: qtyOrDefault(c[6], CTH_PRODUCT_DEFAULTS.sandoQty),
-      // お弁当3（旧・注文弁当）は列7(更新日時)の後ろに追加した列。他3項目と異なり仮名称・
-      // デフォルト個数は持たず、未設定なら空のまま返す（cth-calendar.html側で「なし」と表示する）
-      bento3Name: String((c[8] && c[8].v) || ""),
-      bento3Qty: qtyOrDefault(c[9], ""),
-    };
-  });
-  return result;
-}
-
-function renderCthProductsTable(){
-  const area = document.getElementById("cthProductsArea");
-  if(!area) return;
-  const dates = getCthWeekdayDates();
-
-  const rows = dates.map(d => {
-    const entry = state.cthProductsByDate[d.iso] || {};
-    const b1n = entry.bento1Name || "";
-    const b1q = entry.bento1Qty !== undefined ? entry.bento1Qty : CTH_PRODUCT_DEFAULTS.bento1Qty;
-    const b2n = entry.bento2Name || "";
-    const b2q = entry.bento2Qty !== undefined ? entry.bento2Qty : CTH_PRODUCT_DEFAULTS.bento2Qty;
-    const sn = entry.sandoName || "";
-    const sq = entry.sandoQty !== undefined ? entry.sandoQty : CTH_PRODUCT_DEFAULTS.sandoQty;
-    // お弁当3（旧・注文弁当）は他3項目と異なりデフォルト値を持たない（未設定なら空のまま）
-    const bn = entry.bento3Name || "";
-    const bq = entry.bento3Qty !== undefined ? entry.bento3Qty : "";
-    // 表示ラベルは日付により「注文弁当」（1・2週目）/「お弁当3」（3週目〜）を切り替える
-    const b3Label = bento3Label(d.iso);
-    return `<tr>
-      <td class="cth-date-cell">${d.dateObj.getMonth() + 1}/${d.dateObj.getDate()}（${DAY_NAMES[d.dow]}）</td>
-      <td><input type="text" class="cth-product-input" data-iso="${d.iso}" data-field="bento1Name" value="${escapeHtmlAttr(b1n)}" placeholder="お弁当1"></td>
-      <td><input type="number" class="cth-product-input cth-product-qty" data-iso="${d.iso}" data-field="bento1Qty" value="${b1q}" min="0"></td>
-      <td><input type="text" class="cth-product-input" data-iso="${d.iso}" data-field="bento2Name" value="${escapeHtmlAttr(b2n)}" placeholder="お弁当2"></td>
-      <td><input type="number" class="cth-product-input cth-product-qty" data-iso="${d.iso}" data-field="bento2Qty" value="${b2q}" min="0"></td>
-      <td><input type="text" class="cth-product-input" data-iso="${d.iso}" data-field="sandoName" value="${escapeHtmlAttr(sn)}" placeholder="サンドイッチ"></td>
-      <td><input type="number" class="cth-product-input cth-product-qty" data-iso="${d.iso}" data-field="sandoQty" value="${sq}" min="0"></td>
-      <td>
-        <div class="cth-product-row-label">${b3Label}</div>
-        <input type="text" class="cth-product-input" data-iso="${d.iso}" data-field="bento3Name" value="${escapeHtmlAttr(bn)}" placeholder="未設定（なし）">
-      </td>
-      <td><input type="number" class="cth-product-input cth-product-qty" data-iso="${d.iso}" data-field="bento3Qty" value="${bq}" min="0"></td>
-    </tr>`;
-  }).join("");
-
-  area.innerHTML = `
-    <div class="table-scroll">
-      <table class="cth-shift-table">
-        <thead><tr>
-          <th>日付</th>
-          <th colspan="2">お弁当1</th>
-          <th colspan="2">お弁当2</th>
-          <th colspan="2">サンドイッチ</th>
-          <th colspan="2">お弁当3<br><span class="th-sub">（注文弁当）</span></th>
-        </tr></thead>
-        <tbody>${rows}</tbody>
-      </table>
-    </div>
-  `;
-}
-
-// データの反映・再描画のみ行う（再読み込み時に呼んでもイベントリスナーは重複登録しない）
-function applyCthProductsData(cthProductsJson){
-  state.cthProductsByDate = parseCthProductsSheet(cthProductsJson);
-  renderCthProductsTable();
-}
-
-// ボタンのイベントリスナー登録は初期化時に1度だけ行う
-function bindCthProductsControls(){
-  const saveBtn = document.getElementById("cthProductsSaveBtn");
-  const statusEl = document.getElementById("cthProductsStatus");
-  if(!saveBtn) return;
-
-  saveBtn.addEventListener("click", async () => {
-    const area = document.getElementById("cthProductsArea");
-    const dates = getCthWeekdayDates();
-    const byIso = {};
-    area.querySelectorAll(".cth-product-input").forEach(input => {
-      const iso = input.dataset.iso;
-      const field = input.dataset.field;
-      if(!byIso[iso]) byIso[iso] = {};
-      byIso[iso][field] = input.value;
-    });
-
-    const entries = dates.map(d => {
-      const v = byIso[d.iso] || {};
-      const qtyOrDefault = (val, def) => (val !== undefined && val !== "") ? Number(val) : def;
-      return {
-        date: d.iso,
-        bento1Name: v.bento1Name || "",
-        bento1Qty: qtyOrDefault(v.bento1Qty, CTH_PRODUCT_DEFAULTS.bento1Qty),
-        bento2Name: v.bento2Name || "",
-        bento2Qty: qtyOrDefault(v.bento2Qty, CTH_PRODUCT_DEFAULTS.bento2Qty),
-        sandoName: v.sandoName || "",
-        sandoQty: qtyOrDefault(v.sandoQty, CTH_PRODUCT_DEFAULTS.sandoQty),
-        // お弁当3（旧・注文弁当）は他3項目と異なりデフォルト値を持たない（未入力なら空のまま送信する）
-        bento3Name: v.bento3Name || "",
-        bento3Qty: qtyOrDefault(v.bento3Qty, ""),
-      };
-    });
-
-    statusEl.classList.remove("error");
-    saveBtn.disabled = true;
-    saveBtn.textContent = "保存中...";
-    try{
-      await fetch(SCRIPT_URL, { method: "POST", mode: "no-cors", body: JSON.stringify({ type: "saveCthProducts", entries }) });
-      statusEl.textContent = "✓ 保存しました";
-      saveBtn.textContent = "CTH商品ラインナップを保存";
-    }catch(e){
-      console.error("CTH商品ラインナップの保存に失敗しました", e);
-      statusEl.textContent = "保存に失敗しました。";
-      statusEl.classList.add("error");
-      saveBtn.textContent = "CTH商品ラインナップを保存";
-    }finally{
-      saveBtn.disabled = false;
-    }
-  });
 }
 
 /* ---------- localStorage: 販売予測数・生産割り振り（オフライン時フォールバック） ---------- */
@@ -4513,7 +4006,7 @@ async function refreshAllData(){
     const thisYear = new Date().getFullYear();
     state.cellStatus = {};
     resetFetchFailureTracking();
-    const [weatherRes, chiseJson, shiftJson, holidaysByIso, nsDisruptionsByDate, bootstrap, cthShiftJson, cthProductsJson, monthlyOnigiriJson, uvaCalendarJson, uvaCoefficientsJson, confirmedPlanJson] = await Promise.all([
+    const [weatherRes, chiseJson, shiftJson, holidaysByIso, nsDisruptionsByDate, bootstrap, monthlyOnigiriJson, uvaCalendarJson, uvaCoefficientsJson, confirmedPlanJson] = await Promise.all([
       fetch(weatherUrl).then(r => r.json()),
       fetchSheetJson(null).catch(e => { console.error("チセさんシート取得失敗", e); return null; }).then(v => trackFetchResult("チセさんシート", true, v)),
       fetchSheetJson("シフト回答", SHIFT_SPREADSHEET_ID).catch(e => { console.error("シフト回答シート取得失敗", e); return null; }).then(v => trackFetchResult("シフト回答", true, v)),
@@ -4521,10 +4014,6 @@ async function refreshAllData(){
       fetchNsDisruptions(),
       // 作業中プラン・具材ステータスをまとめて1回のリクエストで取得する
       fetchBootstrap().then(v => { trackFetchResult("作業中プラン・具材ステータス", true, v && v.drafts ? v.drafts : null); return v; }),
-      // CTHシフト・CTH商品シートはまだ一度も保存されていない場合は存在しないため、
-      // 取得失敗時はapplyCthShiftData/applyCthProductsData側で空データとして扱う
-      fetchSheetJson("CTHシフト", SHIFT_SPREADSHEET_ID).catch(() => null),
-      fetchSheetJson("CTH商品", SHIFT_SPREADSHEET_ID).catch(() => null),
       fetchSheetJson("今月のおにぎり担当", SHIFT_SPREADSHEET_ID).catch(() => null).then(v => trackFetchResult("今月のおにぎり担当", true, v)),
       fetchOptionalSheetJson("UvA学事暦", SHIFT_SPREADSHEET_ID).catch(() => null).then(v => trackFetchResult("UvA学事暦", true, v)),
       fetchOptionalSheetJson("UvA学事暦設定", SHIFT_SPREADSHEET_ID).catch(() => null).then(v => trackFetchResult("UvA学事暦設定", true, v)),
@@ -4533,8 +4022,6 @@ async function refreshAllData(){
     const draftData = bootstrap.drafts;
     state.draftData = draftData;
     applyStatusesToState(bootstrap.statuses);
-    applyCthShiftData(cthShiftJson);
-    applyCthProductsData(cthProductsJson);
 
     state.holidaysByIso = holidaysByIso;
     state.nsDisruptionsByDate = nsDisruptionsByDate;
@@ -4833,11 +4320,11 @@ async function init(){
 
     const thisYear = new Date().getFullYear();
     initProgressDone = 0;
-    setInitProgress(0, 12);
-    const track = p => p.then(v => { setInitProgress(++initProgressDone, 12); return v; });
+    setInitProgress(0, 10);
+    const track = p => p.then(v => { setInitProgress(++initProgressDone, 10); return v; });
     state.cellStatus = {};
     resetFetchFailureTracking();
-    const [weatherRes, chiseJson, shiftJson, holidaysByIso, nsDisruptionsByDate, bootstrap, paymentPlanJson, cthShiftJson, cthProductsJson, monthlyOnigiriJson, uvaCalendarJson, uvaCoefficientsJson] = await Promise.all([
+    const [weatherRes, chiseJson, shiftJson, holidaysByIso, nsDisruptionsByDate, bootstrap, paymentPlanJson, monthlyOnigiriJson, uvaCalendarJson, uvaCoefficientsJson] = await Promise.all([
       track(fetch(weatherUrl).then(r => r.json())),
       track(fetchSheetJson(null).catch(e => { console.error("チセさんシート取得失敗", e); return null; }).then(v => trackFetchResult("チセさんシート", true, v))),
       track(fetchSheetJson("シフト回答", SHIFT_SPREADSHEET_ID).catch(e => { console.error("シフト回答シート取得失敗", e); return null; }).then(v => trackFetchResult("シフト回答", true, v))),
@@ -4851,10 +4338,6 @@ async function init(){
       // （従来は描画後に別途fetchしていたため、その分だけ表示完了が遅れていた）
       // 確定済みかどうか・確定内容の判定にも使うため、取得失敗はcriticalとして扱う
       track(fetchSheetJson("確定プラン", SHIFT_SPREADSHEET_ID).catch(e => { console.error("確定プラン取得失敗", e); return null; }).then(v => trackFetchResult("確定プラン", true, v))),
-      // CTHシフト・CTH商品シートはまだ一度も保存されていない場合は存在しないため、
-      // 取得失敗時はapplyCthShiftData/applyCthProductsData側で空データとして扱う
-      track(fetchSheetJson("CTHシフト", SHIFT_SPREADSHEET_ID).catch(() => null)),
-      track(fetchSheetJson("CTH商品", SHIFT_SPREADSHEET_ID).catch(() => null)),
       track(fetchSheetJson("今月のおにぎり担当", SHIFT_SPREADSHEET_ID).catch(() => null).then(v => trackFetchResult("今月のおにぎり担当", true, v))),
       track(fetchOptionalSheetJson("UvA学事暦", SHIFT_SPREADSHEET_ID).catch(() => null).then(v => trackFetchResult("UvA学事暦", true, v))),
       track(fetchOptionalSheetJson("UvA学事暦設定", SHIFT_SPREADSHEET_ID).catch(() => null).then(v => trackFetchResult("UvA学事暦設定", true, v))),
@@ -4863,10 +4346,6 @@ async function init(){
     state.draftData = draftData;
     applyStatusesToState(bootstrap.statuses);
     const shiftConfig = bootstrap.shiftConfig;
-    applyCthShiftData(cthShiftJson);
-    bindCthShiftControls();
-    applyCthProductsData(cthProductsJson);
-    bindCthProductsControls();
 
     state.holidaysByIso = holidaysByIso;
     state.nsDisruptionsByDate = nsDisruptionsByDate;

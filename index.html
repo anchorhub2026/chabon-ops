@@ -561,6 +561,7 @@
 </div>
 
 <script src="confirmed-plan.js"></script>
+<script src="active-members.js"></script>
 <script>
 const LAT = 52.3676, LON = 4.9041;
 const SPREADSHEET_ID = "1rQtRUSP5e7qOjnT4RPvMGfWrEFcFL89AsLe8cjGIW4U"; // チセさんの生産データ
@@ -770,13 +771,7 @@ const OPERATING_DAYS = [1, 2, 3, 4]; // 月火水木
 const HOURLY_SLOTS = [12, 13, 14, 15, 16, 17, 18];
 
 const state = {
-  members: [
-    { name: "YUMI", on: true },
-    { name: "MARI", on: true },
-    { name: "CHIKAKO", on: true },
-    { name: "YUKARI", on: true },
-    { name: "MIKI", on: false },
-  ],
+  members: ACTIVE_MEMBERS.map(name => ({ name, on: name !== "MIKI" })),
   dailyResults: [],
   hourlyByDate: {},
   todayTotal: 0,
@@ -1006,16 +1001,6 @@ const ZUID_MIN_GUARANTEE = 100;
 const UVA_MIN_GUARANTEE = 25;
 const HOLIDAY_PENALTY = 30;
 
-// 期間限定の特別会場設定：2026/8/24〜9/11の月〜金はUvAの代わりにCTHで固定50個販売する。
-// admin.htmlと同じ条件（管理画面での確定・入力ロジックと表示を一致させるため）。
-const CTH_SPECIAL_START = "2026-08-24";
-const CTH_SPECIAL_END = "2026-09-11";
-const CTH_SPECIAL_QTY = 50;
-const CTH_VENUE_NAME = "CTH";
-function isCthSpecialDay(iso, dow){
-  return dow >= 1 && dow <= 5 && iso >= CTH_SPECIAL_START && iso <= CTH_SPECIAL_END;
-}
-
 // 無料・APIキー不要のオランダ祝日API。CORS対応済みでブラウザから直接fetch可能
 async function fetchDutchHolidays(years){
   const lists = await Promise.all(years.map(async year => {
@@ -1135,23 +1120,19 @@ function buildDailyResults(daily, hourlyByDate, holidaysByIso, nsDisruptionsByDa
     const holidayName = (holidaysByIso && holidaysByIso[dateStr]) || null;
     const nsDisruptions = (nsDisruptionsByDate && nsDisruptionsByDate[dateStr]) || null;
     const zuid = calcZuid(dow, month, salesWeather);
-    let uva = calcUvA(dow, salesWeather);
-    const cthSpecial = isCthSpecialDay(dateStr, dow);
-    if(cthSpecial){
-      uva = { total: CTH_SPECIAL_QTY, reasons: [`${CTH_VENUE_NAME}固定 ${CTH_SPECIAL_QTY}個`] };
-    }
+    const uva = calcUvA(dow, salesWeather);
     if(holidayName){
       applyHolidayPenalty(zuid, ZUID_MIN_GUARANTEE);
-      if(!cthSpecial) applyHolidayPenalty(uva, UVA_MIN_GUARANTEE);
+      applyHolidayPenalty(uva, UVA_MIN_GUARANTEE);
     }
     if(nsDisruptions && nsDisruptions.length){
       applyNsPenalty(zuid, ZUID_MIN_GUARANTEE);
-      if(!cthSpecial) applyNsPenalty(uva, UVA_MIN_GUARANTEE);
+      applyNsPenalty(uva, UVA_MIN_GUARANTEE);
     }
     return {
       dateStr, dow, maxTemp, minTemp, code, salesWeather, holidayName, nsDisruptions,
       zuid, uva,
-      uvaVenueLabel: cthSpecial ? CTH_VENUE_NAME : "UvA",
+      uvaVenueLabel: "UvA",
     };
   });
 }
