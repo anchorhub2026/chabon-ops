@@ -294,7 +294,54 @@
   }
   .status-btn.cooked.active{ background: var(--main); color: #fff; border-color: var(--main); }
   .status-btn.handed.active{ background: var(--accent); color: #fff; border-color: var(--accent); }
+  /* 一部の日だけ済みの状態（人ごと表示）。押すと全日分が済みになることが分かるよう、
+     完了(active)とも未着手とも違う見た目にする */
+  .status-btn.partial{
+    background: #fff;
+    color: var(--accent);
+    border-color: var(--accent);
+    border-style: dashed;
+  }
   .status-btn:active{ opacity: 0.8; }
+
+  /* ── 人ごと／日付ごとの表示切り替え ── */
+  .view-toggle-row{
+    display: flex;
+    gap: 8px;
+    margin-bottom: 12px;
+  }
+  .view-toggle-btn{
+    flex: 1;
+    min-height: 44px;
+    border: 1px solid var(--main);
+    border-radius: 10px;
+    background: #fff;
+    color: var(--main-dark);
+    font-size: 0.86rem;
+    font-weight: bold;
+    cursor: pointer;
+    font-family: inherit;
+  }
+  .view-toggle-btn.active{ background: var(--main); color: #fff; }
+
+  /* ── 人ごと表示：パーソナルカラー ── */
+  /* 左端の太い帯で担当者を示す。色だけに頼らないよう、帯が無い場合でも
+     名前のテキスト自体は常に表示する（YUKARI・本部・チセ等は帯なし） */
+  .person-row.has-color{
+    border-left: 6px solid var(--person-bar, var(--line));
+  }
+  .person-name-badge{
+    display: inline-block;
+    padding: 2px 10px;
+    border-radius: 100px;
+    background: var(--person-bg, transparent);
+    color: var(--person-text, var(--ink));
+  }
+  .person-breakdown{
+    font-size: 0.76rem;
+    color: #888;
+    margin: -2px 0 8px;
+  }
   .conflict-msg{
     font-size: 0.76rem;
     color: var(--accent);
@@ -392,6 +439,7 @@
 </div>
 
 <script src="confirmed-plan.js"></script>
+<script src="personal-colors.js"></script>
 <script>
 const SHIFT_SPREADSHEET_ID = "1PHf1o3smqIQdeFkhBHjBZUEub7VtRcynQLllmSR7w-s"; // 作業中プラン・確定プラン・具材ステータス
 const CHISE_SPREADSHEET_ID = "1rQtRUSP5e7qOjnT4RPvMGfWrEFcFL89AsLe8cjGIW4U"; // チセさんの生産データ
@@ -442,6 +490,7 @@ function buildFillingDefaults(total){
 }
 
 const LOCAL_STORAGE_KEY = "chabon_cooking_selected_dates";
+const VIEW_MODE_STORAGE_KEY = "chabon_cooking_detail_view_mode";
 
 const state = {
   candidates: [],        // [{iso, dow, dateObj}]（選択肢に出せる日。対象外の日は含まない）
@@ -452,6 +501,7 @@ const state = {
   cellStatus: {},         // iso -> dest -> filling -> {handed, cooked, updatedAtRaw}
   openFilling: null,      // 詳細モーダルで開いている具材名
   conflictNotice: null,   // 楽観的ロックの競合メッセージ（詳細モーダル内に表示）
+  detailViewMode: "person", // 具材の内訳画面の表示："person"(人ごと・初期値) | "date"(日付ごと)
 };
 
 function pad(n){ return String(n).padStart(2, "0"); }
@@ -909,6 +959,28 @@ function closeFillingDetail(){
   state.openFilling = null;
 }
 
+function isoToMdLabel(iso){
+  const d = new Date(`${iso}T00:00:00`);
+  return `${d.getMonth() + 1}/${d.getDate()}`;
+}
+
+// 渡し先の並び順：パーソナルカラーのあるメンバー → 色の無いメンバー（YUKARI等） → 本部 → チセ
+const PERSON_COLOR_ORDER = ["YUMI", "MARI", "CHIKAKO", "MIKI"];
+function destSortKey(dest, destType){
+  if(destType === "member"){
+    const idx = PERSON_COLOR_ORDER.indexOf(dest);
+    return idx !== -1 ? idx : 10 + dest.charCodeAt(0) / 1000;
+  }
+  if(destType === "hq") return 100;
+  return 200; // チセ
+}
+
+function setDetailViewMode(mode){
+  state.detailViewMode = mode;
+  try{ localStorage.setItem(VIEW_MODE_STORAGE_KEY, mode); }catch(e){}
+  renderFillingDetailBody();
+}
+
 function renderFillingDetailBody(){
   const filling = state.openFilling;
   const body = document.getElementById("modalBody");
@@ -923,7 +995,12 @@ function renderFillingDetailBody(){
     return;
   }
 
+  const mode = state.detailViewMode;
   let html = `
+    <div class="view-toggle-row">
+      <button type="button" class="view-toggle-btn ${mode === "person" ? "active" : ""}" data-mode="person">人ごと</button>
+      <button type="button" class="view-toggle-btn ${mode === "date" ? "active" : ""}" data-mode="date">日付ごと</button>
+    </div>
     <div class="modal-bulk-row">
       <button type="button" class="bulk-complete-btn" id="bulkCompleteBtn" ${remainingTotal === 0 ? "disabled" : ""}>
         選んだ日の分をまとめて調理済みにする（残り${remainingTotal}個）
@@ -932,15 +1009,33 @@ function renderFillingDetailBody(){
     <div id="conflictMsgArea">${state.conflictNotice ? `<p class="conflict-msg">⚠️ ${escapeHtml(state.conflictNotice)}</p>` : ""}</div>
   `;
 
+  html += mode === "person" ? renderPersonModeHtml(filling, rows) : renderDateModeHtml(filling, rows, selectedIsos);
+
+  body.innerHTML = html;
+
+  body.querySelectorAll(".view-toggle-btn").forEach(btn => {
+    btn.addEventListener("click", () => setDetailViewMode(btn.dataset.mode));
+  });
+
+  const bulkBtn = document.getElementById("bulkCompleteBtn");
+  if(bulkBtn) bulkBtn.addEventListener("click", () => bulkCompleteFilling(filling, rows));
+
+  if(mode === "person") bindPersonModeEvents(filling, rows);
+  else bindDateModeEvents(filling);
+}
+
+/* ---------- 日付ごと表示 ---------- */
+function renderDateModeHtml(filling, rows, selectedIsos){
   const byIso = {};
   rows.forEach(r => { if(!byIso[r.iso]) byIso[r.iso] = []; byIso[r.iso].push(r); });
 
+  let html = "";
   selectedIsos.forEach(iso => {
     const dayRows = byIso[iso];
     if(!dayRows || dayRows.length === 0) return;
     const d = new Date(`${iso}T00:00:00`);
     html += `<div class="detail-day-heading">${d.getMonth() + 1}/${d.getDate()}（${DAY_NAMES[d.getDay()]}）</div>`;
-    dayRows.forEach(r => {
+    dayRows.sort((a, b) => destSortKey(a.dest, a.destType) - destSortKey(b.dest, b.destType)).forEach(r => {
       const st = getStatus(r.iso, r.dest, r.filling);
       const handedLabel = r.destType === "member" ? "渡し済み" : "用意済み";
       html += `
@@ -957,12 +1052,11 @@ function renderFillingDetailBody(){
       `;
     });
   });
+  return html;
+}
 
-  body.innerHTML = html;
-
-  const bulkBtn = document.getElementById("bulkCompleteBtn");
-  if(bulkBtn) bulkBtn.addEventListener("click", () => bulkCompleteFilling(filling, rows));
-
+function bindDateModeEvents(filling){
+  const body = document.getElementById("modalBody");
   body.querySelectorAll(".detail-row").forEach(rowEl => {
     const iso = rowEl.dataset.iso;
     const dest = rowEl.dataset.dest;
@@ -971,7 +1065,8 @@ function renderFillingDetailBody(){
         const kind = btn.dataset.kind;
         const current = getStatus(iso, dest, filling);
         const nextVal = { ...current, [kind]: !current[kind] };
-        const label = kind === "cooked" ? "調理済み" : (rows.find(r => r.iso === iso && r.dest === dest).destType === "member" ? "渡し済み" : "用意済み");
+        const destType = destTypeOf(dest);
+        const label = kind === "cooked" ? "調理済み" : (destType === "member" ? "渡し済み" : "用意済み");
         const actionLabel = nextVal[kind] ? label : `未${label}`;
         showConfirm(`${dest}の${filling}（${iso}）を『${actionLabel}』にしますか？`, async () => {
           btn.disabled = true;
@@ -982,6 +1077,111 @@ function renderFillingDetailBody(){
         });
       });
     });
+  });
+}
+
+// 渡し先名からdestType（member/hq/chise）を判定する（人ごと表示での確認メッセージ用）
+function destTypeOf(dest){
+  if(dest === DEST_HQ) return "hq";
+  if(dest === DEST_CHISE_KONOMI) return "chise";
+  return "member";
+}
+
+/* ---------- 人ごと表示 ---------- */
+// 選んだ日の範囲を渡し先ごとに合計し、1人（1渡し先）1行にまとめる。
+// 例：サーモン／YUMI 合計25個（11/2：17個、11/3：8個）
+function buildPersonGroups(rows){
+  const byDest = {};
+  rows.forEach(r => {
+    if(!byDest[r.dest]){
+      byDest[r.dest] = { dest: r.dest, destType: r.destType, total: 0, byIso: {} };
+    }
+    byDest[r.dest].total += r.qty;
+    byDest[r.dest].byIso[r.iso] = (byDest[r.dest].byIso[r.iso] || 0) + r.qty;
+  });
+  return Object.values(byDest).sort((a, b) => destSortKey(a.dest, a.destType) - destSortKey(b.dest, b.destType));
+}
+
+// group内の全日付について、指定した種類(cooked/handed)の済み状態をまとめて判定する。
+// state: "all"(全日済み) | "none"(未着手) | "partial"(一部の日だけ済み)
+function groupKindStatus(group, filling, kind){
+  const isos = Object.keys(group.byIso).sort();
+  const doneIsos = isos.filter(iso => getStatus(iso, group.dest, filling)[kind]);
+  const state_ = doneIsos.length === 0 ? "none" : (doneIsos.length === isos.length ? "all" : "partial");
+  return { isos, doneIsos, state: state_ };
+}
+
+function statusButtonHtml(group, filling, kind){
+  const label = kind === "cooked" ? "調理済み" : (group.destType === "member" ? "渡し済み" : "用意済み");
+  const { doneIsos, state: st } = groupKindStatus(group, filling, kind);
+  let text = label;
+  let cls = "";
+  if(st === "all"){ text = `${label}✓`; cls = "active"; }
+  else if(st === "partial"){ text = `一部済み（${doneIsos.map(isoToMdLabel).join("・")}のみ）`; cls = "partial"; }
+  return `<button type="button" class="status-btn ${kind} ${cls}" data-kind="${kind}">${text}</button>`;
+}
+
+function renderPersonModeHtml(filling, rows){
+  const groups = buildPersonGroups(rows);
+  let html = "";
+  groups.forEach(g => {
+    const color = g.destType === "member" ? personalColorFor(g.dest) : null;
+    const isos = Object.keys(g.byIso).sort();
+    const breakdownText = isos.map(iso => `${isoToMdLabel(iso)}：${g.byIso[iso]}個`).join("、");
+    const rowStyle = color ? ` style="--person-bar:${color.bar};"` : "";
+    const nameStyle = color ? ` style="--person-bg:${color.bg};--person-text:${color.text};"` : "";
+    html += `
+      <div class="detail-row person-row${color ? " has-color" : ""}"${rowStyle} data-dest="${escapeHtml(g.dest)}">
+        <div class="detail-row-head">
+          <span class="detail-dest-name${color ? " person-name-badge" : ""}"${nameStyle}>${escapeHtml(g.dest)}</span>
+          <span class="detail-qty">合計${g.total}個</span>
+        </div>
+        <div class="person-breakdown">（${breakdownText}）</div>
+        <div class="detail-btn-row">
+          ${statusButtonHtml(g, filling, "cooked")}
+          ${statusButtonHtml(g, filling, "handed")}
+        </div>
+      </div>
+    `;
+  });
+  return html;
+}
+
+function bindPersonModeEvents(filling, rows){
+  const groups = buildPersonGroups(rows);
+  const body = document.getElementById("modalBody");
+  body.querySelectorAll(".person-row").forEach(rowEl => {
+    const dest = rowEl.dataset.dest;
+    const group = groups.find(g => g.dest === dest);
+    if(!group) return;
+    rowEl.querySelectorAll(".status-btn").forEach(btn => {
+      btn.addEventListener("click", () => {
+        const kind = btn.dataset.kind;
+        const { state: st, isos } = groupKindStatus(group, filling, kind);
+        // 全日済みなら未済みに戻す。未着手・一部済みなら、押すことで全日分を済みにする
+        const nextValue = st !== "all";
+        togglePersonGroupStatus(filling, group.dest, group.destType, isos, kind, nextValue);
+      });
+    });
+  });
+}
+
+// 人ごと表示のボタン操作：その渡し先・その具材の、選んだ日の範囲すべてをまとめて
+// 保存する（日付ごとに「具材ステータス」シートへ正しく保存する。保存先・粒度は
+// 日付ごと表示と同じ＝日付×渡し先×具材の行単位のまま）
+async function togglePersonGroupStatus(filling, dest, destType, isos, kind, nextValue){
+  const label = kind === "cooked" ? "調理済み" : (destType === "member" ? "渡し済み" : "用意済み");
+  const actionLabel = nextValue ? label : `未${label}`;
+  const dateLabels = isos.map(isoToMdLabel).join("・");
+  showConfirm(`${dest}の${filling}（${dateLabels}）を『${actionLabel}』にしますか？`, async () => {
+    const targets = isos.map(iso => ({ iso, dest, filling }));
+    const { conflictCount } = await saveMultipleCellStatuses(targets, current => ({
+      handed: kind === "handed" ? nextValue : current.handed,
+      cooked: kind === "cooked" ? nextValue : current.cooked,
+    }));
+    if(conflictCount > 0) showConflictMessage();
+    renderFillingDetailBody();
+    renderChecklist();
   });
 }
 
@@ -997,37 +1197,7 @@ async function bulkCompleteFilling(filling, rows){
   const uncooked = rows.filter(r => !getStatus(r.iso, r.dest, r.filling).cooked);
   if(uncooked.length === 0) return;
   showConfirm(`選んだ日の${filling}（${uncooked.length}件）をまとめて調理済みにしますか？`, async () => {
-    // 1回のスナップショットで全行まとめて競合確認してからまとめて送信する
-    // （行ごとに個別フェッチすると件数分だけ通信が増えて遅くなるため）
-    const snapshot = await fetchCellStatusSnapshot();
-    const toSave = [];
-    let conflictCount = 0;
-    uncooked.forEach(r => {
-      const current = getStatus(r.iso, r.dest, r.filling);
-      const latestRaw = snapshot && snapshot[r.iso] && snapshot[r.iso][r.dest] && snapshot[r.iso][r.dest][r.filling]
-        ? snapshot[r.iso][r.dest][r.filling].updatedAtRaw : null;
-      if(snapshot !== undefined && current.updatedAtRaw && latestRaw && latestRaw !== current.updatedAtRaw){
-        conflictCount++;
-        return;
-      }
-      toSave.push(r);
-    });
-
-    try{
-      await Promise.all(toSave.map(r => {
-        const current = getStatus(r.iso, r.dest, r.filling);
-        return postCellStatus(r.iso, r.dest, r.filling, current.handed, true, current.updatedAtRaw);
-      }));
-      const after = await fetchCellStatusSnapshot();
-      toSave.forEach(r => {
-        const current = getStatus(r.iso, r.dest, r.filling);
-        const latestRaw = after && after[r.iso] && after[r.iso][r.dest] && after[r.iso][r.dest][r.filling]
-          ? after[r.iso][r.dest][r.filling].updatedAtRaw : null;
-        setStatus(r.iso, r.dest, r.filling, { handed: current.handed, cooked: true, updatedAtRaw: latestRaw !== null ? latestRaw : current.updatedAtRaw });
-      });
-    }catch(e){
-      console.error("まとめて調理済みの保存に失敗しました", e);
-    }
+    const { conflictCount } = await saveMultipleCellStatuses(uncooked, current => ({ handed: current.handed, cooked: true }));
     if(conflictCount > 0) showConflictMessage();
     renderFillingDetailBody();
     renderChecklist();
@@ -1052,6 +1222,40 @@ async function fetchCellStatusSnapshot(){
 async function postCellStatus(iso, dest, filling, handed, cooked, expectedUpdatedAt){
   const payload = { type: "saveStatus", date: iso, member: dest, filling, handed: !!handed, cooked: !!cooked, expectedUpdatedAt: expectedUpdatedAt || undefined };
   await fetch(SCRIPT_URL, { method: "POST", mode: "no-cors", body: JSON.stringify(payload) });
+}
+
+// 複数の(iso, dest, filling)の行をまとめて保存する（「まとめて調理済みにする」ボタン・
+// 人ごと表示の一括チェックの両方で使う共通処理）。1回のスナップショットで全行まとめて
+// 競合確認してからまとめて送信する（行ごとに個別フェッチすると件数分だけ通信が増えて
+// 遅くなるため）。updater(current)は各行の新しいhanded/cookedを返す関数。
+// 戻り値: { savedCount, conflictCount }
+async function saveMultipleCellStatuses(targets, updater){
+  const snapshot = await fetchCellStatusSnapshot();
+  const toSave = [];
+  let conflictCount = 0;
+  targets.forEach(t => {
+    const current = getStatus(t.iso, t.dest, t.filling);
+    const latestRaw = snapshot && snapshot[t.iso] && snapshot[t.iso][t.dest] && snapshot[t.iso][t.dest][t.filling]
+      ? snapshot[t.iso][t.dest][t.filling].updatedAtRaw : null;
+    if(snapshot !== undefined && current.updatedAtRaw && latestRaw && latestRaw !== current.updatedAtRaw){
+      conflictCount++;
+      return;
+    }
+    toSave.push({ ...t, current, next: updater(current, t) });
+  });
+
+  try{
+    await Promise.all(toSave.map(t => postCellStatus(t.iso, t.dest, t.filling, t.next.handed, t.next.cooked, t.current.updatedAtRaw)));
+    const after = await fetchCellStatusSnapshot();
+    toSave.forEach(t => {
+      const latestRaw = after && after[t.iso] && after[t.iso][t.dest] && after[t.iso][t.dest][t.filling]
+        ? after[t.iso][t.dest][t.filling].updatedAtRaw : null;
+      setStatus(t.iso, t.dest, t.filling, { handed: t.next.handed, cooked: t.next.cooked, updatedAtRaw: latestRaw !== null ? latestRaw : t.current.updatedAtRaw });
+    });
+  }catch(e){
+    console.error("まとめてのステータス保存に失敗しました", e);
+  }
+  return { savedCount: toSave.length, conflictCount };
 }
 
 async function saveCellStatus(iso, dest, filling, handed, cooked){
@@ -1153,6 +1357,12 @@ async function handleRefresh(){
 
 async function init(){
   renderPresetButtons();
+  // 具材の内訳画面の表示（人ごと／日付ごと）はlocalStorageに表示の便利機能として覚えておく。
+  // 保存が無い・壊れている場合は既定の「人ごと」のまま
+  try{
+    const storedMode = localStorage.getItem(VIEW_MODE_STORAGE_KEY);
+    if(storedMode === "person" || storedMode === "date") state.detailViewMode = storedMode;
+  }catch(e){}
   document.getElementById("refreshBtn").addEventListener("click", handleRefresh);
   document.getElementById("modalCloseBtn").addEventListener("click", closeFillingDetail);
   document.getElementById("detailModal").addEventListener("click", e => {
