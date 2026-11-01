@@ -326,7 +326,7 @@
 
   /* ── 人ごと表示：パーソナルカラー ── */
   /* 左端の太い帯で担当者を示す。色だけに頼らないよう、帯が無い場合でも
-     名前のテキスト自体は常に表示する（YUKARI・本部・チセ等は帯なし） */
+     名前のテキスト自体は常に表示する（本部・チセ等は帯なし） */
   .person-row.has-color{
     border-left: 6px solid var(--person-bar, var(--line));
   }
@@ -462,12 +462,6 @@ const ALWAYS_HQ_FILLINGS = ["枝豆", "梅", "うなぎ"];
 const DEST_HQ = "本部";
 const DEST_CHISE_KONOMI = "チセ(具材のみ)";
 
-// CTH特別会場（期間限定）: admin.html/cth-calendar.htmlと同じ定義。
-// 作業中プランがまだ編集されていないCTH期間中の日は、UvA枠がCTH固定50個の標準比率按分に
-// フォールバックする（cth-calendar.htmlのおにぎり表示と同じ扱い）。
-const CTH_SPECIAL_START = "2026-08-24";
-const CTH_SPECIAL_END = "2026-09-11";
-const CTH_SPECIAL_QTY = 50;
 const FILLING_RATIOS = {
   "スパイシーツナマヨ": 0.2234,
   "テリヤキチキン": 0.1966,
@@ -479,16 +473,6 @@ const FILLING_RATIOS = {
   "うなぎ": 0.05,
   "今月のおにぎり": 0.05,
 };
-function isCthSpecialDay(iso){
-  const dow = new Date(`${iso}T00:00:00`).getDay();
-  return dow >= 1 && dow <= 5 && iso >= CTH_SPECIAL_START && iso <= CTH_SPECIAL_END;
-}
-function buildFillingDefaults(total){
-  const obj = {};
-  Object.keys(FILLING_RATIOS).forEach(f => { obj[f] = Math.round(total * FILLING_RATIOS[f]); });
-  return obj;
-}
-
 const LOCAL_STORAGE_KEY = "chabon_cooking_selected_dates";
 const VIEW_MODE_STORAGE_KEY = "chabon_cooking_detail_view_mode";
 
@@ -547,7 +531,7 @@ function parseGvizDateCell(cell){
   return null;
 }
 
-// 作業中プランから日付ごとのZuid/UvA(CTH)具材内訳・営業フラグ・メンバー別の生産割り振り(prod)を
+// 作業中プランから日付ごとのZuid/UvA具材内訳・営業フラグ・メンバー別の生産割り振り(prod)を
 // 取り出す。prodはadmin.htmlが生産割り振りを保存したときの内容（確定プランが無い日の、
 // 現時点での「誰が何を作る予定か」）。admin.htmlで一度も編集されていない日はprodが空になる。
 // ※確定プランがある日は具材別の内訳・メンバー別の割り振りも確定プランから取る
@@ -713,10 +697,6 @@ function getDayBreakdown(iso){
       zuidQty[f] = (draft.zuidOpen !== false) ? (draft.zuidFillingQty[f] || 0) : 0;
       uvaQty[f] = (draft.uvaOpen !== false) ? (draft.uvaFillingQty[f] || 0) : 0;
     });
-  } else if(isCthSpecialDay(iso)){
-    // 作業中プランが未編集でもCTH期間中は標準比率で50個按分したデフォルト値を暫定的に使う
-    const defaults = buildFillingDefaults(CTH_SPECIAL_QTY);
-    FILLINGS.forEach(f => { uvaQty[f] = defaults[f] || 0; });
   }
 
   const hq = {};
@@ -964,7 +944,7 @@ function isoToMdLabel(iso){
   return `${d.getMonth() + 1}/${d.getDate()}`;
 }
 
-// 渡し先の並び順：パーソナルカラーのあるメンバー → 色の無いメンバー（YUKARI等） → 本部 → チセ
+// 渡し先の並び順：パーソナルカラーのあるメンバー → 本部 → チセ
 const PERSON_COLOR_ORDER = ["YUMI", "MARI", "CHIKAKO", "MIKI"];
 function destSortKey(dest, destType){
   if(destType === "member"){

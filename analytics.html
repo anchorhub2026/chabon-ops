@@ -264,7 +264,7 @@
 
   <section>
     <h2>🏬 店舗選択</h2>
-    <p class="off-note">Zuid・UvA・CTH（該当期間のみ）はそれぞれ完全に独立して集計しています。「全店舗合計」は参考値です。</p>
+    <p class="off-note">Zuid・UvAはそれぞれ完全に独立して集計しています。「全店舗合計」は参考値です。</p>
     <div class="filter-mode-tabs" id="storeTabs"></div>
     <div id="storeDataErrorArea"></div>
   </section>
@@ -374,7 +374,7 @@ const WEEKDAY_COLOR_INDEX = { "日":0, "月":1, "火":2, "水":3, "木":4, "金"
 
 const ALL_STORES_KEY = "__ALL__";
 // 個別店舗の表示順（この順に並べ、リストにない店舗名は末尾にアルファベット順で追加）
-const STORE_ORDER_PRIORITY = ["Zuid", "UvA", "CTH"];
+const STORE_ORDER_PRIORITY = ["Zuid", "UvA"];
 
 // UvA学事暦関連（gviz経由、SCRIPT_URL経由のApps Script Web Appとは別系統）
 const SHIFT_SPREADSHEET_ID = "1PHf1o3smqIQdeFkhBHjBZUEub7VtRcynQLllmSR7w-s";
@@ -388,7 +388,7 @@ const UVA_ACADEMIC_LOW_SAMPLE_THRESHOLD = 5;
 
 const state = {
   rawRows: [],
-  byStore: {},          // 店舗名 -> 日付単位に集計した行の配列（Zuid/UvA/CTH等、店舗ごとに完全分離）
+  byStore: {},          // 店舗名 -> 日付単位に集計した行の配列（Zuid/UvA等、店舗ごとに完全分離）
   allStoresRows: [],    // 全店舗合計（参考値）を日付単位に集計した行の配列
   storeList: [],        // 実データに存在する店舗名の一覧（表示順）
   selectedStore: null,  // 現在選択中の店舗名、または ALL_STORES_KEY（全店舗合計）
@@ -677,7 +677,7 @@ async function fetchConfirmedPlans(){
 }
 
 // 「時間帯別実績」シートは1行＝1日×1店舗×1具材で記録されている（admin.html/cooking.htmlの
-// 保存単位に対応）。Zuidの列と、UvA枠が特別出店（CTHなど）に差し替わった時の列を区別するため、
+// 保存単位に対応）。Zuidの列と、UvA枠が特別出店に差し替わった時の列を区別するため、
 // 「店舗」列そのものではなく実際の「場所名」を店舗名として扱う
 // （index.htmlの「UvA 販売場所名」入力欄で "UvA" 以外を入力した場合、それが実店舗名になる）。
 function effectiveStoreName(row){
@@ -709,7 +709,7 @@ function lastKnownRemain(row){
   return last;
 }
 
-// 店舗を表示用の順序で並べる（Zuid→UvA→CTH→その他アルファベット順）
+// 店舗を表示用の順序で並べる（Zuid→UvA→その他アルファベット順）
 function sortStoreNames(names){
   return names.slice().sort((a, b) => {
     const ia = STORE_ORDER_PRIORITY.indexOf(a);
@@ -837,8 +837,10 @@ function aggregateAllStoresByDate(dateStoreRows){
 }
 
 // rawRowsから店舗別データを一式（byStore・allStoresRows・storeList）組み立てる
+// CTH特別会場（期間限定、終了済み）の行はタブ・集計のどちらにも出さない。
+// 「販売実績」シート側のCTHデータ自体は削除しない（ここで除外しているだけ）。
 function buildStoreData(rawRows){
-  const byDateStore = aggregateByDateAndStore(rawRows);
+  const byDateStore = aggregateByDateAndStore(rawRows).filter(r => r.store !== "CTH");
   const storeList = sortStoreNames(Array.from(new Set(byDateStore.map(r => r.store))));
   const byStore = {};
   storeList.forEach(store => { byStore[store] = byDateStore.filter(r => r.store === store); });
