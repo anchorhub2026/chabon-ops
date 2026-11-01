@@ -402,11 +402,16 @@ const DAY_NAMES = ["日", "月", "火", "水", "木", "金", "土"];
 const FILLINGS = ["ツナマヨ", "スパイシーツナマヨ", "テリヤキチキン", "サーモン", "スパイシー味噌", "枝豆", "梅", "うなぎ", "今月のおにぎり"];
 const ALWAYS_HQ_FILLINGS = ["枝豆", "梅", "うなぎ"];
 
-// 渡し先の種類（ニギニギ隊の各メンバーに加えて、本部・チセの2種類を扱う）。
+// 渡し先の種類（ニギニギ隊の各メンバーに加えて、本部・チセ(具材のみ)を扱う）。
+// チセに納めるおにぎり本体（チセさんシートの「具材のみ」ではない通常行）は、
+// ニギニギ隊か本部が握って用意する分であり、その具材はすでにメンバー・本部の数に
+// 含まれている（チセ向けの内訳だけを別途持っているわけではない）。そのため
+// 「チセ(おにぎり)」という独立した渡し先は設けない（必要合計での二重カウントになるため）。
+// チセが自分で握るための「具材のみ」注文だけは、メンバー・本部の生産数には含まれない
+// 純粋な追加分のため、独立した渡し先として扱う。
 // 「具材ステータス」シートの「メンバー」列はただの自由文字列のため、これらの名前を
 // そのまま保存できる（既存のニギニギ隊メンバー名の行とは完全に独立して共存する）。
 const DEST_HQ = "本部";
-const DEST_CHISE_ONIGIRI = "チセ(おにぎり)";
 const DEST_CHISE_KONOMI = "チセ(具材のみ)";
 
 // CTH特別会場（期間限定）: admin.html/cth-calendar.htmlと同じ定義。
@@ -608,12 +613,18 @@ function setStatus(iso, dest, filling, value){
   state.cellStatus[iso][dest][filling] = value;
 }
 
-/* ---------- 1日分の渡し先別内訳（ニギニギ隊各メンバー／本部／チセおにぎり／チセ具材のみ） ---------- */
+/* ---------- 1日分の渡し先別内訳（ニギニギ隊各メンバー／本部／チセ具材のみ） ---------- */
 // 確定プランがある日は確定プランの内訳を最優先で使う（admin.htmlで実装した確定プランの
 // 読み込み処理＝confirmed-plan.jsを共通利用）。確定プランが無い日は作業中プランから出す。
 // 作業中プランにメンバー別の割り振り(prod)が保存されていない日（admin.htmlでまだ一度も
 // 編集されていない日）は、誰の担当か分からないため、必要数の全量を本部（未割り当て分の
 // 受け皿）に計上する。
+//
+// チセに納めるおにぎり本体（チセさんシートの「具材のみ」ではない通常行）は、ニギニギ隊・
+// 本部のどちらかが握って用意する分であり、その具材はすでにmembersBreakdown・hqの数に
+// 含まれている。そのため独立した渡し先としては返さない（渡し先として表示・集計すると
+// 二重カウントになる）。ただし、本部の必要数を計算する際の「必要数」には引き続き含める
+// （admin.html側の本部の計算式と一致させ、本部の数自体は変えないため）。
 function getDayBreakdown(iso){
   const mdKey = mdLabel(new Date(`${iso}T00:00:00`));
   const confirmed = state.confirmedPlanByDate[mdKey];
@@ -630,9 +641,7 @@ function getDayBreakdown(iso){
     });
     const hq = {};
     FILLINGS.forEach(f => { hq[f] = (confirmed.hqBreakdown && confirmed.hqBreakdown[f]) || 0; });
-    const chiseOnigiri = {};
-    FILLINGS.forEach(f => { chiseOnigiri[f] = (confirmed.chiseBreakdown && confirmed.chiseBreakdown[f]) || 0; });
-    return { membersBreakdown, hq, chiseOnigiri, chiseKonomi, source: "confirmed" };
+    return { membersBreakdown, hq, chiseKonomi, source: "confirmed" };
   }
 
   const draft = state.draftByDate[iso];
@@ -644,8 +653,9 @@ function getDayBreakdown(iso){
     });
   }
 
-  const chiseOnigiri = {};
-  FILLINGS.forEach(f => { chiseOnigiri[f] = (chiseEntry && chiseEntry.breakdown && chiseEntry.breakdown[f]) || 0; });
+  // チセ向けおにぎり本体の注文数（渡し先としては返さず、本部の必要数の計算にのみ使う）
+  const chiseOnigiriForHq = {};
+  FILLINGS.forEach(f => { chiseOnigiriForHq[f] = (chiseEntry && chiseEntry.breakdown && chiseEntry.breakdown[f]) || 0; });
 
   const zuidQty = {}, uvaQty = {};
   if(draft){
@@ -661,7 +671,7 @@ function getDayBreakdown(iso){
 
   const hq = {};
   FILLINGS.forEach(f => {
-    const needed = (zuidQty[f] || 0) + (uvaQty[f] || 0) + (chiseOnigiri[f] || 0);
+    const needed = (zuidQty[f] || 0) + (uvaQty[f] || 0) + (chiseOnigiriForHq[f] || 0);
     if(ALWAYS_HQ_FILLINGS.includes(f)){
       // 枝豆・梅・うなぎは常に本部製造（ニギニギ隊には割り振らない。admin.htmlと同じルール）
       hq[f] = needed;
@@ -671,7 +681,7 @@ function getDayBreakdown(iso){
     }
   });
 
-  return { membersBreakdown, hq, chiseOnigiri, chiseKonomi, source: draft ? "draft" : "none" };
+  return { membersBreakdown, hq, chiseKonomi, source: draft ? "draft" : "none" };
 }
 
 /* ---------- 対象の日数を選ぶ ---------- */
@@ -785,8 +795,10 @@ function renderDateList(){
 }
 
 /* ---------- 具材ごとの残り一覧 ---------- */
-// 選択中の日付それぞれについて、渡し先（メンバー各人／本部／チセおにぎり／チセ具材のみ）×
+// 選択中の日付それぞれについて、渡し先（メンバー各人／本部／チセ具材のみ）×
 // 具材ごとの行（{iso, dest, destType, filling, qty}）に展開したフラットなリストを作る。
+// チセ向けおにぎり本体は独立した渡し先として持たない（メンバー・本部の数に含まれているため。
+// getDayBreakdown参照）。
 // 「調理済み」はこの行単位（日付×渡し先×具材）のON/OFFで管理するため、
 // 集計（必要合計・調理済み・残り）もこのリストから行単位で積み上げる。
 function buildRows(selectedIsos){
@@ -802,10 +814,6 @@ function buildRows(selectedIsos){
     FILLINGS.forEach(f => {
       const qty = bd.hq[f] || 0;
       if(qty > 0) rows.push({ iso, dest: DEST_HQ, destType: "hq", filling: f, qty });
-    });
-    FILLINGS.forEach(f => {
-      const qty = bd.chiseOnigiri[f] || 0;
-      if(qty > 0) rows.push({ iso, dest: DEST_CHISE_ONIGIRI, destType: "chise", filling: f, qty });
     });
     FILLINGS.forEach(f => {
       const qty = bd.chiseKonomi[f] || 0;
@@ -827,7 +835,7 @@ function aggregateByFilling(rows){
 }
 
 function destLabel(dest, destType){
-  return dest; // メンバー名・本部・チセ(おにぎり)・チセ(具材のみ)はそのまま表示名として使う
+  return dest; // メンバー名・本部・チセ(具材のみ)はそのまま表示名として使う
 }
 
 function renderChecklist(){
