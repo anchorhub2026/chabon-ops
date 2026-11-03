@@ -151,7 +151,7 @@
 
   /* td（セル外枠）*/
   /* table-layout:fixedのためwidth指定は不要（thead thの数に応じて自動で均等割りされる。
-     土曜列の有無で列数が6/7と変わるため、固定パーセンテージにはしない） */
+     土曜列・日曜列はそれぞれ独立して有無が変わり列数が5〜7になるため、固定パーセンテージにはしない） */
   .cal tbody td{
     vertical-align: top;
     background: transparent;
@@ -540,7 +540,7 @@
 
 <script>
 const SPREADSHEET_ID = "1PHf1o3smqIQdeFkhBHjBZUEub7VtRcynQLllmSR7w-s";
-const COL_LABELS = ["日","月","火","水","木","金"];
+const COL_LABELS = ["月","火","水","木","金"];
 
 let dispYear, dispMonth;
 let allPlans = {};
@@ -638,33 +638,35 @@ async function loadData(){
 }
 
 /* ── Calendar render ── */
-// 週ごとに、日〜金の日付配列に加えてその週の土曜日の実日付（Dateオブジェクト）を返す。
-// 土曜日は月をまたぐ場合もあるため、月内の日付配列とは別にDateで持っておき、
-// 確定プランの有無判定・表示どちらもこのDateから計算する。
+// 週ごとに、月〜金の日付配列に加えて、その週の土曜日・日曜日の実日付（Dateオブジェクト）を
+// それぞれ返す。土曜日・日曜日は月をまたぐ場合もあるため、月内の日付配列とは別にDateで
+// 持っておき、確定プランの有無判定・表示どちらもこのDateから計算する。
 function buildWeeks(yr, mo){
   const lastDay = new Date(yr, mo + 1, 0).getDate();
   const weeks = [];
-  let week = new Array(6).fill(null);
+  let week = new Array(5).fill(null);
 
   function finalizeWeek(){
-    let saturday = null;
-    for(let col = 0; col < 6; col++){
+    let saturday = null, sunday = null;
+    for(let col = 0; col < 5; col++){
       if(week[col] !== null){
-        const sunday = new Date(yr, mo, week[col]);
-        sunday.setDate(sunday.getDate() - col);
-        saturday = new Date(sunday);
-        saturday.setDate(saturday.getDate() + 6);
+        const monday = new Date(yr, mo, week[col]);
+        monday.setDate(monday.getDate() - col);
+        saturday = new Date(monday);
+        saturday.setDate(saturday.getDate() + 5);
+        sunday = new Date(monday);
+        sunday.setDate(sunday.getDate() + 6);
         break;
       }
     }
-    weeks.push({ days: week, saturday });
-    week = new Array(6).fill(null);
+    weeks.push({ days: week, saturday, sunday });
+    week = new Array(5).fill(null);
   }
 
   for(let d = 1; d <= lastDay; d++){
     const dow = new Date(yr, mo, d).getDay();
-    if(dow === 6) continue;
-    week[dow] = d;
+    if(dow === 0 || dow === 6) continue; // 土日はday配列に含めず、saturday/sundayで別枠管理
+    week[dow - 1] = d; // dow: 1(月)→0 ... 5(金)→4
     if(dow === 5) finalizeWeek();
   }
   if(week.some(v => v !== null)) finalizeWeek();
@@ -765,32 +767,39 @@ function renderCalendar(){
 
   const weeks = buildWeeks(yr, mo);
 
-  // 確定プランに土曜日のデータが存在する週が1つでもあれば、その月のカレンダーには
-  // 土曜列を追加する（admin.htmlの「土日イベントを追加」機能で設定したデータを表示するため）。
-  // データがない通常の月は、これまで通り日〜金の6列のまま。
+  // 確定プランに土曜日・日曜日のデータが存在する週が1つでもあれば、その月のカレンダーには
+  // それぞれ土曜列・日曜列を追加する（admin.htmlの「土日イベントを追加」機能で設定した
+  // データを表示するため）。土曜・日曜は互いに独立して判定する。
+  // データがない通常の月は、これまで通り月〜金の5列のまま。
   const showSat = weeks.some(wk => wk.saturday && allPlans[planKeyForDate(wk.saturday)]);
-  const colLabels = showSat ? [...COL_LABELS, "土"] : COL_LABELS;
+  const showSun = weeks.some(wk => wk.sunday && allPlans[planKeyForDate(wk.sunday)]);
+  const colLabels = [...COL_LABELS, ...(showSat ? ["土"] : []), ...(showSun ? ["日"] : [])];
 
   let html = `<table class="cal"><thead><tr>`;
-  colLabels.forEach((lbl, i) => {
-    const cls = i === 0 ? "col-sun" : (lbl === "土" ? "col-sat" : "");
+  colLabels.forEach(lbl => {
+    const cls = lbl === "日" ? "col-sun" : (lbl === "土" ? "col-sat" : "");
     html += `<th class="${cls}">${lbl}</th>`;
   });
   html += `</tr></thead><tbody>`;
 
   for(const wk of weeks){
     html += `<tr>`;
-    for(let ci = 0; ci < 6; ci++){
+    for(let ci = 0; ci < 5; ci++){
       const day = wk.days[ci];
       if(day === null){
         html += `<td class="empty-cell"></td>`;
         continue;
       }
-      html += dayCellHtml(new Date(yr, mo, day), today, ci === 0, false);
+      html += dayCellHtml(new Date(yr, mo, day), today, false, false);
     }
     if(showSat){
       html += wk.saturday
         ? dayCellHtml(wk.saturday, today, false, true)
+        : `<td class="empty-cell"></td>`;
+    }
+    if(showSun){
+      html += wk.sunday
+        ? dayCellHtml(wk.sunday, today, true, false)
         : `<td class="empty-cell"></td>`;
     }
     html += `</tr>`;
