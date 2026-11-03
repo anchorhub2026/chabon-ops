@@ -715,8 +715,9 @@ function getDayBreakdown(iso){
 }
 
 /* ---------- 対象の日数を選ぶ ---------- */
-// 選択肢に出す日＝「明日」以降・日曜日ではない・確定プランか作業中プランかチセのデータが
-// 何かしらある日。何も無い日（店が休みの日・まだ何も予定が無い日）は選択肢に出さない。
+// 選択肢に出す日＝「明日」以降で、確定プランか作業中プランかチセのデータが何かしらある日。
+// 曜日では絞らない（土日イベント等で日曜日に計画がある日も対象に含める）。
+// 何も無い日（店が休みの日・まだ何も予定が無い日）は選択肢に出さない。
 function hasDataForDate(iso){
   const mdKey = mdLabel(new Date(`${iso}T00:00:00`));
   if(state.confirmedPlanByDate[mdKey]) return true;
@@ -735,7 +736,6 @@ function buildCandidateDates(){
   const list = [];
   for(let i = 1; i <= 14; i++){
     const d = addDays(today, i);
-    if(d.getDay() === 0) continue; // 日曜日は対象外（Zuid・UvAとも休業）
     const iso = isoDate(d);
     if(!hasDataForDate(iso)) continue;
     list.push({ iso, dow: d.getDay(), dateObj: d });
@@ -759,7 +759,7 @@ function presetDates(mode){
   }
   if(mode === "restOfWeek"){
     const monday = getMonday(today);
-    const weekEnd = addDays(monday, 5); // 今週の土曜日まで
+    const weekEnd = addDays(monday, 6); // 今週の日曜日まで（土日に計画がある場合も含める）
     return state.candidates.filter(d => d.dateObj > today && d.dateObj <= weekEnd).map(d => d.iso);
   }
   return [];
