@@ -342,6 +342,34 @@
     color: #888;
     margin: -2px 0 8px;
   }
+
+  /* ── トップ画面：人ごとの残り ── */
+  .person-summary-row{
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    padding: 12px 14px;
+    margin-bottom: 8px;
+    cursor: pointer;
+    background: #fff;
+  }
+  .person-summary-row:active{ background: #f5f4f0; }
+  .person-summary-row.done{ background: #f5f4f0; border-color: #ddd; }
+  .person-summary-row.has-color{ border-left: 6px solid var(--person-bar, var(--line)); }
+  .person-summary-head{
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 8px;
+  }
+  .person-summary-name{ font-size: 0.92rem; font-weight: bold; color: var(--main-dark); }
+  .person-summary-row.done .person-summary-name{ color: #999; }
+  .person-summary-chevron{ color: #bbb; font-size: 1.1rem; margin-left: auto; flex-shrink: 0; }
+  .person-summary-line{
+    font-size: 0.82rem;
+    color: var(--ink);
+    margin-top: 6px;
+    line-height: 1.4;
+  }
   .conflict-msg{
     font-size: 0.76rem;
     color: var(--accent);
@@ -416,6 +444,11 @@
     <div id="checklistArea"><p class="off-note">日付を選択すると表示されます。</p></div>
     <p class="summary-note" id="summaryNote"></p>
   </section>
+
+  <section class="card">
+    <h2>人ごとの残り</h2>
+    <div id="personSummaryArea"><p class="off-note">日付を選択すると表示されます。</p></div>
+  </section>
 </main>
 
 <div class="modal-overlay" id="detailModal">
@@ -484,6 +517,7 @@ const state = {
   confirmedPlanByDate: {}, // "M/d" -> 確定プラン（confirmed-plan.js の parseConfirmedPlansSheet 参照）
   cellStatus: {},         // iso -> dest -> filling -> {handed, cooked, updatedAtRaw}
   openFilling: null,      // 詳細モーダルで開いている具材名
+  openPerson: null,       // 詳細モーダルで開いている人（渡し先）名
   conflictNotice: null,   // 楽観的ロックの競合メッセージ（詳細モーダル内に表示）
   detailViewMode: "person", // 具材の内訳画面の表示："person"(人ごと・初期値) | "date"(日付ごと)
 };
@@ -868,7 +902,98 @@ function destLabel(dest, destType){
   return dest; // メンバー名・本部・チセ(具材のみ)はそのまま表示名として使う
 }
 
+/* ---------- 人ごとの残り（トップ画面） ---------- */
+// 渡し先（メンバー各人／本部／チセ具材のみ）ごとに、選んだ日の範囲全体を集計する。
+// 「具材ごとの残り」と全く同じbuildRows()の結果・getStatus()判定から計算するため、
+// 両セクションの合計は必ず一致する。
+// cookRemaining: まだ「調理済み」になっていない個数（具材別の内訳つき）
+// handRemaining: 「調理済み」だが、まだ「渡し済み」（本部・チセは「用意済み」）になっていない個数
+function aggregatePersonSummary(rows){
+  const byDest = {};
+  rows.forEach(r => {
+    if(!byDest[r.dest]){
+      byDest[r.dest] = { dest: r.dest, destType: r.destType, total: 0, cookRemaining: 0, handRemaining: 0, cookByFilling: {}, handByFilling: {} };
+    }
+    const g = byDest[r.dest];
+    g.total += r.qty;
+    const st = getStatus(r.iso, r.dest, r.filling);
+    if(!st.cooked){
+      g.cookRemaining += r.qty;
+      g.cookByFilling[r.filling] = (g.cookByFilling[r.filling] || 0) + r.qty;
+    } else if(!st.handed){
+      g.handRemaining += r.qty;
+      g.handByFilling[r.filling] = (g.handByFilling[r.filling] || 0) + r.qty;
+    }
+  });
+  return Object.values(byDest).sort((a, b) => destSortKey(a.dest, a.destType) - destSortKey(b.dest, b.destType));
+}
+
+// {具材名: 個数} を「テリヤキチキン25・サーモン8　計33個」のような文字列にする
+function fillingBreakdownText(byFilling){
+  const total = Object.values(byFilling).reduce((s, v) => s + v, 0);
+  const parts = FILLINGS.filter(f => byFilling[f] > 0).map(f => `${f}${byFilling[f]}`);
+  return `${parts.join("・")}　計${total}個`;
+}
+
+function renderPersonSummary(){
+  const area = document.getElementById("personSummaryArea");
+  if(!area) return;
+  const selectedIsos = [...state.selected].sort();
+  if(selectedIsos.length === 0){
+    area.innerHTML = `<p class="off-note">日付を選択すると表示されます。</p>`;
+    return;
+  }
+
+  const rows = buildRows(selectedIsos);
+  const people = aggregatePersonSummary(rows);
+  if(people.length === 0){
+    area.innerHTML = `<p class="off-note">選択した日に、人ごとのデータがありません。</p>`;
+    return;
+  }
+
+  // 完了（調理・渡しとも残り0）の人はセクション下にまとめる。並び順自体は常に
+  // destSortKey（パーソナルカラーのあるメンバー→本部→チセ）を保つ
+  const remaining = people.filter(p => p.cookRemaining > 0 || p.handRemaining > 0);
+  const done = people.filter(p => p.cookRemaining === 0 && p.handRemaining === 0);
+
+  const rowHtml = p => {
+    const color = p.destType === "member" ? personalColorFor(p.dest) : null;
+    const rowStyle = color ? ` style="--person-bar:${color.bar};"` : "";
+    const nameStyle = color ? ` style="--person-bg:${color.bg};--person-text:${color.text};"` : "";
+    const isDone = p.cookRemaining === 0 && p.handRemaining === 0;
+    const handLabel = p.destType === "member" ? "渡しの残り" : "用意の残り";
+    return `
+      <div class="person-summary-row${color ? " has-color" : ""}${isDone ? " done" : ""}"${rowStyle} data-dest="${escapeHtml(p.dest)}">
+        <div class="person-summary-head">
+          <span class="person-summary-name${color ? " person-name-badge" : ""}"${nameStyle}>${escapeHtml(p.dest)}</span>
+          ${isDone ? `<span class="filling-done-badge">✓完了</span>` : ""}
+          <span class="person-summary-chevron">›</span>
+        </div>
+        ${!isDone ? `
+          <div class="person-summary-line">調理の残り：${p.cookRemaining > 0 ? fillingBreakdownText(p.cookByFilling) : "なし"}</div>
+          <div class="person-summary-line">${handLabel}：${p.handRemaining > 0 ? fillingBreakdownText(p.handByFilling) : "なし"}</div>
+        ` : ""}
+      </div>
+    `;
+  };
+
+  let html = remaining.map(rowHtml).join("");
+  if(done.length > 0){
+    html += `<hr class="section-divider"><div class="done-section-label">完了（${done.length}人）</div>`;
+    html += done.map(rowHtml).join("");
+  }
+  area.innerHTML = html;
+
+  area.querySelectorAll(".person-summary-row").forEach(el => {
+    el.addEventListener("click", () => openPersonDetail(el.dataset.dest));
+  });
+}
+
 function renderChecklist(){
+  // 「人ごとの残り」は「具材ごとの残り」と常に同じデータ（buildRows）から計算するため、
+  // ここで必ずセットで再描画する（呼び出し側がそれぞれ個別に呼び忘れて表示がずれるのを防ぐ）
+  renderPersonSummary();
+
   const area = document.getElementById("checklistArea");
   const noteEl = document.getElementById("summaryNote");
   const selectedIsos = [...state.selected].sort();
@@ -927,16 +1052,20 @@ function renderChecklist(){
 /* ---------- 具材の詳細（日付×渡し先ごとの内訳とチェック） ---------- */
 function openFillingDetail(filling){
   state.openFilling = filling;
+  state.openPerson = null;
   state.conflictNotice = null;
   document.getElementById("modalFillingName").textContent = filling;
   renderFillingDetailBody();
   document.getElementById("detailModal").classList.add("show");
   document.body.style.overflow = "hidden";
 }
+// 具材の詳細・人の詳細のどちらが開いていても、この1つのモーダル（#detailModal）を
+// 共通で使う。閉じる際は両方の状態をクリアする
 function closeFillingDetail(){
   document.getElementById("detailModal").classList.remove("show");
   document.body.style.overflow = "";
   state.openFilling = null;
+  state.openPerson = null;
 }
 
 function isoToMdLabel(iso){
@@ -1184,6 +1313,156 @@ async function bulkCompleteFilling(filling, rows){
   });
 }
 
+/* ---------- 人の詳細（具材ごとの内訳とチェック。タッパー詰め用） ---------- */
+// 「人ごとの残り」の行をタップすると開く。その人の全具材について、選んだ日の範囲の
+// 合計と日付ごとの内訳を1具材1行で表示する（具材の内訳画面の「人ごと」表示と対になる、
+// 具材↔人を入れ替えた表示）。
+function openPersonDetail(dest){
+  state.openPerson = dest;
+  state.openFilling = null;
+  state.conflictNotice = null;
+  document.getElementById("modalFillingName").textContent = dest;
+  renderPersonDetailBody();
+  document.getElementById("detailModal").classList.add("show");
+  document.body.style.overflow = "hidden";
+}
+
+// その人の行を、具材ごとに集計する（具材の内訳画面のbuildPersonGroupsと対になる処理）
+function buildFillingGroupsForDest(rows){
+  const byFilling = {};
+  rows.forEach(r => {
+    if(!byFilling[r.filling]) byFilling[r.filling] = { filling: r.filling, total: 0, byIso: {} };
+    byFilling[r.filling].total += r.qty;
+    byFilling[r.filling].byIso[r.iso] = (byFilling[r.filling].byIso[r.iso] || 0) + r.qty;
+  });
+  // FILLINGSの並び順を保つ
+  return FILLINGS.filter(f => byFilling[f]).map(f => byFilling[f]);
+}
+
+// group（1具材分）内の全日付について、指定した種類(cooked/handed)の済み状態をまとめて判定する
+// （groupKindStatusの具材↔人入れ替え版。dest固定・group.fillingを見る）
+function groupKindStatusForDest(dest, group, kind){
+  const isos = Object.keys(group.byIso).sort();
+  const doneIsos = isos.filter(iso => getStatus(iso, dest, group.filling)[kind]);
+  const st = doneIsos.length === 0 ? "none" : (doneIsos.length === isos.length ? "all" : "partial");
+  return { isos, doneIsos, state: st };
+}
+
+function statusButtonHtmlForDest(dest, group, kind, label){
+  const { doneIsos, state: st } = groupKindStatusForDest(dest, group, kind);
+  let text = label;
+  let cls = "";
+  if(st === "all"){ text = `${label}✓`; cls = "active"; }
+  else if(st === "partial"){ text = `一部済み（${doneIsos.map(isoToMdLabel).join("・")}のみ）`; cls = "partial"; }
+  return `<button type="button" class="status-btn ${kind} ${cls}" data-kind="${kind}">${text}</button>`;
+}
+
+function renderPersonDetailBody(){
+  const dest = state.openPerson;
+  const body = document.getElementById("modalBody");
+  if(!dest){ body.innerHTML = ""; return; }
+
+  const selectedIsos = [...state.selected].sort();
+  const rows = buildRows(selectedIsos).filter(r => r.dest === dest);
+  if(rows.length === 0){
+    body.innerHTML = `<p class="off-note">この人の内訳がありません。</p>`;
+    return;
+  }
+  const destType = rows[0].destType;
+  const handLabel = destType === "member" ? "渡し済み" : "用意済み";
+  // 「渡しの残り」＝調理済みだがまだ渡し済み（本部・チセは用意済み）になっていない分。
+  // トップ画面の「人ごとの残り」の定義と揃える
+  const handTargets = rows.filter(r => {
+    const st = getStatus(r.iso, r.dest, r.filling);
+    return st.cooked && !st.handed;
+  });
+  const remainingHand = handTargets.reduce((s, r) => s + r.qty, 0);
+
+  let html = `
+    <div class="modal-bulk-row">
+      <button type="button" class="bulk-complete-btn" id="personBulkHandBtn" ${remainingHand === 0 ? "disabled" : ""}>
+        この人の分をすべて${handLabel}にする（残り${remainingHand}個）
+      </button>
+    </div>
+    <div id="conflictMsgArea">${state.conflictNotice ? `<p class="conflict-msg">⚠️ ${escapeHtml(state.conflictNotice)}</p>` : ""}</div>
+  `;
+
+  const groups = buildFillingGroupsForDest(rows);
+  groups.forEach(g => {
+    const isos = Object.keys(g.byIso).sort();
+    const breakdownText = isos.map(iso => `${isoToMdLabel(iso)}：${g.byIso[iso]}個`).join("、");
+    html += `
+      <div class="detail-row" data-filling="${escapeHtml(g.filling)}">
+        <div class="detail-row-head">
+          <span class="detail-dest-name">${escapeHtml(g.filling)}</span>
+          <span class="detail-qty">合計${g.total}個</span>
+        </div>
+        <div class="person-breakdown">（${breakdownText}）</div>
+        <div class="detail-btn-row">
+          ${statusButtonHtmlForDest(dest, g, "cooked", "調理済み")}
+          ${statusButtonHtmlForDest(dest, g, "handed", handLabel)}
+        </div>
+      </div>
+    `;
+  });
+
+  body.innerHTML = html;
+
+  const bulkBtn = document.getElementById("personBulkHandBtn");
+  if(bulkBtn) bulkBtn.addEventListener("click", () => bulkHandPerson(dest, destType, rows));
+
+  body.querySelectorAll(".detail-row[data-filling]").forEach(rowEl => {
+    const filling = rowEl.dataset.filling;
+    const group = groups.find(g => g.filling === filling);
+    if(!group) return;
+    rowEl.querySelectorAll(".status-btn").forEach(btn => {
+      btn.addEventListener("click", () => {
+        const kind = btn.dataset.kind;
+        const { state: st, isos } = groupKindStatusForDest(dest, group, kind);
+        // 全日済みなら未済みに戻す。未着手・一部済みなら、押すことで全日分を済みにする
+        const nextValue = st !== "all";
+        togglePersonFillingStatus(dest, destType, filling, isos, kind, nextValue);
+      });
+    });
+  });
+}
+
+// 人の詳細画面でのボタン操作：その人・その具材の、選んだ日の範囲すべてをまとめて保存する
+// （保存先・粒度は具材の内訳画面の人ごと表示と同じ＝日付×渡し先×具材の行単位のまま）
+async function togglePersonFillingStatus(dest, destType, filling, isos, kind, nextValue){
+  const label = kind === "cooked" ? "調理済み" : (destType === "member" ? "渡し済み" : "用意済み");
+  const actionLabel = nextValue ? label : `未${label}`;
+  const dateLabels = isos.map(isoToMdLabel).join("・");
+  showConfirm(`${dest}の${filling}（${dateLabels}）を『${actionLabel}』にしますか？`, async () => {
+    const targets = isos.map(iso => ({ iso, dest, filling }));
+    const { conflictCount } = await saveMultipleCellStatuses(targets, current => ({
+      handed: kind === "handed" ? nextValue : current.handed,
+      cooked: kind === "cooked" ? nextValue : current.cooked,
+    }));
+    if(conflictCount > 0) showConflictMessage();
+    renderPersonDetailBody();
+    renderChecklist();
+  });
+}
+
+// 「この人の分をすべて渡し済み（本部・チセは用意済み）にする」ボタン。調理済みだが
+// まだ渡し済みになっていない分（handTargets）だけをまとめてhanded=trueにする
+// （まだ調理していない分を誤って渡し済みにしてしまわないよう対象を限定する）
+async function bulkHandPerson(dest, destType, rows){
+  const handTargets = rows.filter(r => {
+    const st = getStatus(r.iso, r.dest, r.filling);
+    return st.cooked && !st.handed;
+  });
+  if(handTargets.length === 0) return;
+  const label = destType === "member" ? "渡し済み" : "用意済み";
+  showConfirm(`${dest}の分（${handTargets.length}件）をまとめて${label}にしますか？`, async () => {
+    const { conflictCount } = await saveMultipleCellStatuses(handTargets, current => ({ handed: true, cooked: current.cooked }));
+    if(conflictCount > 0) showConflictMessage();
+    renderPersonDetailBody();
+    renderChecklist();
+  });
+}
+
 /* ---------- 具材ステータスの保存（楽観的ロック付き） ---------- */
 // 保存直前に、読み込んだ時点からスプレッドシート側の更新日時が変わっていないか確認する
 // （2つの端末・admin.htmlで同じ行を操作していた場合、後からの保存が先の保存を
@@ -1314,6 +1593,7 @@ async function loadAllData(){
   renderDateList();
   renderChecklist();
   if(state.openFilling) renderFillingDetailBody();
+  if(state.openPerson) renderPersonDetailBody();
 
   return { prevCandidateIsos, candidateIsos };
 }
