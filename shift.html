@@ -355,6 +355,7 @@
 <footer>Chabon Ops — Amsterdam Onigiri Truck</footer>
 
 <script src="active-members.js"></script>
+<script src="date-format.js"></script>
 <script>
 // TODO: シフト回答用スプレッドシート（1PHf1o3smqIQdeFkhBHjBZUEub7VtRcynQLllmSR7w-s）に
 // 紐づけたApps Script（Code.gs）のウェブアプリ公開URLに置き換えてください
@@ -384,7 +385,7 @@ function formatDateLabel(d){
 
 // 表示用の短い日付ラベル（例：6/29（月））
 function shortDateLabel(d){
-  return `${d.getMonth() + 1}/${d.getDate()}（${DAY_NAMES[d.getDay()]}）`;
+  return formatDateWithWeekday(d);
 }
 
 function dateKey(d){
