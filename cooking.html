@@ -473,11 +473,11 @@
 
 <script src="confirmed-plan.js"></script>
 <script src="personal-colors.js"></script>
+<script src="date-format.js"></script>
 <script>
 const SHIFT_SPREADSHEET_ID = "1PHf1o3smqIQdeFkhBHjBZUEub7VtRcynQLllmSR7w-s"; // 作業中プラン・確定プラン・具材ステータス
 const CHISE_SPREADSHEET_ID = "1rQtRUSP5e7qOjnT4RPvMGfWrEFcFL89AsLe8cjGIW4U"; // チセさんの生産データ
 const SCRIPT_URL = "https://script.google.com/macros/s/AKfycbyxbKMgM4ZiowaJu3cQ4NdLhwSE9-Pet8DbYB3qvgEX2NS2h1Dosgfm62vu7-in52ZT/exec";
-const DAY_NAMES = ["日", "月", "火", "水", "木", "金", "土"];
 
 // admin.htmlと同じ9種類の具材・本部固定具材（枝豆・梅・うなぎは常に本部製造）
 const FILLINGS = ["ツナマヨ", "スパイシーツナマヨ", "テリヤキチキン", "サーモン", "スパイシー味噌", "枝豆", "梅", "うなぎ", "今月のおにぎり"];
@@ -843,7 +843,7 @@ function renderDateList(){
     return `
       <label class="date-item">
         <input type="checkbox" class="date-checkbox" data-iso="${d.iso}" ${checked}>
-        ${d.dateObj.getMonth() + 1}/${d.dateObj.getDate()}（${DAY_NAMES[d.dow]}）
+        ${formatDateWithWeekday(d.dateObj)}
       </label>
     `;
   }).join("");
@@ -1068,9 +1068,11 @@ function closeFillingDetail(){
   state.openPerson = null;
 }
 
+// 日付ごとの内訳・一部済みの表示・確認ダイアログなど、ISO日付文字列から曜日つきの
+// 表示ラベル（例：11/2（月））を作る箇所はすべてこの関数を経由する
 function isoToMdLabel(iso){
   const d = new Date(`${iso}T00:00:00`);
-  return `${d.getMonth() + 1}/${d.getDate()}`;
+  return formatDateWithWeekday(d);
 }
 
 // 渡し先の並び順：パーソナルカラーのあるメンバー → 本部 → チセ
@@ -1143,7 +1145,7 @@ function renderDateModeHtml(filling, rows, selectedIsos){
     const dayRows = byIso[iso];
     if(!dayRows || dayRows.length === 0) return;
     const d = new Date(`${iso}T00:00:00`);
-    html += `<div class="detail-day-heading">${d.getMonth() + 1}/${d.getDate()}（${DAY_NAMES[d.getDay()]}）</div>`;
+    html += `<div class="detail-day-heading">${formatDateWithWeekday(d)}</div>`;
     dayRows.sort((a, b) => destSortKey(a.dest, a.destType) - destSortKey(b.dest, b.destType)).forEach(r => {
       const st = getStatus(r.iso, r.dest, r.filling);
       const handedLabel = r.destType === "member" ? "渡し済み" : "用意済み";
@@ -1177,7 +1179,7 @@ function bindDateModeEvents(filling){
         const destType = destTypeOf(dest);
         const label = kind === "cooked" ? "調理済み" : (destType === "member" ? "渡し済み" : "用意済み");
         const actionLabel = nextVal[kind] ? label : `未${label}`;
-        showConfirm(`${dest}の${filling}（${iso}）を『${actionLabel}』にしますか？`, async () => {
+        showConfirm(`${dest}の${filling}（${isoToMdLabel(iso)}）を『${actionLabel}』にしますか？`, async () => {
           btn.disabled = true;
           const result = await saveCellStatus(iso, dest, filling, kind === "handed" ? nextVal.handed : current.handed, kind === "cooked" ? nextVal.cooked : current.cooked);
           state.conflictNotice = result.conflict ? CONFLICT_MESSAGE : null;

@@ -562,6 +562,7 @@
 
 <script src="confirmed-plan.js"></script>
 <script src="active-members.js"></script>
+<script src="date-format.js"></script>
 <script>
 const LAT = 52.3676, LON = 4.9041;
 const SPREADSHEET_ID = "1rQtRUSP5e7qOjnT4RPvMGfWrEFcFL89AsLe8cjGIW4U"; // チセさんの生産データ
@@ -1202,7 +1203,7 @@ function renderWeeklyView(){
   container.innerHTML = weekDays.map(r => {
     const isToday = r.dateStr === todayDateStr;
     const d = new Date(r.dateStr);
-    const label = `${d.getMonth() + 1}/${d.getDate()}（${DAY_NAMES[r.dow]}）`;
+    const label = formatDateWithWeekday(d);
     const w = weatherInfo(r.code);
     const key = mdLabel(r.dateStr);
     const isOpen = state.openWeekKey === key;
