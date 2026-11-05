@@ -645,6 +645,9 @@ function applyConfirmedOverrides(results, confirmedMap){
     if(r.uva && override.uva != null){
       r.uva = { total: override.uva, reasons: ["管理画面で確定済み"] };
     }
+    if(r.rozen && override.rozen != null){
+      r.rozen = { total: override.rozen, reasons: ["管理画面で確定済み"] };
+    }
   });
 }
 
@@ -672,6 +675,17 @@ function parseGvizDateCell(cell){
     if(/^\d{4}-\d{2}-\d{2}$/.test(v)) return v;
   }
   return null;
+}
+
+// 「店舗設定」シートを取得する（admin.htmlの「店舗の営業設定」で保存される内容を読み取り専用で使う）。
+// 未保存（シート自体が無い等）の場合は空のまま進め、DEFAULT_STORE_SETTINGSにフォールバックする。
+async function fetchStoreSettings(){
+  try{
+    return parseStoreSettingsSheet(await fetchGvizSheet("店舗設定"));
+  }catch(e){
+    console.error("店舗設定の取得に失敗しました", e);
+    return {};
+  }
 }
 
 async function fetchGvizSheet(sheetName){
@@ -782,6 +796,7 @@ const state = {
   confirmedPlanByDate: {}, // { [dateKey "M/D"]: { zuid, uva, chise, ningiBreakdown, hqQty, hqBreakdown } }
   todayDraft: null, // forecast from "作業中プラン" for today: { zuidFillingQty, uvaFillingQty, ... } | null
   openWeekKey: null, // 週間ビューで展開中の日付キー "M/D" | null
+  storeSettings: {}, // 店舗名 -> {startDate,endDate,weekdays,weekdayQty,weekendQty}（admin.htmlで設定）
 };
 
 // 今月のおにぎり追加分(5%)は、枝豆・梅・うなぎの比率は変えず、変動具材5種の合計(0.89→0.84)を按分縮小して確保
@@ -996,6 +1011,81 @@ function calcUvA(dow, salesWeather){
   return { total, reasons };
 }
 
+/* ---------- 店舗設定（admin.htmlの「店舗の営業設定」を読み取り専用で利用） ---------- */
+// index.htmlはadmin.htmlとは別のJSスコープのため、営業期間・営業曜日の判定ロジック
+// （isStoreOperatingOn等）を同じ内容でここにも複製する（admin.html側のcalcZuid/calcUvA同様、
+// 元々index.htmlは予測計算を独自に持っている）。
+
+const STORE_SETTINGS_WEEKDAYS = [
+  { key: "mon", label: "月", dow: 1 },
+  { key: "tue", label: "火", dow: 2 },
+  { key: "wed", label: "水", dow: 3 },
+  { key: "thu", label: "木", dow: 4 },
+  { key: "fri", label: "金", dow: 5 },
+  { key: "sat", label: "土", dow: 6 },
+  { key: "sun", label: "日", dow: 0 },
+];
+
+function parseStoreSettingsSheet(json){
+  const result = {};
+  if(!json || !json.table || !json.table.rows) return result;
+  json.table.rows.forEach(r => {
+    const c = r.c;
+    if(!c || !c[0]) return;
+    const store = String(c[0].v || "").trim();
+    if(!store) return;
+    const weekdays = {};
+    STORE_SETTINGS_WEEKDAYS.forEach((wd, i) => {
+      const cell = c[3 + i];
+      weekdays[wd.key] = !(cell && cell.v === false);
+    });
+    const qtyOrNull = cell => (cell && cell.v !== null && cell.v !== undefined && cell.v !== "") ? Number(cell.v) : null;
+    result[store] = {
+      startDate: parseGvizDateCell(c[1]) || "",
+      endDate: parseGvizDateCell(c[2]) || "",
+      weekdays,
+      weekdayQty: qtyOrNull(c[10]),
+      weekendQty: qtyOrNull(c[11]),
+    };
+  });
+  return result;
+}
+
+// Rozengracht店のオープン時点の初期値（admin.htmlのDEFAULT_STORE_SETTINGSと同じ値）。
+// 管理画面から一度でも保存すれば、以降はスプレッドシート側の値が優先される。
+const DEFAULT_STORE_SETTINGS = {
+  Rozengracht: {
+    startDate: "2026-11-09",
+    endDate: "2027-04-30",
+    weekdays: { mon: true, tue: true, wed: true, thu: true, fri: true, sat: true, sun: true },
+    weekdayQty: 100,
+    weekendQty: 150,
+  },
+};
+function getStoreConfig(store){
+  return state.storeSettings[store] || DEFAULT_STORE_SETTINGS[store] || null;
+}
+
+function isStoreOperatingOn(config, iso, dow){
+  if(!config) return true;
+  if(config.startDate && iso < config.startDate) return false;
+  if(config.endDate && iso > config.endDate) return false;
+  const wdEntry = STORE_SETTINGS_WEEKDAYS.find(wd => wd.dow === dow);
+  if(wdEntry && config.weekdays && config.weekdays[wdEntry.key] === false) return false;
+  return true;
+}
+
+// Rozengracht：天気等による自動計算は行わず、「店舗の営業設定」の平日・土日基本数をそのまま使う
+// （admin.htmlのbuildDays内の計算と同じロジック。営業期間・営業曜日の対象外の日はnull＝休業扱い）
+function calcRozen(iso, dow){
+  const config = getStoreConfig("Rozengracht");
+  if(!isStoreOperatingOn(config, iso, dow)) return null;
+  const isWeekend = (dow === 0 || dow === 6);
+  const baseQty = config ? (isWeekend ? config.weekendQty : config.weekdayQty) : null;
+  if(baseQty === null || baseQty === undefined || baseQty === "") return null;
+  return { total: Number(baseQty), reasons: [`${isWeekend ? "土日" : "平日"}基本数 ${baseQty}個`] };
+}
+
 /* ---------- 祝日（オランダ・Nager.Date API） ---------- */
 
 const ZUID_MIN_GUARANTEE = 100;
@@ -1122,6 +1212,7 @@ function buildDailyResults(daily, hourlyByDate, holidaysByIso, nsDisruptionsByDa
     const nsDisruptions = (nsDisruptionsByDate && nsDisruptionsByDate[dateStr]) || null;
     const zuid = calcZuid(dow, month, salesWeather);
     const uva = calcUvA(dow, salesWeather);
+    const rozen = calcRozen(dateStr, dow);
     if(holidayName){
       applyHolidayPenalty(zuid, ZUID_MIN_GUARANTEE);
       applyHolidayPenalty(uva, UVA_MIN_GUARANTEE);
@@ -1132,7 +1223,7 @@ function buildDailyResults(daily, hourlyByDate, holidaysByIso, nsDisruptionsByDa
     }
     return {
       dateStr, dow, maxTemp, minTemp, code, salesWeather, holidayName, nsDisruptions,
-      zuid, uva,
+      zuid, uva, rozen,
       uvaVenueLabel: "UvA",
     };
   });
@@ -1181,10 +1272,11 @@ function renderRecommendation(){
   const todayKey = mdLabel(state.dailyResults[0].dateStr);
   const plan = state.confirmedPlanByDate[todayKey];
 
-  state.todayTotal = (today.zuid ? today.zuid.total : 0) + (today.uva ? today.uva.total : 0);
+  state.todayTotal = (today.zuid ? today.zuid.total : 0) + (today.uva ? today.uva.total : 0) + (today.rozen ? today.rozen.total : 0);
 
   let html = storeCardHtml("Zuid（1号店）", today.zuid, "zuid", plan, today.holidayName, today.nsDisruptions);
   if(today.uva !== null) html += storeCardHtml(today.uvaVenueLabel || "UvA", today.uva, "uva", plan, today.holidayName, today.nsDisruptions);
+  html += storeCardHtml("Rozengracht", today.rozen, "rozen", plan, null, null);
   box.innerHTML = html;
 }
 
@@ -1216,6 +1308,7 @@ function renderWeeklyView(){
         <div class="week-weather">${w.icon} ${Math.round(r.maxTemp)}° / ${Math.round(r.minTemp)}°</div>
         <div class="week-store">Zuid: <strong>${r.zuid ? r.zuid.total + "個" : "—"}</strong></div>
         <div class="week-store">${r.uvaVenueLabel || "UvA"}: <strong>${r.uva ? r.uva.total + "個" : "—"}</strong></div>
+        <div class="week-store">Rozengracht: <strong>${r.rozen ? r.rozen.total + "個" : "—"}</strong></div>
       </div>
     `;
   }).join("");
@@ -1311,32 +1404,35 @@ function getTodayFillingTotals(plan){
 // それも無い場合は全具材合計を zuid:uva の比率で按分して返す
 function getStoreTotals(plan, draftForecast){
   if(plan && plan.hasDetailBreakdown){
-    const z = {}, u = {};
+    const z = {}, u = {}, ro = {};
     FILLINGS.forEach(f => {
       z[f] = Number(plan.zuidBreakdown[f] || 0);
       u[f] = Number(plan.uvaBreakdown[f] || 0);
+      ro[f] = Number((plan.rozenBreakdown && plan.rozenBreakdown[f]) || 0);
     });
-    return { zuidTotals: z, uvaTotals: u };
+    return { zuidTotals: z, uvaTotals: u, rozenTotals: ro };
   }
   if(draftForecast && draftForecast.zuidFillingQty && draftForecast.uvaFillingQty){
-    const z = {}, u = {};
+    const z = {}, u = {}, ro = {};
     FILLINGS.forEach(f => {
       z[f] = Number(draftForecast.zuidFillingQty[f] || 0);
       u[f] = Number(draftForecast.uvaFillingQty[f] || 0);
+      ro[f] = Number((draftForecast.rozenFillingQty && draftForecast.rozenFillingQty[f]) || 0);
     });
-    return { zuidTotals: z, uvaTotals: u };
+    return { zuidTotals: z, uvaTotals: u, rozenTotals: ro };
   }
-  // フォールバック：全具材合計を店舗合計比率で按分
+  // フォールバック：全具材合計を店舗合計比率で按分（Rozengrachtは按分せず確定数のみ別枠で加える）
   const all = getTodayFillingTotals(plan);
   const grand = (plan.zuid || 0) + (plan.uva || 0);
   const ratio = grand > 0 ? (plan.zuid || 0) / grand : 0.5;
-  const z = {}, u = {};
+  const z = {}, u = {}, ro = {};
   FILLINGS.forEach(f => {
     const t = all[f] || 0;
     z[f] = Math.round(t * ratio);
     u[f] = t - z[f];
+    ro[f] = 0;
   });
-  return { zuidTotals: z, uvaTotals: u };
+  return { zuidTotals: z, uvaTotals: u, rozenTotals: ro };
 }
 
 function buildStoreTable(storeKey, fillings, totals){
@@ -1402,8 +1498,8 @@ function renderActualSales(){
   const plan = state.confirmedPlanByDate[mdLabel(today.dateStr)];
   if(!plan){ area.innerHTML = `<p class="off-note">確定プランがまだありません。</p>`; return; }
 
-  const { zuidTotals, uvaTotals } = getStoreTotals(plan, state.todayDraft);
-  const fillings = FILLINGS.filter(f => (zuidTotals[f] || 0) > 0 || (uvaTotals[f] || 0) > 0);
+  const { zuidTotals, uvaTotals, rozenTotals } = getStoreTotals(plan, state.todayDraft);
+  const fillings = FILLINGS.filter(f => (zuidTotals[f] || 0) > 0 || (uvaTotals[f] || 0) > 0 || (rozenTotals[f] || 0) > 0);
   if(fillings.length === 0){ area.innerHTML = `<p class="off-note">具材の割り振りがありません。</p>`; return; }
 
   area.innerHTML = `
@@ -1436,30 +1532,45 @@ function renderActualSales(){
       </div>
       <button class="record-btn" id="saveUvABtn">UvAの実績を記録する</button>
     </div>
+    <div class="store-section">
+      <div class="store-heading">🏪 Rozengracht</div>
+      ${buildStoreTable("Rozengracht", fillings, rozenTotals)}
+      <div class="soldout-time-row">
+        販売終了時間：<input type="time" id="soldoutTime-Rozengracht">
+        <span class="notes-label">（完売した場合はその時刻、完売しなかった場合は営業終了時刻）</span>
+      </div>
+      <div class="notes-area">
+        <span class="notes-label">今日の販売メモ</span>
+        <textarea id="notes-Rozengracht" rows="2" placeholder="天気の様子・特記事項など"></textarea>
+      </div>
+      <button class="record-btn" id="saveRozenBtn">Rozengrachtの実績を記録する</button>
+    </div>
   `;
 
   area.querySelectorAll(".hourly-input, .made-input, .given-input, .received-input, .moved-input").forEach(inp =>
     inp.addEventListener("input", () => updateSoldDisplay(fillings))
   );
-  const saveZuidBtn = document.getElementById("saveZuidBtn");
-  const saveUvABtn = document.getElementById("saveUvABtn");
-  saveZuidBtn.addEventListener("click", () => saveStoreActual("Zuid"));
-  saveUvABtn.addEventListener("click", () => saveStoreActual("UvA"));
+  const saveBtns = {
+    Zuid: document.getElementById("saveZuidBtn"),
+    UvA: document.getElementById("saveUvABtn"),
+    Rozengracht: document.getElementById("saveRozenBtn"),
+  };
+  Object.entries(saveBtns).forEach(([storeKey, btn]) => btn.addEventListener("click", () => saveStoreActual(storeKey)));
 
   // 保存済みデータを読み込んで入力欄を復元する。復元が完了する前に保存ボタンが押されると、
   // まだ空のままの入力欄の値（空欄）が送信され、既に保存済みの実績を上書きして消してしまう
   // 事故につながるため、復元が完了するまで保存ボタンを一時的に無効化する。
-  const zuidOriginalLabel = saveZuidBtn.textContent;
-  const uvaOriginalLabel = saveUvABtn.textContent;
-  saveZuidBtn.disabled = true;
-  saveUvABtn.disabled = true;
-  saveZuidBtn.textContent = "読み込み中...";
-  saveUvABtn.textContent = "読み込み中...";
+  const originalLabels = {};
+  Object.entries(saveBtns).forEach(([storeKey, btn]) => {
+    originalLabels[storeKey] = btn.textContent;
+    btn.disabled = true;
+    btn.textContent = "読み込み中...";
+  });
   refreshHourlyRecords().finally(() => {
-    saveZuidBtn.disabled = false;
-    saveUvABtn.disabled = false;
-    saveZuidBtn.textContent = zuidOriginalLabel;
-    saveUvABtn.textContent = uvaOriginalLabel;
+    Object.entries(saveBtns).forEach(([storeKey, btn]) => {
+      btn.disabled = false;
+      btn.textContent = originalLabels[storeKey];
+    });
   });
 }
 
@@ -1470,8 +1581,8 @@ async function refreshHourlyRecords(){
   const plan = state.confirmedPlanByDate[mdLabel(today.dateStr)];
   if(!plan) return;
 
-  const { zuidTotals, uvaTotals } = getStoreTotals(plan, state.todayDraft);
-  const fillings = FILLINGS.filter(f => (zuidTotals[f] || 0) > 0 || (uvaTotals[f] || 0) > 0);
+  const { zuidTotals, uvaTotals, rozenTotals } = getStoreTotals(plan, state.todayDraft);
+  const fillings = FILLINGS.filter(f => (zuidTotals[f] || 0) > 0 || (uvaTotals[f] || 0) > 0 || (rozenTotals[f] || 0) > 0);
   if(fillings.length === 0) return;
 
   const rows = await fetchHourlyData(today.dateStr);
@@ -1490,7 +1601,7 @@ async function handleRefreshHourlyClick(){
 }
 
 function updateSoldDisplay(fillings){
-  ["Zuid", "UvA"].forEach(storeKey => {
+  ["Zuid", "UvA", "Rozengracht"].forEach(storeKey => {
     const nSlots = HOURLY_SLOTS.length;
     const remainTotals = new Array(nSlots).fill(0);
     const soldTotals = new Array(nSlots).fill(0);
@@ -1682,8 +1793,8 @@ async function saveStoreActual(storeKey){
   const plan = state.confirmedPlanByDate[mdLabel(today.dateStr)];
   if(!plan) return;
 
-  const { zuidTotals, uvaTotals } = getStoreTotals(plan, state.todayDraft);
-  const fillings = FILLINGS.filter(f => (zuidTotals[f] || 0) > 0 || (uvaTotals[f] || 0) > 0);
+  const { zuidTotals, uvaTotals, rozenTotals } = getStoreTotals(plan, state.todayDraft);
+  const fillings = FILLINGS.filter(f => (zuidTotals[f] || 0) > 0 || (uvaTotals[f] || 0) > 0 || (rozenTotals[f] || 0) > 0);
   const w = weatherInfo(today.code);
 
   const uvaLocation = (document.getElementById("uvaLocationInput") || {value:"UvA"}).value.trim() || "UvA";
@@ -1725,7 +1836,7 @@ async function saveStoreActual(storeKey){
 
   console.log(`【${storeKey}】実績送信payload:`, payload);
 
-  const btnId = storeKey === "Zuid" ? "saveZuidBtn" : "saveUvABtn";
+  const btnId = storeKey === "Zuid" ? "saveZuidBtn" : storeKey === "UvA" ? "saveUvABtn" : "saveRozenBtn";
   const btn = document.getElementById(btnId);
   if(btn){ btn.disabled = true; btn.textContent = "送信中..."; }
   const t0 = Date.now();
@@ -1910,7 +2021,7 @@ async function loadWeather(){
 
   // 互いに依存しない取得は全てここでPromise.allにより並列実行する
   // （NS運休情報は表示に必須ではないため、ここには含めず後段で非同期に取得する）
-  const totalTasks = 5;
+  const totalTasks = 6;
   let doneTasks = 0;
   setLoadingProgress(doneTasks, totalTasks);
   // 各取得の所要時間を個別にログ出力する（次に初期表示が遅くなった際、
@@ -1932,6 +2043,7 @@ async function loadWeather(){
       confirmedMap,
       bootstrap,
       shiftSheetData,
+      storeSettings,
     ] = await Promise.all([
       track(fetch(weatherUrl).then(r => r.json()), "天気予報(open-meteo)"),
       track(fetchDutchHolidays([thisYear, thisYear + 1]), "祝日データ(date.nager.at)"),
@@ -1940,10 +2052,12 @@ async function loadWeather(){
       // （具材ステータスはstate.cellStatusに直接反映されるため分割代入では受け取らない）
       track(fetchBootstrap(), "bootstrap(作業中プラン+具材ステータス)"),
       track(fetchShiftSheetData(), "シフト回答"),
+      track(fetchStoreSettings(), "店舗設定"),
     ]);
     const draftList = bootstrap.drafts;
     applyStatusesToState(bootstrap.statuses);
 
+    state.storeSettings = storeSettings;
     state.hourlyByDate = buildHourlyByDate(data.hourly);
     state.holidaysByIso = holidaysByIso;
     state.nsDisruptionsByDate = {}; // NS運休情報は後段で取得するため、初期表示時点では空のまま進める
@@ -1959,6 +2073,7 @@ async function loadWeather(){
     state.todayOriginalRecommendation = {
       zuid: state.dailyResults[0].zuid,
       uva: state.dailyResults[0].uva,
+      rozen: state.dailyResults[0].rozen,
       uvaVenueLabel: state.dailyResults[0].uvaVenueLabel,
       holidayName: state.dailyResults[0].holidayName,
       nsDisruptions: state.dailyResults[0].nsDisruptions,
@@ -1996,6 +2111,7 @@ async function loadWeather(){
       state.todayOriginalRecommendation = {
         zuid: state.dailyResults[0].zuid,
         uva: state.dailyResults[0].uva,
+        rozen: state.dailyResults[0].rozen,
         uvaVenueLabel: state.dailyResults[0].uvaVenueLabel,
         holidayName: state.dailyResults[0].holidayName,
         nsDisruptions: state.dailyResults[0].nsDisruptions,

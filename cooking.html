@@ -512,7 +512,7 @@ const VIEW_MODE_STORAGE_KEY = "chabon_cooking_detail_view_mode";
 const state = {
   candidates: [],        // [{iso, dow, dateObj}]（選択肢に出せる日。対象外の日は含まない）
   selected: new Set(),   // 選択中のiso
-  draftByDate: {},        // iso -> {zuidFillingQty, uvaFillingQty, zuidOpen, uvaOpen, prod:{member:{filling:qty}}}
+  draftByDate: {},        // iso -> {zuidFillingQty, uvaFillingQty, rozenFillingQty, zuidOpen, uvaOpen, rozenOpen, prod:{member:{filling:qty}}}
   chiseByLabel: {},       // "M/d" -> {breakdown, konomiBreakdown}
   confirmedPlanByDate: {}, // "M/d" -> 確定プラン（confirmed-plan.js の parseConfirmedPlansSheet 参照）
   cellStatus: {},         // iso -> dest -> filling -> {handed, cooked, updatedAtRaw}
@@ -584,8 +584,10 @@ function parseDraftByDate(json){
       result[dateStr] = {
         zuidFillingQty: forecast.zuidFillingQty || {},
         uvaFillingQty: forecast.uvaFillingQty || {},
+        rozenFillingQty: forecast.rozenFillingQty || {},
         zuidOpen: forecast.zuidOpen,
         uvaOpen: forecast.uvaOpen,
+        rozenOpen: forecast.rozenOpen,
         prod,
       };
     }catch(e){ /* 壊れたJSON行は無視する */ }
@@ -725,17 +727,18 @@ function getDayBreakdown(iso){
   const chiseOnigiriForHq = {};
   FILLINGS.forEach(f => { chiseOnigiriForHq[f] = (chiseEntry && chiseEntry.breakdown && chiseEntry.breakdown[f]) || 0; });
 
-  const zuidQty = {}, uvaQty = {};
+  const zuidQty = {}, uvaQty = {}, rozenQty = {};
   if(draft){
     FILLINGS.forEach(f => {
       zuidQty[f] = (draft.zuidOpen !== false) ? (draft.zuidFillingQty[f] || 0) : 0;
       uvaQty[f] = (draft.uvaOpen !== false) ? (draft.uvaFillingQty[f] || 0) : 0;
+      rozenQty[f] = (draft.rozenOpen !== false) ? (draft.rozenFillingQty[f] || 0) : 0;
     });
   }
 
   const hq = {};
   FILLINGS.forEach(f => {
-    const needed = (zuidQty[f] || 0) + (uvaQty[f] || 0) + (chiseOnigiriForHq[f] || 0);
+    const needed = (zuidQty[f] || 0) + (uvaQty[f] || 0) + (rozenQty[f] || 0) + (chiseOnigiriForHq[f] || 0);
     if(ALWAYS_HQ_FILLINGS.includes(f)){
       // 枝豆・梅・うなぎは常に本部製造（ニギニギ隊には割り振らない。admin.htmlと同じルール）
       hq[f] = needed;

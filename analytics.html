@@ -374,7 +374,7 @@ const WEEKDAY_COLOR_INDEX = { "日":0, "月":1, "火":2, "水":3, "木":4, "金"
 
 const ALL_STORES_KEY = "__ALL__";
 // 個別店舗の表示順（この順に並べ、リストにない店舗名は末尾にアルファベット順で追加）
-const STORE_ORDER_PRIORITY = ["Zuid", "UvA"];
+const STORE_ORDER_PRIORITY = ["Zuid", "UvA", "Rozengracht"];
 
 // UvA学事暦関連（gviz経由、SCRIPT_URL経由のApps Script Web Appとは別系統）
 const SHIFT_SPREADSHEET_ID = "1PHf1o3smqIQdeFkhBHjBZUEub7VtRcynQLllmSR7w-s";
@@ -681,7 +681,7 @@ async function fetchConfirmedPlans(){
 // 「店舗」列そのものではなく実際の「場所名」を店舗名として扱う
 // （index.htmlの「UvA 販売場所名」入力欄で "UvA" 以外を入力した場合、それが実店舗名になる）。
 function effectiveStoreName(row){
-  if(row.store === "Zuid") return "Zuid";
+  if(row.store === "Zuid" || row.store === "Rozengracht") return row.store;
   const loc = String(row.location || "").trim();
   if(loc && loc !== "UvA") return loc;
   return row.store || "不明";
@@ -839,9 +839,11 @@ function aggregateAllStoresByDate(dateStoreRows){
 // rawRowsから店舗別データを一式（byStore・allStoresRows・storeList）組み立てる
 // CTH特別会場（期間限定、終了済み）の行はタブ・集計のどちらにも出さない。
 // 「販売実績」シート側のCTHデータ自体は削除しない（ここで除外しているだけ）。
+// Rozengracht（2026/11/9オープン）は、実績データがまだ無い間も必ずタブに表示する
+// （データが無い期間は各画面の「この期間のデータがありません」表示に委ねる）。
 function buildStoreData(rawRows){
   const byDateStore = aggregateByDateAndStore(rawRows).filter(r => r.store !== "CTH");
-  const storeList = sortStoreNames(Array.from(new Set(byDateStore.map(r => r.store))));
+  const storeList = sortStoreNames(Array.from(new Set([...byDateStore.map(r => r.store), "Rozengracht"])));
   const byStore = {};
   storeList.forEach(store => { byStore[store] = byDateStore.filter(r => r.store === store); });
   const allStoresRows = aggregateAllStoresByDate(byDateStore);
@@ -1279,6 +1281,7 @@ function renderPlanHistoryTable(){
     if(sortKey === "weekday"){ av = a.weekday; bv = b.weekday; }
     else if(sortKey === "zuid"){ av = a.zuid; bv = b.zuid; }
     else if(sortKey === "uva"){ av = a.uva; bv = b.uva; }
+    else if(sortKey === "rozen"){ av = a.rozen; bv = b.rozen; }
     else if(sortKey === "chise"){ av = a.chise; bv = b.chise; }
     else if(sortKey === "hqQty"){ av = a.hqQty; bv = b.hqQty; }
     else if(sortKey === "total"){ av = a.total; bv = b.total; }
@@ -1295,6 +1298,7 @@ function renderPlanHistoryTable(){
     { key: "weekday", label: "曜日" },
     { key: "zuid", label: "Zuid確定数" },
     { key: "uva", label: "UvA確定数" },
+    { key: "rozen", label: "Rozen確定数" },
     { key: "chise", label: "チセ分" },
     { key: "hqQty", label: "本部製造数" },
     { key: "total", label: "総生産数" },
@@ -1313,6 +1317,7 @@ function renderPlanHistoryTable(){
       <td>${r.weekday || "—"}</td>
       <td class="num">${r.zuid}個</td>
       <td class="num">${r.uva}個</td>
+      <td class="num">${r.rozen || 0}個</td>
       <td class="num">${r.chise}個</td>
       <td class="num">${r.hqQty}個</td>
       <td class="num"><strong>${r.total}個</strong></td>
@@ -1371,6 +1376,7 @@ function prodHistoryDayCardHtml(plan){
   const dt = parseIsoDate(plan.date);
   const zuidItems = parseFillingBreakdown(plan.zuidBreakdown);
   const uvaItems = parseFillingBreakdown(plan.uvaBreakdown);
+  const rozenItems = parseFillingBreakdown(plan.rozenBreakdown);
   const chiseItems = parseFillingBreakdown(plan.chiseBreakdown);
   const members = parseMemberBreakdown(plan.ningiBreakdown);
   const hqItems = parseFillingBreakdown(plan.hqBreakdown);
@@ -1382,10 +1388,11 @@ function prodHistoryDayCardHtml(plan){
 
   // Zuid/UvA/チセ内訳は後から追加した列のため、それより前に確定された日はデータが無い
   // （合計数のみ確定プランに残っている）。その場合は具材別内訳の代わりに合計数だけを注記する
+  // （Rozen内訳も同じ考え方で後から追加した列のため、無い場合は "—" になる）
   const hasStoreBreakdown = plan.zuidBreakdown || plan.uvaBreakdown || plan.chiseBreakdown;
 
   const fillingNames = FILLINGS.filter(f =>
-    (zuidItems[f] || uvaItems[f] || chiseItems[f] || ningiByFilling[f] || hqItems[f]) > 0
+    (zuidItems[f] || uvaItems[f] || rozenItems[f] || chiseItems[f] || ningiByFilling[f] || hqItems[f]) > 0
   );
 
   const rowsHtml = fillingNames.map(f => `
@@ -1393,6 +1400,7 @@ function prodHistoryDayCardHtml(plan){
       <td>${f}</td>
       <td class="num">${hasStoreBreakdown ? `${zuidItems[f] || 0}個` : "—"}</td>
       <td class="num">${hasStoreBreakdown ? `${uvaItems[f] || 0}個` : "—"}</td>
+      <td class="num">${hasStoreBreakdown ? `${rozenItems[f] || 0}個` : "—"}</td>
       <td class="num">${hasStoreBreakdown ? `${chiseItems[f] || 0}個` : "—"}</td>
       <td class="num">${ningiByFilling[f] || 0}個</td>
       <td class="num">${hqItems[f] || 0}個</td>
@@ -1414,12 +1422,12 @@ function prodHistoryDayCardHtml(plan){
   return `
     <div class="prod-day-card">
       <h3>${dt.getMonth() + 1}/${dt.getDate()}（${plan.weekday || "—"}）</h3>
-      <div class="prod-day-totals">Zuid確定数：${plan.zuid}個　UvA確定数：${plan.uva}個　チセ分：${plan.chise}個　本部製造数：${plan.hqQty}個　総生産数：${plan.total}個</div>
-      ${hasStoreBreakdown ? "" : `<p class="prod-day-no-store-note">※この日はZuid/UvA/チセ向けの具材別内訳データがありません（本機能追加前に確定されたため、合計数のみ）。ニギニギ隊内訳・本部内訳は具材別に表示できます。</p>`}
+      <div class="prod-day-totals">Zuid確定数：${plan.zuid}個　UvA確定数：${plan.uva}個　Rozen確定数：${plan.rozen || 0}個　チセ分：${plan.chise}個　本部製造数：${plan.hqQty}個　総生産数：${plan.total}個</div>
+      ${hasStoreBreakdown ? "" : `<p class="prod-day-no-store-note">※この日はZuid/UvA/Rozen/チセ向けの具材別内訳データがありません（本機能追加前に確定されたため、合計数のみ）。ニギニギ隊内訳・本部内訳は具材別に表示できます。</p>`}
       ${fillingNames.length ? `
         <div class="table-scroll">
           <table>
-            <thead><tr><th>具材</th><th>Zuid向け</th><th>UvA向け</th><th>チセ向け</th><th>ニギニギ隊合計</th><th>本部</th></tr></thead>
+            <thead><tr><th>具材</th><th>Zuid向け</th><th>UvA向け</th><th>Rozen向け</th><th>チセ向け</th><th>ニギニギ隊合計</th><th>本部</th></tr></thead>
             <tbody>${rowsHtml}</tbody>
           </table>
         </div>
