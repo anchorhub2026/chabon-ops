@@ -37,6 +37,8 @@ function doPost(e) {
       handleSaveShiftConfig(ss, data);
     } else if (data.type === "saveMonthlyOnigiriAssignment") {
       handleSaveMonthlyOnigiriAssignment(ss, data);
+    } else if (data.type === "saveStoreSettings") {
+      handleSaveStoreSettings(ss, data);
     } else if (data.type === "saveUvaAcademicCoefficient") {
       handleSaveUvaAcademicCoefficient(ss, data);
     } else {
@@ -84,7 +86,10 @@ function findConfirmedPlanRow(values, dateStr) {
 // 既存データの列位置を変えないよう末尾に追加した。過去に確定済みの行はこれらの列を
 // 持たない場合があり、その場合は具材別の店舗内訳が無く合計数のみ・未修正として扱われる
 // （handleGetConfirmedPlans・confirmed-plan.jsの呼び出し側で判定する）。
-var CONFIRMED_PLAN_HEADERS = ["日付", "曜日", "Zuid確定数", "UvA確定数", "チセ分", "ニギニギ隊内訳", "本部製造数", "本部内訳", "確定日時", "Zuid内訳", "UvA内訳", "チセ内訳", "修正日時"];
+// Rozen確定数・Rozen内訳（14・15列目）は、Rozengracht店オープンに伴い末尾に追加した列。
+// 既存の列位置・意味は一切変えていないため、これより前に確定された行はこの2列が空
+// （＝Rozengracht分0個）として扱われる（handleGetConfirmedPlans参照）。
+var CONFIRMED_PLAN_HEADERS = ["日付", "曜日", "Zuid確定数", "UvA確定数", "チセ分", "ニギニギ隊内訳", "本部製造数", "本部内訳", "確定日時", "Zuid内訳", "UvA内訳", "チセ内訳", "修正日時", "Rozen確定数", "Rozen内訳"];
 
 function ensureConfirmedPlanSheet(ss) {
   var sheet = ss.getSheetByName("確定プラン");
@@ -103,6 +108,7 @@ function handleConfirmPlan(ss, data) {
   var sheet = ensureConfirmedPlanSheet(ss);
   var values = sheet.getDataRange().getValues();
   var ts = new Date();
+  var nextAppendRow = values.length + 1; // appendRowで追加される次の行番号を追跡する
 
   for (var i = 0; i < data.days.length; i++) {
     var day = data.days[i];
@@ -121,14 +127,21 @@ function handleConfirmPlan(ss, data) {
       day.uvaBreakdown || "",
       day.chiseBreakdown || ""
     ];
+    var targetRow;
     if (foundRow > 0) {
       // 「修正日時」列（13列目）には触れない。週単位の確定（新規確定・まだ修正されていない日の
       // 再送）はここに値を書き込まないことで、「修正済み」バッジは本当に修正操作が行われた
       // 日にだけ表示されるようにする
       sheet.getRange(foundRow, 1, 1, row.length).setValues([row]);
+      targetRow = foundRow;
     } else {
       sheet.appendRow(row);
+      targetRow = nextAppendRow;
+      nextAppendRow++;
     }
+    // Rozen確定数・Rozen内訳（14・15列目）は「修正日時」のような特別な保護を持たないため、
+    // 新規確定・再送のどちらでも常に最新の値に上書きする
+    sheet.getRange(targetRow, 14, 1, 2).setValues([[day.rozen || 0, day.rozenBreakdown || ""]]);
   }
 }
 
@@ -172,7 +185,9 @@ function handleReviseConfirmedDay(ss, data) {
     data.zuidBreakdown || "",
     data.uvaBreakdown || "",
     data.chiseBreakdown || "",
-    ts
+    ts,
+    data.rozen || 0,
+    data.rozenBreakdown || ""
   ];
   sheet.getRange(foundRow, 1, 1, row.length).setValues([row]);
 }
@@ -217,23 +232,26 @@ function handleGetConfirmedPlans(ss) {
       var uva = Number(r[3]) || 0;
       var chise = Number(r[4]) || 0;
       var hqQty = Number(r[6]) || 0;
+      var rozen = Number(r[13]) || 0; // Rozen確定数（14列目）。この列が無い過去の行は0になる
       plans.push({
         date: iso,
         weekday: String(r[1] || ""),
         zuid: zuid,
         uva: uva,
         chise: chise,
+        rozen: rozen,
         hqQty: hqQty,
-        // 総生産数＝Zuid＋UvA＋チセ（本部製造数はこの内訳の一部であり、別途加算しない）
-        total: zuid + uva + chise,
+        // 総生産数＝Zuid＋UvA＋チセ＋Rozen（本部製造数はこの内訳の一部であり、別途加算しない）
+        total: zuid + uva + chise + rozen,
         // 具材別の内訳（"具材名×個数"をスペース区切り、メンバー内訳はさらに"名前:..."を「；」区切り）。
-        // Zuid内訳・UvA内訳・チセ内訳は後から追加した列のため、それより前に確定された行では
-        // 空文字になる（analytics.html側で「店舗別内訳データなし」として扱う）
+        // Zuid内訳・UvA内訳・チセ内訳・Rozen内訳は後から追加した列のため、それより前に確定された
+        // 行では空文字になる（analytics.html側で「店舗別内訳データなし」として扱う）
         ningiBreakdown: String(r[5] || ""),
         hqBreakdown: String(r[7] || ""),
         zuidBreakdown: String(r[9] || ""),
         uvaBreakdown: String(r[10] || ""),
         chiseBreakdown: String(r[11] || ""),
+        rozenBreakdown: String(r[14] || ""),
       });
     } catch (rowErr) {
       // この行はスキップして次の行へ
@@ -404,6 +422,53 @@ function handleSaveMonthlyOnigiriAssignment(ss, data) {
   }
 
   var row = [month, assignee];
+  if (foundRow > 0) {
+    sheet.getRange(foundRow, 1, 1, row.length).setValues([row]);
+  } else {
+    sheet.appendRow(row);
+  }
+}
+
+// 店舗（Zuid・UvA・Rozengracht等）ごとの営業期間・営業曜日・基本販売数（天気等による自動計算を
+// 使わない店舗向け）を「店舗名」で1店舗1行（店舗名キーでupsert）保存する。
+// 設定行が無い店舗は、admin.html側で「期間制限なし・曜日すべて営業」として扱う＝既存店舗
+// （Zuid・UvA）は設定するまでこれまでの動きと完全に同じになる（この関数は保存のみ行い、
+// 未設定時の既定値の解釈はクライアント側の責務）。
+// 読み取りは他の低頻度シートと同様gviz経由で行う（admin.html側でtype=取得エンドポイントは
+// 用意しない）。
+var STORE_SETTINGS_HEADER = ["店舗名", "開始日", "終了日", "月", "火", "水", "木", "金", "土", "日", "平日基本数", "土日基本数", "更新日時"];
+function handleSaveStoreSettings(ss, data) {
+  var sheet = ss.getSheetByName("店舗設定");
+  if (!sheet) {
+    sheet = ss.insertSheet("店舗設定");
+    sheet.appendRow(STORE_SETTINGS_HEADER);
+  } else {
+    sheet.getRange(1, 1, 1, STORE_SETTINGS_HEADER.length).setValues([STORE_SETTINGS_HEADER]);
+  }
+
+  var store = String(data.store || "").trim();
+  if (!store) return;
+  var weekdays = data.weekdays || {};
+  var flag = function(key) { return weekdays[key] === false ? false : true; };
+
+  var row = [
+    store,
+    data.startDate || "",
+    data.endDate || "",
+    flag("mon"), flag("tue"), flag("wed"), flag("thu"), flag("fri"), flag("sat"), flag("sun"),
+    (data.weekdayQty !== undefined && data.weekdayQty !== "") ? Number(data.weekdayQty) : "",
+    (data.weekendQty !== undefined && data.weekendQty !== "") ? Number(data.weekendQty) : "",
+    new Date()
+  ];
+
+  var values = sheet.getDataRange().getValues();
+  var foundRow = -1;
+  for (var r = 1; r < values.length; r++) {
+    if (String(values[r][0]).trim() === store) {
+      foundRow = r + 1;
+      break;
+    }
+  }
   if (foundRow > 0) {
     sheet.getRange(foundRow, 1, 1, row.length).setValues([row]);
   } else {
