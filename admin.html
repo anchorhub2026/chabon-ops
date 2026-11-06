@@ -1649,12 +1649,17 @@ function parseChiseSheet(json){
   const rawRows = json.table.rows || [];
   if(rawRows.length === 0) return {};
 
+  // 日付ヘッダは "11/7" のような単純な表記に加え、土曜列などで "11/7(土)" のように
+  // 曜日表記が付いている場合がある。末尾の表記は無視し、先頭の"M/D"部分だけを日付として
+  // 読み取る（完全一致にしていたため、曜日付きの列が丸ごと無視され、チセ向けの注文数が
+  // 本部の必要数から漏れていたバグの修正）。
   const dateRowCells = rawRows[0].c;
   const dateCols = [];
   dateRowCells.forEach((cell, idx) => {
     const f = cell && cell.f;
-    if(f && /^\d{1,2}\/\d{1,2}$/.test(f)){
-      dateCols.push({ idx, label: f });
+    const m = f && String(f).match(/^(\d{1,2}\/\d{1,2})/);
+    if(m){
+      dateCols.push({ idx, label: m[1] });
     }
   });
 
