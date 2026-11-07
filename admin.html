@@ -1292,9 +1292,9 @@
 
 <script src="confirmed-plan.js"></script>
 <script src="active-members.js"></script>
+<script src="chise-sheet.js"></script>
 <script>
 const LAT = 52.3676, LON = 4.9041;
-const SPREADSHEET_ID = "1rQtRUSP5e7qOjnT4RPvMGfWrEFcFL89AsLe8cjGIW4U"; // チセさんの生産データ
 const SHIFT_SPREADSHEET_ID = "1PHf1o3smqIQdeFkhBHjBZUEub7VtRcynQLllmSR7w-s"; // シフト回答／確定プラン
 // TODO: シフト回答用スプレッドシートに紐づけたApps Script（Code.gs）のウェブアプリ公開URLに置き換えてください
 const SCRIPT_URL = "https://script.google.com/macros/s/AKfycbyxbKMgM4ZiowaJu3cQ4NdLhwSE9-Pet8DbYB3qvgEX2NS2h1Dosgfm62vu7-in52ZT/exec";
@@ -1610,8 +1610,7 @@ function applyNsPenalty(result, minGuarantee){
 /* ---------- スプレッドシート読み込み（gviz） ---------- */
 
 async function fetchSheetJson(sheetName, spreadsheetId){
-  const id = spreadsheetId || SPREADSHEET_ID;
-  const url = `https://docs.google.com/spreadsheets/d/${id}/gviz/tq?tqx=out:json` +
+  const url = `https://docs.google.com/spreadsheets/d/${spreadsheetId}/gviz/tq?tqx=out:json` +
     (sheetName ? `&sheet=${encodeURIComponent(sheetName)}` : "");
   const res = await fetch(url, { cache: "no-store" });
   const text = await res.text();
@@ -1638,63 +1637,10 @@ function mdLabel(d){
   return `${d.getMonth() + 1}/${d.getDate()}`;
 }
 
-// 「具材のみ」の行名（例: "テリヤキ(具材のみ)"）かどうかを判定する。全角・半角どちらの
-// カッコ表記にも対応する。この行はおにぎりの個数ではなく具材そのものの注文のため、
-// チセ分の総生産数（breakdown・subtotal）には含めない
-// （具材のみ分はcooking.htmlの調理計算でのみ使う。admin.html側では使用しない）。
-const CHISE_KONOMI_ROW_PATTERN = /[\(（]\s*具材のみ\s*[\)）]/;
-
-// チセさんの生産表（商品×日付の横持ち表）を解析。キーは "6/23" 形式の文字列。
-function parseChiseSheet(json){
-  const rawRows = json.table.rows || [];
-  if(rawRows.length === 0) return {};
-
-  // 日付ヘッダは "11/7" のような単純な表記に加え、土曜列などで "11/7(土)" のように
-  // 曜日表記が付いている場合がある。末尾の表記は無視し、先頭の"M/D"部分だけを日付として
-  // 読み取る（完全一致にしていたため、曜日付きの列が丸ごと無視され、チセ向けの注文数が
-  // 本部の必要数から漏れていたバグの修正）。
-  const dateRowCells = rawRows[0].c;
-  const dateCols = [];
-  dateRowCells.forEach((cell, idx) => {
-    const f = cell && cell.f;
-    const m = f && String(f).match(/^(\d{1,2}\/\d{1,2})/);
-    if(m){
-      dateCols.push({ idx, label: m[1] });
-    }
-  });
-
-  const rows = rawRows.map(r => r.c.map(c => (c ? c.v : null)));
-  // 「商品」「SUB TOTAL」の行判定は、末尾の空白・全角スペースの表記揺れを吸収するためtrimして比較する
-  const cellLabel = v => (v === null || v === undefined) ? "" : String(v).trim();
-  let startRow = -1, endRow = -1;
-  rows.forEach((r, i) => {
-    if(cellLabel(r[0]) === "商品") startRow = i + 1;
-    if(cellLabel(r[0]) === "SUB TOTAL" && startRow !== -1 && endRow === -1) endRow = i;
-  });
-  if(startRow === -1 || endRow === -1) return {};
-
-  const byLabel = {};
-  dateCols.forEach(({ idx, label }) => {
-    const breakdown = {};
-    for(let i = startRow; i < endRow; i++){
-      // 商品名は前後の空白・全角スペースをtrimして具材名の表記揺れを吸収する
-      const name = cellLabel(rows[i][0]);
-      // 「具材のみ」の行はおにぎりの個数ではないため、breakdownには含めない
-      if(CHISE_KONOMI_ROW_PATTERN.test(name)) continue;
-      const rawQty = rows[i][idx];
-      // 個数が数値型ではなく数字の文字列で入力されている場合にも対応する
-      const qty = typeof rawQty === "number" ? rawQty
-        : (typeof rawQty === "string" && rawQty.trim() !== "" && !isNaN(Number(rawQty)) ? Number(rawQty) : null);
-      if(name && qty !== null) breakdown[name] = qty;
-    }
-    // SUB TOTAL列は「具材のみ」分も合算された値のため使わず、常におにぎりの行
-    // （breakdownの各値）の合計をチセ分の総生産数とする
-    const subtotal = Object.values(breakdown).reduce((s, v) => s + v, 0);
-    byLabel[label] = { breakdown, subtotal };
-  });
-
-  return byLabel;
-}
+// チセさんの生産データの共通パース処理（CHISE_KONOMI_ROW_PATTERN・parseChiseSheetRows等）は
+// chise-sheet.jsに共通化し、cooking.htmlと共用している（型推定による数値欠落を避けるため、
+// Apps Script経由のgetDisplayValues()で取得した文字列の2次元配列を解析する）。
+// admin.html側では戻り値の breakdown・subtotal（具材のみを含まないおにぎりの個数）だけを使う。
 
 // チセさんシートに実際に登場する商品名が、admin.htmlのFILLINGS一覧と
 // 表記揺れなく一致しているかをコンソールで確認できるようにする
@@ -4287,9 +4233,9 @@ async function refreshAllData(){
     const thisYear = new Date().getFullYear();
     state.cellStatus = {};
     resetFetchFailureTracking();
-    const [weatherRes, chiseJson, shiftJson, holidaysByIso, nsDisruptionsByDate, bootstrap, monthlyOnigiriJson, uvaCalendarJson, uvaCoefficientsJson, confirmedPlanJson, storeSettingsJson] = await Promise.all([
+    const [weatherRes, chiseRows, shiftJson, holidaysByIso, nsDisruptionsByDate, bootstrap, monthlyOnigiriJson, uvaCalendarJson, uvaCoefficientsJson, confirmedPlanJson, storeSettingsJson] = await Promise.all([
       fetch(weatherUrl).then(r => r.json()),
-      fetchSheetJson(null).catch(e => { console.error("チセさんシート取得失敗", e); return null; }).then(v => trackFetchResult("チセさんシート", true, v)),
+      fetchChiseSheetRows(SCRIPT_URL).catch(e => { console.error("チセさんシート取得失敗", e); return null; }).then(v => trackFetchResult("チセさんシート", true, v)),
       fetchSheetJson("シフト回答", SHIFT_SPREADSHEET_ID).catch(e => { console.error("シフト回答シート取得失敗", e); return null; }).then(v => trackFetchResult("シフト回答", true, v)),
       fetchDutchHolidays([thisYear, thisYear + 1]),
       fetchNsDisruptions(),
@@ -4314,7 +4260,7 @@ async function refreshAllData(){
     state.confirmedPlansByDate = parseConfirmedPlansSheet(confirmedPlanJson);
     // isProdSnapshotConsistent()がチセさんの必要数も含めて現在の必要数合計を計算できるよう、
     // 保存済みprod内訳の復元(loadProdAllocData/applyDraftToDay)より先にチセデータを反映しておく
-    state.chiseByDate = chiseJson ? parseChiseSheet(chiseJson) : {};
+    state.chiseByDate = chiseRows ? parseChiseSheetRows(chiseRows) : {};
     logChiseFillingNameCheck(state.chiseByDate);
     // isProdSnapshotConsistent()が今月のおにぎりの月次担当ルールも判定できるよう、
     // こちらも保存済みprod内訳の復元より先に反映しておく
@@ -4612,9 +4558,9 @@ async function init(){
     const track = p => p.then(v => { setInitProgress(++initProgressDone, 11); return v; });
     state.cellStatus = {};
     resetFetchFailureTracking();
-    const [weatherRes, chiseJson, shiftJson, holidaysByIso, nsDisruptionsByDate, bootstrap, paymentPlanJson, monthlyOnigiriJson, uvaCalendarJson, uvaCoefficientsJson, storeSettingsJson] = await Promise.all([
+    const [weatherRes, chiseRows, shiftJson, holidaysByIso, nsDisruptionsByDate, bootstrap, paymentPlanJson, monthlyOnigiriJson, uvaCalendarJson, uvaCoefficientsJson, storeSettingsJson] = await Promise.all([
       track(fetch(weatherUrl).then(r => r.json())),
-      track(fetchSheetJson(null).catch(e => { console.error("チセさんシート取得失敗", e); return null; }).then(v => trackFetchResult("チセさんシート", true, v))),
+      track(fetchChiseSheetRows(SCRIPT_URL).catch(e => { console.error("チセさんシート取得失敗", e); return null; }).then(v => trackFetchResult("チセさんシート", true, v))),
       track(fetchSheetJson("シフト回答", SHIFT_SPREADSHEET_ID).catch(e => { console.error("シフト回答シート取得失敗", e); return null; }).then(v => trackFetchResult("シフト回答", true, v))),
       track(fetchDutchHolidays([thisYear, thisYear + 1])),
       track(fetchNsDisruptions()),
@@ -4645,7 +4591,7 @@ async function init(){
     state.confirmedPlansByDate = parseConfirmedPlansSheet(paymentPlanJson);
     // isProdSnapshotConsistent()がチセさんの必要数も含めて現在の必要数合計を計算できるよう、
     // 保存済みprod内訳の復元(loadProdAllocData/applyDraftToDay)より先にチセデータを反映しておく
-    state.chiseByDate = chiseJson ? parseChiseSheet(chiseJson) : {};
+    state.chiseByDate = chiseRows ? parseChiseSheetRows(chiseRows) : {};
     logChiseFillingNameCheck(state.chiseByDate);
     // isProdSnapshotConsistent()が今月のおにぎりの月次担当ルールも判定できるよう、
     // こちらも保存済みprod内訳の復元より先に反映しておく
