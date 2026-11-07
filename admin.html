@@ -469,6 +469,30 @@
     margin: 0 0 12px;
   }
   .wish-hint{ display: block; font-weight: normal; color: #888; font-size: 0.66rem; }
+  .wish-over-warning{ display: block; font-weight: bold; color: var(--accent); font-size: 0.66rem; }
+  .prod-add-member-row{
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 8px;
+    font-size: 0.8rem;
+  }
+  .prod-add-member-row select{
+    font-size: 0.8rem;
+    padding: 3px 6px;
+    border-radius: 6px;
+    border: 1px solid var(--line);
+  }
+  .add-member-btn{
+    background: var(--main);
+    color: #fff;
+    border: none;
+    border-radius: 100px;
+    padding: 4px 12px;
+    font-size: 0.78rem;
+    cursor: pointer;
+  }
+  .add-member-btn:hover{ background: var(--main-dark); }
   .prod-summary{
     font-size: 0.82rem;
     color: #555;
@@ -2019,10 +2043,19 @@ function isProdSnapshotConsistent(day, memberFillingQty){
   return true;
 }
 
-function getManualQty(day, name){
+// その日のそのメンバーのシフト回答を返す。確定済み・修正中かどうかに関わらず、
+// 常に最新のシフト回答シートの内容を見る（確定後にシフト回答が変わっていれば、その値を返す）。
+// qty: 希望数（「希望しない」は0）。responded: 何らかの回答があったか。declined: 明示的に
+// 「希望しない」と回答したか（表示上「希望なし」と区別するために使う）。
+function getShiftWishInfo(day, name){
   const key = mdLabel(day.dateObj);
-  const fromShift = state.shiftByDate[key] && state.shiftByDate[key][name];
-  return fromShift ? fromShift.qty : 0;
+  const entry = state.shiftByDate[key] && state.shiftByDate[key][name];
+  if(!entry) return { qty: 0, responded: false, declined: false };
+  return { qty: entry.qty, responded: true, declined: entry.raw === "希望しない" };
+}
+
+function getManualQty(day, name){
+  return getShiftWishInfo(day, name).qty;
 }
 
 /* ---------- レンダリング：カレンダー ---------- */
@@ -2440,9 +2473,20 @@ function splitProdTableHtml(day){
   const locked = !!getEditLockReason(day);
   const capLabel = snap.isConfirmedPlan ? "確定" : (snap.isRevising ? "修正前" : "希望");
 
-  const memberHeaderCells = working.map((name, i) =>
-    `<th class="sub-prod-head">${name}<br><small class="wish-hint">${capLabel}:${memberCaps[i]}個</small></th>`
-  ).join("");
+  // シフト回答の希望数は、確定・修正中かどうかに関わらず常に表示する（確定プランの値ではなく
+  // 毎回シフト回答シートから読むため、確定後に希望数が変わっていれば最新の値が出る）。
+  // capLabelが既に「希望」の場合（未確定の日）は同じ値になるため、二重表示しない。
+  // 希望数超過の警告は、セル入力のたびにrefreshProductionCellDerived側でも更新できるよう、
+  // 常にid付きの要素として出力しておき、超過していない時はdisplay:noneで隠す
+  // （ヘッダー全体を再描画すると入力中のフォーカスを失うため）
+  const memberHeaderCells = working.map((name, i) => {
+    const wish = getShiftWishInfo(day, name);
+    const wishLine = capLabel === "希望"
+      ? ""
+      : `<br><small class="wish-hint">${wish.declined ? "希望なし" : `希望:${wish.qty}個`}</small>`;
+    const isOver = !locked && memberTotals[i] > wish.qty;
+    return `<th class="sub-prod-head">${name}<br><small class="wish-hint">${capLabel}:${memberCaps[i]}個</small>${wishLine}<small class="wish-over-warning" id="wishWarn-${day.dateKey}-${name}" style="${isOver ? "" : "display:none;"}">⚠️希望${wish.qty}個を超えています</small></th>`;
+  }).join("");
 
   const rows = FILLINGS.map(f => {
     const isFixedHq = ALWAYS_HQ_FILLINGS.includes(f);
@@ -2563,6 +2607,21 @@ function dayBlockHtml(day){
     revisionActionsHtml = `<button type="button" class="revise-day-btn" data-key="${day.dateKey}">✏️ この日を修正する</button>`;
   }
 
+  // 修正中、「希望しない」と回答した・まだ回答が無いメンバーも、必要なら手動で列を追加できる
+  let addMemberHtml = "";
+  if(isRevising){
+    const existing = new Set(day.revisingWorking || []);
+    const available = MEMBERS.filter(name => !existing.has(name));
+    if(available.length > 0){
+      const options = available.map(name => `<option value="${name}">${name}</option>`).join("");
+      addMemberHtml = `
+        <div class="prod-add-member-row">
+          <select class="add-member-select" id="addMemberSelect-${day.dateKey}">${options}</select>
+          <button type="button" class="add-member-btn" data-key="${day.dateKey}">+ メンバーを追加</button>
+        </div>`;
+    }
+  }
+
   return `
     <div class="day-block-body">
       <div class="day-2col-grid">
@@ -2590,6 +2649,7 @@ function dayBlockHtml(day){
           ${splitForecastTableHtml(day)}
         </div>
         <div class="day-table-prod">
+          ${addMemberHtml}
           ${snap.working.length ? splitProdTableHtml(day) : `<p class="off-note">出勤予定のメンバーがいません。</p>`}
         </div>
       </div>
@@ -2953,9 +3013,18 @@ function refreshProductionCellDerived(day){
     if(rowTotalEl) rowTotalEl.textContent = rowTotal;
   });
 
+  const lockedForWish = !!getEditLockReason(day);
   snap.working.forEach((name, i) => {
     const colTotalEl = document.getElementById(`prodColTotal-${day.dateKey}-${name}`);
     if(colTotalEl) colTotalEl.textContent = snap.memberTotals[i];
+
+    const warnEl = document.getElementById(`wishWarn-${day.dateKey}-${name}`);
+    if(warnEl){
+      const wish = getShiftWishInfo(day, name);
+      const isOver = !lockedForWish && snap.memberTotals[i] > wish.qty;
+      warnEl.textContent = `⚠️希望${wish.qty}個を超えています`;
+      warnEl.style.display = isOver ? "" : "none";
+    }
   });
 
   const hqTotalEl = document.getElementById(`prodHqTotal-${day.dateKey}`);
@@ -3021,6 +3090,23 @@ function bindProductionDayEvents(day){
 
   const cancelRevisionBtn = container.querySelector(".cancel-revision-btn");
   if(cancelRevisionBtn) cancelRevisionBtn.addEventListener("click", () => cancelRevisingDay(day));
+
+  // 修正中、「希望しない」と回答した・まだ回答が無いメンバーの列を手動で追加する
+  const addMemberBtn = container.querySelector(".add-member-btn");
+  if(addMemberBtn){
+    addMemberBtn.addEventListener("click", () => {
+      const select = container.querySelector(".add-member-select");
+      const name = select && select.value;
+      if(!name || !day.revisingWorking || day.revisingWorking.includes(name)) return;
+      day.revisingWorking.push(name);
+      if(!day.memberFillingQty[name]) day.memberFillingQty[name] = buildFillingDefaults(0);
+      if(!day.prodManuallyEdited) day.prodManuallyEdited = {};
+      day.prodManuallyEdited[name] = true;
+      if(!day.revisingMemberCaps) day.revisingMemberCaps = {};
+      day.revisingMemberCaps[name] = 0;
+      renderDayBlock(day);
+    });
+  }
 }
 
 /* ---------- 確定済みの日の修正（1日単位） ---------- */
@@ -3033,7 +3119,16 @@ function startRevisingDay(day){
   const confirmed = getConfirmedPlanForDay(day);
   if(!confirmed) return;
 
+  // 確定時に割り振りがあったメンバーに加え、その日シフト回答で希望を出している
+  // （「希望しない」ではない）メンバーも列に出す。確定時点で割り振りが0個だったために
+  // 確定プランのmemberNamesに含まれていなくても、再度割り振るときに希望数が分かるようにする
   const working = confirmed.memberNames.slice();
+  MEMBERS.forEach(name => {
+    if(working.includes(name)) return;
+    const wish = getShiftWishInfo(day, name);
+    if(wish.qty > 0 && !wish.declined) working.push(name);
+  });
+
   const memberFillingQty = {};
   const prodManuallyEdited = {};
   const revisingMemberCaps = {};
