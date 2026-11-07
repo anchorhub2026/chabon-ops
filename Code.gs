@@ -391,15 +391,44 @@ function handleSaveShiftConfig(ss, data) {
 // 今月のおにぎりの月次担当（1ヶ月ごとに1人へ全数割り振る対象者）を「年月（YYYY-MM）｜担当者」で
 // 1ヶ月1行（月キーでupsert）保存する。初回作成時は初期データ（2026-10:CHIKAKO, 2026-11:YUMI）を
 // シードする。assigneeが空文字の場合はその月の行を削除する（＝未設定の月として従来の割り振りに戻す）。
-// 読み取りは他の低頻度シートと同様gviz経由で行う（admin.html側でtype=取得エンドポイントは用意しない）。
+//
+// 年月（1列目）は、"2026-11"のような文字列をGoogleスプレッドシートが日付として自動変換して
+// しまい、後でgvizやgetValues()で読むと別の形（Date型や"Date(2026,10,1)"形式）で返ってきて
+// 年月として読めなくなる不具合があった。setNumberFormat("@")で明示的に書式なしテキストに
+// してから書き込むことで、この自動変換を防ぐ（writeMonthlyOnigiriRow参照）。
+// 読み取りはgvizではなくApps Script側のtype=monthlyOnigiriエンドポイント（handleGetMonthlyOnigiri）
+// で行う。gvizは列ごとにセルの型を多数決で決め、少数派の型の値をnullにする仕様があり、
+// チセさんシートと同様の理由で値が消える恐れがあるため。
+function monthlyOnigiriSheetHeader() { return ["年月（YYYY-MM）", "担当者"]; }
+
+// 年月セルを明示的に書式なしテキストにしてから書き込む（日付への自動変換を防ぐ）
+function writeMonthlyOnigiriRow(sheet, rowIndex, month, assignee) {
+  sheet.getRange(rowIndex, 1).setNumberFormat("@").setValue(month);
+  sheet.getRange(rowIndex, 2).setValue(assignee);
+}
+
+// 「今月のおにぎり担当」シートの年月セルの値を"yyyy-MM"文字列に正規化する。
+// 過去にシートが日付として自動変換してしまった行（Date型で返る）・正しい文字列の
+// どちらでも読み、どちらでもない場合はnullを返す（呼び出し側で「読み込めない行」として扱う）。
+function normalizeMonthlyOnigiriMonth(rawValue) {
+  if (Object.prototype.toString.call(rawValue) === '[object Date]') {
+    var y = rawValue.getFullYear();
+    var m = rawValue.getMonth() + 1; // 0始まりのため+1
+    return { month: y + "-" + ("0" + m).slice(-2), wasDate: true };
+  }
+  var s = String(rawValue || "").trim();
+  if (/^\d{4}-\d{2}$/.test(s)) return { month: s, wasDate: false };
+  return null;
+}
+
 function handleSaveMonthlyOnigiriAssignment(ss, data) {
-  var header = ["年月（YYYY-MM）", "担当者"];
+  var header = monthlyOnigiriSheetHeader();
   var sheet = ss.getSheetByName("今月のおにぎり担当");
   if (!sheet) {
     sheet = ss.insertSheet("今月のおにぎり担当");
     sheet.appendRow(header);
-    sheet.appendRow(["2026-10", "CHIKAKO"]);
-    sheet.appendRow(["2026-11", "YUMI"]);
+    writeMonthlyOnigiriRow(sheet, 2, "2026-10", "CHIKAKO");
+    writeMonthlyOnigiriRow(sheet, 3, "2026-11", "YUMI");
   } else {
     sheet.getRange(1, 1, 1, header.length).setValues([header]);
   }
@@ -408,26 +437,62 @@ function handleSaveMonthlyOnigiriAssignment(ss, data) {
   if (!month) return;
   var assignee = String(data.assignee || "").trim();
 
+  // 年月セルが過去に日付として自動変換された行は文字列の単純比較では一致しないため、
+  // normalizeMonthlyOnigiriMonthで正規化してから比較する（読めない行は対象外）。
+  // 以前のバグで同じ月の行が複数できてしまっている場合は、保存時にまとめて1行へ片付ける。
   var values = sheet.getDataRange().getValues();
-  var foundRow = -1;
+  var foundRows = [];
   for (var r = 1; r < values.length; r++) {
-    if (String(values[r][0]).trim() === month) {
-      foundRow = r + 1;
-      break;
-    }
+    var normalized = normalizeMonthlyOnigiriMonth(values[r][0]);
+    if (normalized && normalized.month === month) foundRows.push(r + 1);
   }
 
   if (!assignee) {
-    if (foundRow > 0) sheet.deleteRow(foundRow);
+    for (var i = foundRows.length - 1; i >= 0; i--) sheet.deleteRow(foundRows[i]);
     return;
   }
 
-  var row = [month, assignee];
-  if (foundRow > 0) {
-    sheet.getRange(foundRow, 1, 1, row.length).setValues([row]);
+  if (foundRows.length > 0) {
+    writeMonthlyOnigiriRow(sheet, foundRows[0], month, assignee);
+    for (var j = foundRows.length - 1; j >= 1; j--) sheet.deleteRow(foundRows[j]);
   } else {
-    sheet.appendRow(row);
+    var newRow = sheet.getLastRow() + 1;
+    writeMonthlyOnigiriRow(sheet, newRow, month, assignee);
   }
+}
+
+// 「今月のおにぎり担当」シートを取得する。年月セルが過去に日付として自動変換されてしまった
+// 行も正しく読み、かつその場で文字列として書き直す（以後の読み込みで自動変換の影響を
+// 受けなくなる＝実質的な一度きりの移行処理を兼ねる）。年月として読めない行は黙って捨てず
+// invalidRowsに積んで返し、admin.html側で警告表示に使う。
+function handleGetMonthlyOnigiri(ss) {
+  var sheet = ss.getSheetByName("今月のおにぎり担当");
+  if (!sheet) {
+    return ContentService.createTextOutput(JSON.stringify({ assignments: {}, invalidRows: [] }))
+      .setMimeType(ContentService.MimeType.JSON);
+  }
+  var values = sheet.getDataRange().getValues();
+  var assignments = {};
+  var invalidRows = [];
+  for (var r = 1; r < values.length; r++) {
+    var rawMonth = values[r][0];
+    var assignee = String(values[r][1] || "").trim();
+    if (!assignee) continue; // 担当者が空の行は未設定として扱う（対象外）
+
+    var normalized = normalizeMonthlyOnigiriMonth(rawMonth);
+    if (!normalized) {
+      invalidRows.push({ row: r + 1, rawValue: String(rawMonth) });
+      continue;
+    }
+    if (normalized.wasDate) {
+      // 日付に自動変換されていた行をここで文字列に直す
+      writeMonthlyOnigiriRow(sheet, r + 1, normalized.month, assignee);
+    }
+    // 同じ月の行が複数ある場合（過去のバグによる重複）は、シート上で後にある行を優先する
+    assignments[normalized.month] = assignee;
+  }
+  return ContentService.createTextOutput(JSON.stringify({ assignments: assignments, invalidRows: invalidRows }))
+    .setMimeType(ContentService.MimeType.JSON);
 }
 
 // 店舗（Zuid・UvA・Rozengracht等）ごとの営業期間・営業曜日・基本販売数（天気等による自動計算を
@@ -986,6 +1051,10 @@ function doGetInner(e) {
 
   if (e.parameter && e.parameter.type === "bootstrap") {
     return handleGetBootstrap(ss);
+  }
+
+  if (e.parameter && e.parameter.type === "monthlyOnigiri") {
+    return handleGetMonthlyOnigiri(ss);
   }
 
   if (e.parameter && e.parameter.type === "draft") {
