@@ -1,4 +1,5 @@
 var SHEET_ID = "1PHf1o3smqIQdeFkhBHjBZUEub7VtRcynQLllmSR7w-s";
+var CHISE_SHEET_ID = "1rQtRUSP5e7qOjnT4RPvMGfWrEFcFL89AsLe8cjGIW4U"; // チセさんの生産データ
 
 // NS Reisinformatie API（運休・ストライキ情報）。NS APIポータルで取得したキーをここに設定する
 var NS_API_KEY = "";
@@ -939,6 +940,26 @@ function handleGetAnalytics(ss) {
     .setMimeType(ContentService.MimeType.JSON);
 }
 
+// チセさんの生産データ（「オーダー表」シート）を、gvizの型推定を経由せずに返す。
+// gvizはセルの値を列（日付）ごとに多数決で型推定し、少数派の型のセルをnullにする仕様があるため、
+// その列に数値が1個しか無く、曜日表記の文字セルと数が同数か少ないと、本来入っている数値が
+// nullとして返ってきてしまう不具合があった（例：ある土曜列に「具材のみ」の数値が1個だけ
+// 入っていたケース）。getDisplayValues()は型推定を一切行わず、シート上の表示文字列を
+// そのまま全セル取得できるため、この問題を避けられる。
+// admin.html・cooking.html側ではchise-sheet.jsのparseChiseSheetRows()が、ここで返した
+// 文字列の2次元配列を解析して具材別の個数（数値）に変換する。
+function handleGetChiseSheet() {
+  var ss = SpreadsheetApp.openById(CHISE_SHEET_ID);
+  var sheet = ss.getSheetByName("オーダー表");
+  if (!sheet) {
+    return ContentService.createTextOutput(JSON.stringify({ error: "シート「オーダー表」が見つかりません", rows: [] }))
+      .setMimeType(ContentService.MimeType.JSON);
+  }
+  var rows = sheet.getDataRange().getDisplayValues();
+  return ContentService.createTextOutput(JSON.stringify({ rows: rows }))
+    .setMimeType(ContentService.MimeType.JSON);
+}
+
 // doGet本体で例外が発生すると、Content-Typeが text/html のGoogleエラーページが
 // 返ってしまい、呼び出し元（fetch().json()）ではその他のネットワークエラーと区別が付かず
 // 「データが0件だった」ように見えてしまう。これによりanalytics.html等で原因不明の
@@ -955,6 +976,10 @@ function doGet(e) {
 function doGetInner(e) {
   if (e.parameter && e.parameter.type === "disruptions") {
     return handleDisruptions();
+  }
+
+  if (e.parameter && e.parameter.type === "chiseSheet") {
+    return handleGetChiseSheet();
   }
 
   var ss = SpreadsheetApp.openById(SHEET_ID);

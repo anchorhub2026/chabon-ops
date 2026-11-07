@@ -474,9 +474,9 @@
 <script src="confirmed-plan.js"></script>
 <script src="personal-colors.js"></script>
 <script src="date-format.js"></script>
+<script src="chise-sheet.js"></script>
 <script>
 const SHIFT_SPREADSHEET_ID = "1PHf1o3smqIQdeFkhBHjBZUEub7VtRcynQLllmSR7w-s"; // 作業中プラン・確定プラン・具材ステータス
-const CHISE_SPREADSHEET_ID = "1rQtRUSP5e7qOjnT4RPvMGfWrEFcFL89AsLe8cjGIW4U"; // チセさんの生産データ
 const SCRIPT_URL = "https://script.google.com/macros/s/AKfycbyxbKMgM4ZiowaJu3cQ4NdLhwSE9-Pet8DbYB3qvgEX2NS2h1Dosgfm62vu7-in52ZT/exec";
 
 // admin.htmlと同じ9種類の具材・本部固定具材（枝豆・梅・うなぎは常に本部製造）
@@ -595,64 +595,10 @@ function parseDraftByDate(json){
   return result;
 }
 
-// 「具材のみ」の行名（例: "テリヤキ(具材のみ)"）から、対応するおにぎりの具材名
-// （例: "テリヤキチキン"）を判定する。全角・半角どちらのカッコ表記にも対応する。
-const KONOMI_ROW_PATTERN = /[\(（]\s*具材のみ\s*[\)）]/;
-const KONOMI_ROW_PREFIXES = [
-  { prefix: "テリヤキ", filling: "テリヤキチキン" },
-  { prefix: "サーモン", filling: "サーモン" },
-];
-function matchKonomiFilling(rawName){
-  if(!KONOMI_ROW_PATTERN.test(rawName)) return null;
-  const match = KONOMI_ROW_PREFIXES.find(p => rawName.startsWith(p.prefix));
-  return match ? match.filling : null;
-}
-
-// チセさんの生産データ（商品×日付の横持ち表）を解析する（admin.htmlのparseChiseSheetと同じロジック）。
-// 「具材のみ」の行（例: "テリヤキ(具材のみ)"）は、おにぎり個数の集計（breakdown）とは
-// 混ぜず、別のkonomiBreakdownに保持する
-function parseChiseSheet(json){
-  const result = {};
-  const rawRows = (json && json.table && json.table.rows) || [];
-  if(rawRows.length === 0) return result;
-
-  // 日付ヘッダは "11/7" のような単純な表記に加え、土曜列などで "11/7(土)" のように
-  // 曜日表記が付いている場合がある。末尾の表記は無視し、先頭の"M/D"部分だけを日付として
-  // 読み取る（完全一致にしていたため、曜日付きの列が丸ごと無視されていたバグの修正）。
-  const dateRowCells = rawRows[0].c || [];
-  const dateCols = [];
-  dateRowCells.forEach((cell, idx) => {
-    const f = cell && cell.f;
-    const m = f && String(f).match(/^(\d{1,2}\/\d{1,2})/);
-    if(m) dateCols.push({ idx, label: m[1] });
-  });
-
-  const rows = rawRows.map(r => (r.c || []).map(c => (c ? c.v : null)));
-  const cellLabel = v => (v === null || v === undefined) ? "" : String(v).trim();
-  let startRow = -1, endRow = -1;
-  rows.forEach((r, i) => {
-    if(cellLabel(r[0]) === "商品") startRow = i + 1;
-    if(cellLabel(r[0]) === "SUB TOTAL" && startRow !== -1 && endRow === -1) endRow = i;
-  });
-  if(startRow === -1 || endRow === -1) return result;
-
-  dateCols.forEach(({ idx, label }) => {
-    const breakdown = {};
-    const konomiBreakdown = {};
-    for(let i = startRow; i < endRow; i++){
-      const name = cellLabel(rows[i][0]);
-      const rawQty = rows[i][idx];
-      const qty = typeof rawQty === "number" ? rawQty
-        : (typeof rawQty === "string" && rawQty.trim() !== "" && !isNaN(Number(rawQty)) ? Number(rawQty) : null);
-      if(!name || qty === null) continue;
-      const konomiFilling = matchKonomiFilling(name);
-      if(konomiFilling) konomiBreakdown[konomiFilling] = (konomiBreakdown[konomiFilling] || 0) + qty;
-      else breakdown[name] = qty;
-    }
-    result[label] = { breakdown, konomiBreakdown };
-  });
-  return result;
-}
+// チセさんの生産データの共通パース処理（matchChiseKonomiFilling・parseChiseSheetRows等）は
+// chise-sheet.jsに共通化し、admin.htmlと共用している（型推定による数値欠落を避けるため、
+// Apps Script経由のgetDisplayValues()で取得した文字列の2次元配列を解析する）。
+// cooking.html側では戻り値のbreakdown（おにぎり本体）とkonomiBreakdown（具材のみ）の両方を使う。
 
 // 「具材ステータス」シートを iso -> 渡し先 -> 具材 -> {handed, cooked, updatedAtRaw} にパースする。
 // updatedAtRawは保存直前の楽観的ロック確認用（gvizのDate型セルの生シリアライズ値）。
@@ -756,7 +702,7 @@ function getDayBreakdown(iso){
 }
 
 /* ---------- 対象の日数を選ぶ ---------- */
-// 選択肢に出す日＝「明日」以降で、確定プランか作業中プランかチセのデータが何かしらある日。
+// 選択肢に出す日＝「今日」以降で、確定プランか作業中プランかチセのデータが何かしらある日。
 // 曜日では絞らない（土日イベント等で日曜日に計画がある日も対象に含める）。
 // 何も無い日（店が休みの日・まだ何も予定が無い日）は選択肢に出さない。
 function hasDataForDate(iso){
@@ -775,7 +721,7 @@ function buildCandidateDates(){
   const today = new Date();
   today.setHours(0, 0, 0, 0);
   const list = [];
-  for(let i = 1; i <= 14; i++){
+  for(let i = 0; i <= 14; i++){
     const d = addDays(today, i);
     const iso = isoDate(d);
     if(!hasDataForDate(iso)) continue;
@@ -787,6 +733,10 @@ function buildCandidateDates(){
 function presetDates(mode){
   const today = new Date();
   today.setHours(0, 0, 0, 0);
+  if(mode === "today"){
+    const iso = isoDate(today);
+    return state.candidates.filter(d => d.iso === iso).map(d => d.iso);
+  }
   if(mode === "tomorrow"){
     const iso = isoDate(addDays(today, 1));
     return state.candidates.filter(d => d.iso === iso).map(d => d.iso);
@@ -829,6 +779,7 @@ function applyPreset(mode){
 function renderPresetButtons(){
   const area = document.getElementById("presetBtnRow");
   area.innerHTML = `
+    <button type="button" class="preset-btn" data-mode="today">今日</button>
     <button type="button" class="preset-btn" data-mode="tomorrow">明日</button>
     <button type="button" class="preset-btn" data-mode="2days">2日分</button>
     <button type="button" class="preset-btn" data-mode="3days">3日分</button>
@@ -1579,14 +1530,14 @@ function showConfirm(message, onConfirm){
 // ページを開いただけ・更新ボタンを押しただけでは、具材ステータス・確定プラン・作業中プランの
 // いずれにも書き込まない（読み込みのみ）。
 async function loadAllData(){
-  const [draftJson, chiseJson, confirmedJson, statusJson] = await Promise.all([
+  const [draftJson, chiseRows, confirmedJson, statusJson] = await Promise.all([
     fetchGvizSheet(SHIFT_SPREADSHEET_ID, "作業中プラン").catch(() => null),
-    fetchGvizSheet(CHISE_SPREADSHEET_ID, null).catch(() => null),
+    fetchChiseSheetRows(SCRIPT_URL).catch(() => []),
     fetchGvizSheet(SHIFT_SPREADSHEET_ID, "確定プラン").catch(() => null),
     fetchGvizSheet(SHIFT_SPREADSHEET_ID, "具材ステータス").catch(() => null),
   ]);
   state.draftByDate = parseDraftByDate(draftJson);
-  state.chiseByLabel = parseChiseSheet(chiseJson);
+  state.chiseByLabel = parseChiseSheetRows(chiseRows);
   state.confirmedPlanByDate = parseConfirmedPlansSheet(confirmedJson);
   state.cellStatus = parseCellStatusSheet(statusJson);
 
