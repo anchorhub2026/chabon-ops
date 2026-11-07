@@ -219,26 +219,6 @@
     letter-spacing: 0.04em;
     line-height: 1.5;
   }
-  /* 確定後にadmin.htmlの「この日を修正する」で内容が更新された日のバッジ
-     （ニギニギ隊が変更に気づけるよう、確定済み表示とは別の目立つ色にする） */
-  .revised-badge{
-    font-size: 0.5rem;
-    font-weight: 700;
-    background: var(--accent);
-    color: #fff;
-    padding: 1px 6px;
-    border-radius: 100px;
-    letter-spacing: 0.02em;
-    line-height: 1.5;
-    white-space: nowrap;
-  }
-  .modal-revised-note{
-    margin: 0 0 10px;
-    font-size: 0.78rem;
-    font-weight: 700;
-    color: var(--accent);
-  }
-
   /* ── メンバーブロック ── */
   .member{ margin-bottom: 0; }
 
@@ -472,7 +452,6 @@
     .cell-date{ margin-bottom: 3px; padding-bottom: 3px; gap: 2px; }
     .date-num{ font-size: 0.75rem; }
     .today-badge{ font-size: 0.42rem; padding: 1px 3px; }
-    .revised-badge{ font-size: 0.4rem; padding: 1px 3px; }
     /* メンバー：コンパクト */
     .member{ margin-bottom: 0; }
     .member-header{ line-height: 1.2; gap: 2px; }
@@ -621,10 +600,7 @@ async function loadData(){
     const members  = parseMembers(c[5]?.v);
     const total    = zuidQty + uvaQty + chiseQty;
     const sortDate = inferDate(c[0]);
-    // admin.htmlの「この日を修正する」で確定後に内容を更新した日のみ入る（未修正なら空）。
-    // ニギニギ隊が変更に気づけるよう、カレンダー上に「修正済み」として表示する
-    const revisedAtLabel = String(c[12]?.f || c[12]?.v || "").trim();
-    byLabel.set(dateLabel, { dateLabel, members, total, sortDate, revisedAtLabel });
+    byLabel.set(dateLabel, { dateLabel, members, total, sortDate });
   });
 
   allPlans = {};
@@ -729,9 +705,6 @@ function dayCellHtml(dateObj, today, isSun, isSat){
   html += `<div class="cell-date${isSun ? " is-sun" : ""}${isSat ? " is-sat" : ""}">`;
   html += `<span class="date-num">${dateObj.getDate()}</span>`;
   if(isToday) html += `<span class="today-badge">TODAY</span>`;
-  // admin.htmlの「この日を修正する」で確定後に内容が更新された日は、ニギニギ隊が
-  // 変更に気づけるよう「修正済み」バッジを表示する（詳細な最終更新時刻はタップ時のモーダルで表示）
-  if(plan && plan.revisedAtLabel) html += `<span class="revised-badge" title="最終更新：${plan.revisedAtLabel}">修正済み</span>`;
   html += `</div>`;
 
   if(activeMembers.length > 0){
@@ -823,9 +796,7 @@ function openModal(key){
   document.getElementById("modalDateHead").textContent = `${mo}月${dy}日（${dowNames[dow]}）`;
 
   const activeMembers = plan.members.filter(m => m.total > 0);
-  let bodyHtml = plan.revisedAtLabel
-    ? `<p class="modal-revised-note">✏️ 修正済み（最終更新：${plan.revisedAtLabel}）</p>`
-    : "";
+  let bodyHtml = "";
   if(activeMembers.length > 0){
     activeMembers.forEach((m, i) => {
       if(i > 0) bodyHtml += `<hr class="modal-sep">`;

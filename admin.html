@@ -1118,6 +1118,15 @@
     color: #7a5c00;
     margin: 0 0 12px;
   }
+  .monthly-onigiri-invalid-warning{
+    background: #fdeceb;
+    border: 1px solid var(--accent);
+    border-radius: 8px;
+    padding: 10px 14px;
+    font-size: 0.85rem;
+    color: var(--accent);
+    margin: 0 0 12px;
+  }
 
   /* ── 店舗の営業設定 ── */
   .store-settings-card{
@@ -1216,6 +1225,7 @@
 
   <section id="monthlyOnigiriSection">
     <h2>今月のおにぎり担当<span class="badge">月ごとに1人へ全数割り振り</span></h2>
+    <p id="monthlyOnigiriInvalidWarning" class="monthly-onigiri-invalid-warning" style="display:none;"></p>
     <p id="monthlyOnigiriRecalcNotice" class="monthly-onigiri-recalc-notice" style="display:none;"></p>
     <div id="monthlyOnigiriList"><p class="loading">データを読み込み中...</p></div>
     <div class="shift-config-controls monthly-onigiri-add-row">
@@ -1360,6 +1370,7 @@ const state = {
   hourlyByDate: {},      // 同上
   draftData: null,       // 同上（「作業中プラン」から取得したドラフト一覧）
   monthlyOnigiriAssignments: {}, // "YYYY-MM" -> 担当者名（または"本部"）。「今月のおにぎり担当」シート由来
+  monthlyOnigiriInvalidRows: [], // 年月が読み込めなかった行（{row, rawValue}）。空でなければ警告表示する
   uvaAcademicCalendar: {},    // "YYYY-MM-DD"（週開始・月曜）-> 区分名。「UvA学事暦」シート由来（閲覧専用）
   uvaAcademicCoefficients: {}, // 区分名 -> 係数。「UvA学事暦設定」シート由来
   storeSettings: {},    // 店舗名 -> {startDate,endDate,weekdays,weekdayQty,weekendQty}。「店舗設定」シート由来
@@ -3455,19 +3466,21 @@ function initShiftConfigSection(initialConfig){
 
 const MONTHLY_ONIGIRI_ASSIGNEE_OPTIONS = [...ACTIVE_MEMBERS, "本部"];
 
-// 「今月のおにぎり担当」シートを "YYYY-MM" -> 担当者名 のマップにパースする
-function parseMonthlyOnigiriSheet(json){
-  const result = {};
-  if(!json || !json.table || !json.table.rows) return result;
-  json.table.rows.forEach(r => {
-    const c = r.c;
-    if(!c || !c[0] || !c[1]) return;
-    const month = String(c[0].v || "").trim();
-    const assignee = String(c[1].v || "").trim();
-    if(!month || !assignee) return;
-    result[month] = assignee;
-  });
-  return result;
+// 「今月のおにぎり担当」シートを取得する。年月セルをGoogleスプレッドシートが日付として
+// 自動変換してしまい、gviz経由では正しく読み戻せない不具合があったため、Apps Script側の
+// type=monthlyOnigiriエンドポイント（Code.gsのhandleGetMonthlyOnigiri）で取得する
+// （チセさんシートの読み込みと同じ理由。日付に変換されてしまっていた行はサーバー側で
+// 文字列に書き直されるため、一度読み込めば以後は正常に戻る）。
+// 年月が読めなかった行はinvalidRowsに入り、画面に警告として表示する（黙って無視しない）。
+async function fetchMonthlyOnigiriData(){
+  try{
+    const res = await fetch(`${SCRIPT_URL}?type=monthlyOnigiri`, { cache: "no-store" });
+    const json = await res.json();
+    return { assignments: json.assignments || {}, invalidRows: json.invalidRows || [] };
+  }catch(e){
+    console.error("今月のおにぎり担当シート取得失敗", e);
+    return null;
+  }
 }
 
 async function saveMonthlyOnigiriAssignment(month, assignee){
@@ -3481,7 +3494,24 @@ function monthlyOnigiriOptionsHtml(selected){
   ).join("");
 }
 
+// 年月が読み込めなかった行（Code.gs側で正規化できなかった値）を警告表示する。
+// 黙って無視せず、何が読めなかったのかが分かるよう生の値も表示する
+function renderMonthlyOnigiriInvalidWarning(){
+  const el = document.getElementById("monthlyOnigiriInvalidWarning");
+  if(!el) return;
+  const invalidRows = state.monthlyOnigiriInvalidRows || [];
+  if(invalidRows.length === 0){
+    el.style.display = "none";
+    el.innerHTML = "";
+    return;
+  }
+  const detail = invalidRows.map(r => `${r.row}行目："${r.rawValue}"`).join("、");
+  el.innerHTML = `⚠️ 今月のおにぎり担当の年月を読み込めませんでした（${detail}）。シートの値を確認してください。`;
+  el.style.display = "";
+}
+
 function renderMonthlyOnigiriList(){
+  renderMonthlyOnigiriInvalidWarning();
   const area = document.getElementById("monthlyOnigiriList");
   if(!area) return;
   const months = Object.keys(state.monthlyOnigiriAssignments || {}).sort();
@@ -4233,7 +4263,7 @@ async function refreshAllData(){
     const thisYear = new Date().getFullYear();
     state.cellStatus = {};
     resetFetchFailureTracking();
-    const [weatherRes, chiseRows, shiftJson, holidaysByIso, nsDisruptionsByDate, bootstrap, monthlyOnigiriJson, uvaCalendarJson, uvaCoefficientsJson, confirmedPlanJson, storeSettingsJson] = await Promise.all([
+    const [weatherRes, chiseRows, shiftJson, holidaysByIso, nsDisruptionsByDate, bootstrap, monthlyOnigiriData, uvaCalendarJson, uvaCoefficientsJson, confirmedPlanJson, storeSettingsJson] = await Promise.all([
       fetch(weatherUrl).then(r => r.json()),
       fetchChiseSheetRows(SCRIPT_URL).catch(e => { console.error("チセさんシート取得失敗", e); return null; }).then(v => trackFetchResult("チセさんシート", true, v)),
       fetchSheetJson("シフト回答", SHIFT_SPREADSHEET_ID).catch(e => { console.error("シフト回答シート取得失敗", e); return null; }).then(v => trackFetchResult("シフト回答", true, v)),
@@ -4241,7 +4271,7 @@ async function refreshAllData(){
       fetchNsDisruptions(),
       // 作業中プラン・具材ステータスをまとめて1回のリクエストで取得する
       fetchBootstrap().then(v => { trackFetchResult("作業中プラン・具材ステータス", true, v && v.drafts ? v.drafts : null); return v; }),
-      fetchSheetJson("今月のおにぎり担当", SHIFT_SPREADSHEET_ID).catch(() => null).then(v => trackFetchResult("今月のおにぎり担当", true, v)),
+      fetchMonthlyOnigiriData().then(v => trackFetchResult("今月のおにぎり担当", true, v)),
       fetchOptionalSheetJson("UvA学事暦", SHIFT_SPREADSHEET_ID).catch(() => null).then(v => trackFetchResult("UvA学事暦", true, v)),
       fetchOptionalSheetJson("UvA学事暦設定", SHIFT_SPREADSHEET_ID).catch(() => null).then(v => trackFetchResult("UvA学事暦設定", true, v)),
       fetchSheetJson("確定プラン", SHIFT_SPREADSHEET_ID).catch(e => { console.error("確定プラン取得失敗", e); return null; }).then(v => trackFetchResult("確定プラン", true, v)),
@@ -4264,7 +4294,8 @@ async function refreshAllData(){
     logChiseFillingNameCheck(state.chiseByDate);
     // isProdSnapshotConsistent()が今月のおにぎりの月次担当ルールも判定できるよう、
     // こちらも保存済みprod内訳の復元より先に反映しておく
-    state.monthlyOnigiriAssignments = parseMonthlyOnigiriSheet(monthlyOnigiriJson);
+    state.monthlyOnigiriAssignments = (monthlyOnigiriData && monthlyOnigiriData.assignments) || {};
+    state.monthlyOnigiriInvalidRows = (monthlyOnigiriData && monthlyOnigiriData.invalidRows) || [];
     recalculatedOnigiriDates = [];
     // buildDays()がUvA学事暦補正を計算できるよう、buildDays()より前に反映しておく
     state.uvaAcademicCalendar = parseUvaAcademicCalendarSheet(uvaCalendarJson);
@@ -4558,7 +4589,7 @@ async function init(){
     const track = p => p.then(v => { setInitProgress(++initProgressDone, 11); return v; });
     state.cellStatus = {};
     resetFetchFailureTracking();
-    const [weatherRes, chiseRows, shiftJson, holidaysByIso, nsDisruptionsByDate, bootstrap, paymentPlanJson, monthlyOnigiriJson, uvaCalendarJson, uvaCoefficientsJson, storeSettingsJson] = await Promise.all([
+    const [weatherRes, chiseRows, shiftJson, holidaysByIso, nsDisruptionsByDate, bootstrap, paymentPlanJson, monthlyOnigiriData, uvaCalendarJson, uvaCoefficientsJson, storeSettingsJson] = await Promise.all([
       track(fetch(weatherUrl).then(r => r.json())),
       track(fetchChiseSheetRows(SCRIPT_URL).catch(e => { console.error("チセさんシート取得失敗", e); return null; }).then(v => trackFetchResult("チセさんシート", true, v))),
       track(fetchSheetJson("シフト回答", SHIFT_SPREADSHEET_ID).catch(e => { console.error("シフト回答シート取得失敗", e); return null; }).then(v => trackFetchResult("シフト回答", true, v))),
@@ -4572,7 +4603,7 @@ async function init(){
       // （従来は描画後に別途fetchしていたため、その分だけ表示完了が遅れていた）
       // 確定済みかどうか・確定内容の判定にも使うため、取得失敗はcriticalとして扱う
       track(fetchSheetJson("確定プラン", SHIFT_SPREADSHEET_ID).catch(e => { console.error("確定プラン取得失敗", e); return null; }).then(v => trackFetchResult("確定プラン", true, v))),
-      track(fetchSheetJson("今月のおにぎり担当", SHIFT_SPREADSHEET_ID).catch(() => null).then(v => trackFetchResult("今月のおにぎり担当", true, v))),
+      track(fetchMonthlyOnigiriData().then(v => trackFetchResult("今月のおにぎり担当", true, v))),
       track(fetchOptionalSheetJson("UvA学事暦", SHIFT_SPREADSHEET_ID).catch(() => null).then(v => trackFetchResult("UvA学事暦", true, v))),
       track(fetchOptionalSheetJson("UvA学事暦設定", SHIFT_SPREADSHEET_ID).catch(() => null).then(v => trackFetchResult("UvA学事暦設定", true, v))),
       // 「店舗設定」シートはまだ一度も保存されていない場合は存在しないため、
@@ -4595,7 +4626,8 @@ async function init(){
     logChiseFillingNameCheck(state.chiseByDate);
     // isProdSnapshotConsistent()が今月のおにぎりの月次担当ルールも判定できるよう、
     // こちらも保存済みprod内訳の復元より先に反映しておく
-    state.monthlyOnigiriAssignments = parseMonthlyOnigiriSheet(monthlyOnigiriJson);
+    state.monthlyOnigiriAssignments = (monthlyOnigiriData && monthlyOnigiriData.assignments) || {};
+    state.monthlyOnigiriInvalidRows = (monthlyOnigiriData && monthlyOnigiriData.invalidRows) || [];
     recalculatedOnigiriDates = [];
     // buildDays()がUvA学事暦補正を計算できるよう、buildDays()より前に反映しておく
     state.uvaAcademicCalendar = parseUvaAcademicCalendarSheet(uvaCalendarJson);
