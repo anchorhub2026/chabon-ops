@@ -756,13 +756,14 @@ var HOURLY_SHEET_HEADER = ["日付", "曜日", "天気", "気温", "店舗", "�
   "18時ランチ", "18時スタンプ",
   "12時あげた数", "13時あげた数", "14時あげた数", "15時あげた数", "16時あげた数", "17時あげた数", "18時あげた数",
   "12時受取", "13時受取", "14時受取", "15時受取", "16時受取", "17時受取", "18時受取",
-  "Zuidへ移動"];
+  "Zuidへ移動", "Rozengrachtへ移動"];
 // 「あげた数」列（単一）・「〇時ランチ」「〇時スタンプ」列は、時間帯ごとの
 // 「〇時あげた数」列（ランチ・スタンプ統合）に置き換えられたため以後は書き込まない
 // （既存行の後方互換のため列自体は残す。過去データの読み取り時はgetHourlySheetRowsで
 // 　新列が空なら旧ランチ・スタンプ列の合計にフォールバックする）
-// 「〇時受取」（Zuidのみ・UvAからの合流分）・「Zuidへ移動」（UvAのみ・1日1回）は
-// 末尾に追加した列。過去の行はこれらの列を持たないため、読み込み時は空欄=0として扱う
+// 「〇時受取」（他店舗からの合流分。現在はZuid・Rozengrachtが使用）・「Zuidへ移動」
+// （UvAのみ・1日1回）・「Rozengrachtへ移動」（Zuid・UvAのみ・1日1回）は末尾に追加した列。
+// 過去の行はこれらの列を持たないため、読み込み時は空欄=0として扱う
 // （getHourlySheetRowsのv()が""を返し、calcHourlySoldAndCumulative/analytics.html側で
 // 　Number("")=0相当に扱われる）。
 
@@ -863,6 +864,14 @@ function handleSaveHourly(ss, data) {
         moved = Number(item.movedToZuid) || 0;
       }
 
+      // Rozengrachtへ移動した数（Zuid・UvAのみ・1日1回）。保護ロジックは上記と同じ。
+      var movedRozen;
+      if (item.movedToRozengracht === "" || item.movedToRozengracht === null || item.movedToRozengracht === undefined) {
+        movedRozen = existing ? (Number(existing[61]) || 0) : 0;
+      } else {
+        movedRozen = Number(item.movedToRozengracht) || 0;
+      }
+
       var calc = calcHourlySoldAndCumulative(total, remains, givens, receiveds);
       var row = [
         data.date, data.weekday, data.weather, data.temp,
@@ -877,7 +886,7 @@ function handleSaveHourly(ss, data) {
         "", "", "", "", "", "", "", "", "", "", "", "", "", "", // 〇時ランチ・〇時スタンプ（廃止、後方互換のため列のみ維持）
         givens[0], givens[1], givens[2], givens[3], givens[4], givens[5], givens[6],
         receiveds[0], receiveds[1], receiveds[2], receiveds[3], receiveds[4], receiveds[5], receiveds[6],
-        moved
+        moved, movedRozen
       ];
       if (foundRow > 0) {
         sheet.getRange(foundRow, 1, 1, row.length).setValues([row]);
@@ -988,6 +997,7 @@ function getHourlySheetRows(ss, dateFilter) {
       received12: v(53), received13: v(54), received14: v(55), received15: v(56),
       received16: v(57), received17: v(58), received18: v(59),
       movedToZuid: v(60),
+      movedToRozengracht: v(61),
     });
   }
   return result;
