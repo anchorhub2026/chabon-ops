@@ -738,7 +738,7 @@ function aggregateByDateAndStore(rows){
         soldSum: [0,0,0,0,0,0,0],
         soldHasValue: [false,false,false,false,false,false,false],
         soldOutTimes: [],
-        movedTotal: 0,       // Zuidへ移動した数の合計（UvA系の店舗のみ値を持つ）
+        movedTotal: 0,       // 他店舗へ移動した数の合計（Zuidへ移動＋Rozengrachtへ移動。移動元の店舗のみ値を持つ）
         finalRemainTotal: 0, // 各具材の最終記録残数（＝移動前の売れ残り）の合計
       };
     }
@@ -747,7 +747,7 @@ function aggregateByDateAndStore(rows){
     if(!agg.weather && row.weather) agg.weather = row.weather;
     if(row.temp !== "" && row.temp !== null && row.temp !== undefined) agg.temps.push(Number(row.temp));
     if(row.soldOutTime) agg.soldOutTimes.push(row.soldOutTime);
-    agg.movedTotal += Number(row.movedToZuid) || 0;
+    agg.movedTotal += (Number(row.movedToZuid) || 0) + (Number(row.movedToRozengracht) || 0);
     const finalRemain = lastKnownRemain(row);
     if(finalRemain !== null) agg.finalRemainTotal += finalRemain;
 
@@ -763,8 +763,8 @@ function aggregateByDateAndStore(rows){
     const temp = agg.temps.length ? avg(agg.temps) : null;
     const soldOutMinutesList = agg.soldOutTimes.map(timeToMinutes).filter(v => v !== null);
     const soldOutTime = soldOutMinutesList.length ? minutesToTime(Math.max(...soldOutMinutesList)) : "";
-    // 売れ残り＝最終記録残数からZuidへ移動した分を差し引いたもの（移動分は「移動」として
-    // 別枠で計上するため、売れ残りには二重に含めない）
+    // 売れ残り＝最終記録残数から他店舗へ移動した分（Zuidへ・Rozengrachtへ）を差し引いたもの
+    // （移動分は「移動」として別枠で計上するため、売れ残りには二重に含めない）
     const leftoverTotal = Math.max(0, agg.finalRemainTotal - agg.movedTotal);
     return {
       date: agg.date,
