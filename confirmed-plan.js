@@ -68,8 +68,12 @@ function parseConfirmedPlansSheet(json){
       zuidBreakdown, uvaBreakdown, chiseBreakdown, rozenBreakdown,
       // Zuid/UvA/チセ/Rozen内訳列は後から追加した列のため、古い確定行には無い場合がある。
       // その場合は具材別の数字を確定プランから取れないため、呼び出し側は
-      // 作業中プラン等へのフォールバックを判断する
-      hasDetailBreakdown: !!(c[9] && c[9].v) || !!(c[10] && c[10].v) || !!(c[11] && c[11].v),
+      // 作業中プラン等へのフォールバックを判断する。
+      // 4列（Zuid・UvA・チセ・Rozen）のいずれかに内容があれば内訳ありと判定する
+      // （Rozen内訳(c14)が抜けていると、Zuid/UvA/チセが全て0でRozenだけに生産がある日
+      // ＝例えば週末のRozengracht単独営業日で、内訳があるにもfalse判定になってしまい、
+      // 作業中プランへの誤フォールバックで数量が0に見える不具合になっていた）
+      hasDetailBreakdown: !!(c[9] && c[9].v) || !!(c[10] && c[10].v) || !!(c[11] && c[11].v) || !!(c[14] && c[14].v),
       // 確定後に「この日を修正する」で内容を公開した場合のみ入る（未修正なら空文字）
       revisedAtLabel: c[12] ? String(c[12].f || c[12].v || "") : "",
     };

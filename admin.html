@@ -1026,6 +1026,7 @@
     color: var(--main-dark);
   }
   .payment-empty{ color: #999; font-size: 0.88rem; padding: 10px 0; }
+  .payment-chise-note{ color: #888; font-size: 0.85rem; padding: 6px 0 0; }
 
   /* ── シフト入力期間設定 ── */
   .shift-config-controls{
@@ -1335,6 +1336,11 @@ const SCRIPT_URL = "https://script.google.com/macros/s/AKfycbyxbKMgM4ZiowaJu3cQ4
 
 const DAY_NAMES = ["日","月","火","水","木","金","土"];
 const MEMBERS = ACTIVE_MEMBERS;
+// CHISE（チセさん）：土曜日等に本人が具材を自分で用意しておにぎりを作ってくれる特別な担当者。
+// シフト回答を出さない（希望数が無い）・自動割り振りの対象にしない・パーソナルカラーを
+// 付けない・ニギニギ隊の支払い集計（€0.80/個）には含めないため、ACTIVE_MEMBERSには
+// 加えず、生産割り振り画面でのみ「+ メンバーを追加」から手動で追加できる特別枠として扱う。
+const CHISE_MEMBER = "CHISE";
 const FILLINGS = ["ツナマヨ","スパイシーツナマヨ","テリヤキチキン","サーモン","スパイシー味噌","枝豆","梅","うなぎ","今月のおにぎり"];
 // 今月のおにぎり追加分(5%)は、枝豆・梅・うなぎの比率は変えず、変動具材5種の合計(0.89→0.84)を按分縮小して確保
 // （今月のおにぎりは本部固定ではなく、他の変動具材と同じくニギニギ隊にも割り振り可能）
@@ -2469,7 +2475,7 @@ function splitForecastTableHtml(day){
 
 function splitProdTableHtml(day){
   const snap = computeDaySnapshot(day);
-  const { working, memberCaps, hqBreakdown, hqQty, memberTotals, ningiTotal, fillingOveredBy } = snap;
+  const { working, memberCaps, hqBreakdown, hqQty, memberTotals, ningiTotal, chiseManualQty, fillingOveredBy } = snap;
   const locked = !!getEditLockReason(day);
   const capLabel = snap.isConfirmedPlan ? "確定" : (snap.isRevising ? "修正前" : "希望");
 
@@ -2480,6 +2486,11 @@ function splitProdTableHtml(day){
   // 常にid付きの要素として出力しておき、超過していない時はdisplay:noneで隠す
   // （ヘッダー全体を再描画すると入力中のフォーカスを失うため）
   const memberHeaderCells = working.map((name, i) => {
+    // CHISEはシフト回答・希望数という概念が無い（手入力のみ）ため、希望数ラベルも
+    // 「希望◯個を超えています」警告も出さない
+    if(name === CHISE_MEMBER){
+      return `<th class="sub-prod-head">${name}<br><small class="wish-hint">希望数なし（手入力）</small></th>`;
+    }
     const wish = getShiftWishInfo(day, name);
     const wishLine = capLabel === "希望"
       ? ""
@@ -2513,7 +2524,7 @@ function splitProdTableHtml(day){
   const colTotalCells = working.map((name, i) =>
     `<td class="cell-readonly cell-row-total" id="prodColTotal-${day.dateKey}-${name}">${memberTotals[i]}</td>`
   ).join("");
-  const prodGrandTotal = ningiTotal + hqQty;
+  const prodGrandTotal = ningiTotal + chiseManualQty + hqQty;
 
   return `<table class="day-sub-table">
       <thead>
@@ -2607,16 +2618,28 @@ function dayBlockHtml(day){
     revisionActionsHtml = `<button type="button" class="revise-day-btn" data-key="${day.dateKey}">✏️ この日を修正する</button>`;
   }
 
-  // 修正中、「希望しない」と回答した・まだ回答が無いメンバーも、必要なら手動で列を追加できる
+  // 修正中、「希望しない」と回答した・まだ回答が無いメンバーも、必要なら手動で列を追加できる。
+  // CHISEも（修正中でなくても）この「メンバーを追加」から追加できるようにする
   let addMemberHtml = "";
   if(isRevising){
     const existing = new Set(day.revisingWorking || []);
-    const available = MEMBERS.filter(name => !existing.has(name));
+    const available = [...MEMBERS, CHISE_MEMBER].filter(name => !existing.has(name));
     if(available.length > 0){
       const options = available.map(name => `<option value="${name}">${name}</option>`).join("");
       addMemberHtml = `
         <div class="prod-add-member-row">
           <select class="add-member-select" id="addMemberSelect-${day.dateKey}">${options}</select>
+          <button type="button" class="add-member-btn" data-key="${day.dateKey}">+ メンバーを追加</button>
+        </div>`;
+    }
+  } else if(!lockReason){
+    // 通常（未確定）の日は、希望数の仕組みに乗らないCHISEだけを手動追加できる
+    // （他のメンバーは従来通りシフト回答ベースで自動的に表として出る）
+    const chiseAlreadyAdded = !!(day.memberFillingQty && CHISE_MEMBER in day.memberFillingQty);
+    if(!chiseAlreadyAdded){
+      addMemberHtml = `
+        <div class="prod-add-member-row">
+          <select class="add-member-select" id="addMemberSelect-${day.dateKey}"><option value="${CHISE_MEMBER}">${CHISE_MEMBER}</option></select>
           <button type="button" class="add-member-btn" data-key="${day.dateKey}">+ メンバーを追加</button>
         </div>`;
     }
@@ -2827,7 +2850,10 @@ function computeConfirmedDaySnapshot(day, confirmed){
   const memberTotals = working.map(name =>
     FILLINGS.reduce((s, f) => s + ((confirmed.memberFillingQty[name] && confirmed.memberFillingQty[name][f]) || 0), 0)
   );
-  const ningiTotal = memberTotals.reduce((s, v) => s + v, 0);
+  // CHISEはニギニギ隊ではない別枠のため、確定済みの表示でもニギニギ隊合計には含めない
+  const chiseIdx = working.indexOf(CHISE_MEMBER);
+  const chiseManualQty = chiseIdx !== -1 ? memberTotals[chiseIdx] : 0;
+  const ningiTotal = memberTotals.reduce((s, v, i) => s + (i === chiseIdx ? 0 : v), 0);
 
   const hqBreakdown = {};
   FILLINGS.forEach(f => { hqBreakdown[f] = confirmed.hqBreakdown[f] || 0; });
@@ -2849,7 +2875,7 @@ function computeConfirmedDaySnapshot(day, confirmed){
 
   return {
     chiseQty, total, working, memberCaps: memberTotals, capTotal: ningiTotal, allocationTarget: total,
-    isOverCap: false, hqBreakdown, hqQty, memberTotals, ningiTotal, fillingOveredBy: {}, hasFillingOverage: false,
+    isOverCap: false, hqBreakdown, hqQty, memberTotals, ningiTotal, chiseManualQty, fillingOveredBy: {}, hasFillingOverage: false,
     monthlyOnigiriWarning: null, monthlyOnigiriMisassignedWarning: null, isConfirmedPlan: true, isRevising: false,
     confirmedForecastDiff, confirmedAtLabel: confirmed.confirmedAtLabel,
   };
@@ -2872,12 +2898,18 @@ function computeDaySnapshot(day){
   // 修正中は、メンバー構成・担当表示数を修正開始時点（確定プラン）の内容に固定する
   // （シフト回答の変動やライブの希望数再計算から始めない。day.revisingWorking/
   // 　day.revisingMemberCapsはstartRevisingDay()で確定プランから作成済み）
+  // CHISEはシフト回答を出さない（希望数が無い）ため、通常の希望数ベースのworking判定には
+  // 乗らない。「+ メンバーを追加」で手動追加された日はday.memberFillingQtyにCHISEキーが
+  // 残り続けるので、それを追加判定に使う（希望数0の通常メンバーと混同しない）
   const working = (isRevising && day.revisingWorking)
     ? day.revisingWorking
-    : MEMBERS.filter(name => getManualQty(day, name) > 0);
+    : MEMBERS.filter(name => getManualQty(day, name) > 0)
+        .concat((day.memberFillingQty && CHISE_MEMBER in day.memberFillingQty) ? [CHISE_MEMBER] : []);
   const memberCaps = (isRevising && day.revisingMemberCaps)
     ? working.map(name => day.revisingMemberCaps[name] || 0)
-    : working.map(name => getManualQty(day, name)); // 希望数（表として表示するだけで、実際の個数はセル編集で決まる）
+    // CHISEは希望数（cap）という概念がなく、自動割り振りの対象にもしない（cap=0にすることで
+    // buildProductionPlanの優先順位ロジックから自然に除外される。個数は手入力のみで決まる）
+    : working.map(name => name === CHISE_MEMBER ? 0 : getManualQty(day, name)); // 希望数（表として表示するだけで、実際の個数はセル編集で決まる）
 
   const capTotal = memberCaps.reduce((s, v) => s + v, 0);
 
@@ -2888,9 +2920,13 @@ function computeDaySnapshot(day){
   const { memberBreakdowns, monthlyOnigiriWarning } = buildProductionPlan(day, working, memberCaps);
   ensureMemberFillingQty(day, working, memberBreakdowns);
 
-  // ニギニギ隊合計は「現在実際にテーブルに入っている個数」（手動編集も含む）の合計
+  // ニギニギ隊合計は「現在実際にテーブルに入っている個数」（手動編集も含む）の合計。
+  // CHISEはニギニギ隊ではない別枠（本部＝総生産数−ニギニギ隊−CHISE）のため、
+  // ニギニギ隊合計には含めず、chiseManualQtyとして別に持つ
   const memberTotals = working.map(name => FILLINGS.reduce((s, f) => s + ((day.memberFillingQty[name] && day.memberFillingQty[name][f]) || 0), 0));
-  const ningiTotal = memberTotals.reduce((s, v) => s + v, 0);
+  const chiseIdx = working.indexOf(CHISE_MEMBER);
+  const chiseManualQty = chiseIdx !== -1 ? memberTotals[chiseIdx] : 0;
+  const ningiTotal = memberTotals.reduce((s, v, i) => s + (i === chiseIdx ? 0 : v), 0);
 
   // 本部の具材内訳：具材ごとに「販売予測数の必要数（Zuid＋UvA＋チセ） − ニギニギ隊全員の実際の生産量」の残り。
   // チセさんは生産者ではなく受け取り先のため、必要数（neededQtyFor）には含めるが、生産量からは引かない。
@@ -2935,7 +2971,7 @@ function computeDaySnapshot(day){
 
   return {
     chiseQty, total, working, memberCaps, capTotal, allocationTarget, isOverCap,
-    hqBreakdown, hqQty, memberTotals, ningiTotal, fillingOveredBy, hasFillingOverage,
+    hqBreakdown, hqQty, memberTotals, ningiTotal, chiseManualQty, fillingOveredBy, hasFillingOverage,
     // 修正中は、buildProductionPlanのシミュレーション結果（cap不足等）は修正の文脈では
     // 意味を持たないため表示しない。今月のおにぎりの担当違反は上の実値ベースの
     // monthlyOnigiriMisassignedWarningで（修正中かどうかに関わらず）検知する
@@ -2973,6 +3009,7 @@ function summaryHtmlFor(snap){
   return `
     <div>総生産数：${snap.allocationTarget}個</div>
     <div>ニギニギ隊合計：${snap.ningiTotal}個</div>
+    ${snap.chiseManualQty ? `<div>CHISE：${snap.chiseManualQty}個（手入力・本部から除外済み）</div>` : ""}
     <div>本部：${snap.hqQty}個（自動計算）</div>
     <div style="font-size:0.82em;color:#888;margin-top:2px;">${Math.ceil(snap.hqQty / 3)}合</div>
     ${snap.isOverCap ? `<div class="warning-line">⚠️ ニギニギ隊の希望数合計が総生産数を超えています</div>` : ""}
@@ -3033,7 +3070,7 @@ function refreshProductionCellDerived(day){
     : `${snap.hqQty}`;
 
   const grandTotalEl = document.getElementById(`prodGrandTotal-${day.dateKey}`);
-  if(grandTotalEl) grandTotalEl.textContent = snap.ningiTotal + snap.hqQty;
+  if(grandTotalEl) grandTotalEl.textContent = snap.ningiTotal + (snap.chiseManualQty || 0) + snap.hqQty;
 }
 
 function refreshProductionDay(day){ renderDayBlock(day); }
@@ -3091,20 +3128,32 @@ function bindProductionDayEvents(day){
   const cancelRevisionBtn = container.querySelector(".cancel-revision-btn");
   if(cancelRevisionBtn) cancelRevisionBtn.addEventListener("click", () => cancelRevisingDay(day));
 
-  // 修正中、「希望しない」と回答した・まだ回答が無いメンバーの列を手動で追加する
+  // 修正中：「希望しない」と回答した・まだ回答が無いメンバー（CHISEも含む）の列を手動で追加する。
+  // 修正中でない通常の日：CHISEだけをこのボタンから手動追加できる（他のメンバーはシフト回答ベース）
   const addMemberBtn = container.querySelector(".add-member-btn");
   if(addMemberBtn){
     addMemberBtn.addEventListener("click", () => {
       const select = container.querySelector(".add-member-select");
       const name = select && select.value;
-      if(!name || !day.revisingWorking || day.revisingWorking.includes(name)) return;
-      day.revisingWorking.push(name);
-      if(!day.memberFillingQty[name]) day.memberFillingQty[name] = buildFillingDefaults(0);
-      if(!day.prodManuallyEdited) day.prodManuallyEdited = {};
-      day.prodManuallyEdited[name] = true;
-      if(!day.revisingMemberCaps) day.revisingMemberCaps = {};
-      day.revisingMemberCaps[name] = 0;
-      renderDayBlock(day);
+      if(!name) return;
+      if(day.isRevising){
+        if(!day.revisingWorking || day.revisingWorking.includes(name)) return;
+        day.revisingWorking.push(name);
+        if(!day.memberFillingQty[name]) day.memberFillingQty[name] = buildFillingDefaults(0);
+        if(!day.prodManuallyEdited) day.prodManuallyEdited = {};
+        day.prodManuallyEdited[name] = true;
+        if(!day.revisingMemberCaps) day.revisingMemberCaps = {};
+        day.revisingMemberCaps[name] = 0;
+        renderDayBlock(day);
+      } else {
+        if(name !== CHISE_MEMBER || (day.memberFillingQty && CHISE_MEMBER in day.memberFillingQty)) return;
+        if(!day.memberFillingQty) day.memberFillingQty = {};
+        day.memberFillingQty[CHISE_MEMBER] = buildFillingDefaults(0);
+        if(!day.prodManuallyEdited) day.prodManuallyEdited = {};
+        day.prodManuallyEdited[CHISE_MEMBER] = true;
+        saveProdAlloc(day);
+        renderDayBlock(day);
+      }
     });
   }
 }
@@ -4584,11 +4633,16 @@ async function initPaymentSection(paymentPlanJson){
 
 function renderPaymentTable(monthly, monthKey){
   const data = monthly[monthKey] || {};
-  const members = Object.keys(data).sort();
+  // CHISEはニギニギ隊の支払い（€0.80/個）対象外のため、集計テーブル・合計からは除外し、
+  // 別枠で「支払い対象外」として個数だけ表示する
+  const chiseQty = data[CHISE_MEMBER] || 0;
+  const members = Object.keys(data).filter(name => name !== CHISE_MEMBER).sort();
   const tableArea = document.getElementById("paymentTableArea");
+  const chiseNoteHtml = chiseQty > 0
+    ? `<p class="payment-chise-note">CHISE：${chiseQty.toLocaleString()}個（支払い対象外）</p>` : "";
 
   if(members.length === 0){
-    tableArea.innerHTML = '<p class="payment-empty">この月のデータはありません。</p>';
+    tableArea.innerHTML = '<p class="payment-empty">この月のデータはありません。</p>' + chiseNoteHtml;
     return;
   }
 
@@ -4627,12 +4681,15 @@ function renderPaymentTable(monthly, monthKey){
           <td>€${totalAmount.toFixed(2)}</td>
         </tr>
       </tfoot>
-    </table>`;
+    </table>
+    ${chiseNoteHtml}`;
 }
 
 function downloadPaymentCsv(monthly, monthKey){
   const data = monthly[monthKey] || {};
-  const members = Object.keys(data).sort();
+  // CHISEは支払い対象外のため、合計には含めず別行（単価・金額は空欄）として記録する
+  const chiseQty = data[CHISE_MEMBER] || 0;
+  const members = Object.keys(data).filter(name => name !== CHISE_MEMBER).sort();
   const [yr, mo] = monthKey.split("-");
   const monthLabel = `${yr}年${Number(mo)}月`;
 
@@ -4648,6 +4705,7 @@ function downloadPaymentCsv(monthly, monthKey){
     csvRows.push([monthLabel, name, qty, PAYMENT_UNIT_PRICE.toFixed(2), amount.toFixed(2)]);
   });
   csvRows.push([monthLabel, "合計", totalQty, "", totalAmount.toFixed(2)]);
+  if(chiseQty > 0) csvRows.push([monthLabel, "CHISE（支払い対象外）", chiseQty, "", ""]);
 
   const csv = csvRows.map(r => r.map(v => `"${v}"`).join(",")).join("\r\n");
   const blob = new Blob(["﻿" + csv], { type: "text/csv;charset=utf-8;" });

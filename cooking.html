@@ -655,7 +655,12 @@ function getDayBreakdown(iso){
 
   if(confirmed && confirmed.hasDetailBreakdown){
     const membersBreakdown = {};
+    // CHISE（チセさん）は自分で具材を用意して握る特別な担当者で、こちらが具材を用意する
+    // 対象ではないため、渡し先一覧（具材ごとの残り・人ごとの残り）には出さない。
+    // hqはadmin.html側で既にCHISE分を差し引いて確定保存されているため、ここでの除外が
+    // hqの数に影響することはない
     (confirmed.memberNames || []).forEach(name => {
+      if(name === "CHISE") return;
       membersBreakdown[name] = {};
       FILLINGS.forEach(f => { membersBreakdown[name][f] = (confirmed.memberFillingQty[name] && confirmed.memberFillingQty[name][f]) || 0; });
     });
@@ -693,10 +698,16 @@ function getDayBreakdown(iso){
       // 枝豆・梅・うなぎは常に本部製造（ニギニギ隊には割り振らない。admin.htmlと同じルール）
       hq[f] = needed;
     } else {
+      // CHISE分も含めて必要数から差し引く（CHISEは自分で具材を用意するため、こちらで
+      // 用意する必要数にはCHISEの割り振り分を含めない。admin.htmlの本部計算式と同じ）
       const producedByMembers = Object.values(membersBreakdown).reduce((s, m) => s + (m[f] || 0), 0);
       hq[f] = Math.max(0, needed - producedByMembers);
     }
   });
+
+  // hqの計算にはCHISE分を反映済みなので、ここで渡し先一覧からCHISEを除く
+  // （こちらで具材を用意する対象ではなく、表示・集計もしない）
+  delete membersBreakdown["CHISE"];
 
   return { membersBreakdown, hq, chiseKonomi, source: draft ? "draft" : "none" };
 }
