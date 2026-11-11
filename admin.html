@@ -1423,6 +1423,18 @@ function getMonday(date){
   return d;
 }
 
+// 日付を含むオブジェクトの配列を、実際の日付（Dateの値）の昇順に並べ替える共通処理。
+// 曜日や配列に追加された順番には依存させない（例：平日分を先に作って土日を後からpushする等、
+// 構築順と実際の日付順が食い違う場合でも必ず正しい日付順になるようにするため）。
+// Date同士の引き算（a.getTime() - b.getTime()相当）で比較するため、月・年をまたぐ場合
+// （10/31→11/1、12/31→1/1）も文字列比較の問題を起こさず正しく並ぶ。
+// 配列はその場で並べ替える（Array.prototype.sortと同じ破壊的変更）。
+function sortDaysByDate(list, dateOf){
+  const getDate = dateOf || (item => item.d);
+  list.sort((a, b) => getDate(a) - getDate(b));
+  return list;
+}
+
 function getWeekDates(weekOffset){
   const thisMonday = getMonday(new Date());
   const targetMonday = new Date(thisMonday);
@@ -1794,6 +1806,10 @@ function buildDays(daily, hourlyByDate){
   // 土日イベント：「土日イベントを追加」で有効化された週は、その週の土曜・日曜も対象日に加える
   // （Zuid・UvAの自動計算式は月〜金専用のため、これらの日は通常通りcalcZuid/calcUvAがnullを返し、
   // 休み状態から始まる。管理画面側の営業/休みトグルで手動で開店・個数設定する運用にする）
+  // ここで土日を末尾にpushするため、上の平日分と合わせて「平日が先、土日がまとめて後ろ」という
+  // 実際の日付順ではない並びになってしまう。state.daysはこの配列の並び順をそのまま使って
+  // カレンダー・生産割り振り・シフト一覧・「調理済み・渡し済み」管理など全ての一覧を描画するため、
+  // 必ず下のsortDaysByDate()で実際の日付順に並べ替えてから返す（曜日や追加した順番に依存させない）
   [0, 1, 2].forEach(weekIndex => {
     if(!state.weekendEventWeeks[weekIndex]) return;
     const monday = getMonday(new Date());
@@ -1804,6 +1820,8 @@ function buildDays(daily, hourlyByDate){
       all.push({ d, weekIndex, isEventDay: true });
     });
   });
+
+  sortDaysByDate(all);
 
   return all.map(({ d, weekIndex, isEventDay }) => {
     const dow = d.getDay();
