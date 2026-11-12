@@ -8,6 +8,7 @@
 <meta name="apple-mobile-web-app-title" content="Chabon Ops">
 <link rel="apple-touch-icon" href="./chabon-logo.png">
 <title>Chabon Ops｜おにぎり移動販売管理</title>
+<link rel="stylesheet" href="hourly-table.css">
 <style>
   :root{
     --main: #4a7c59;
@@ -452,36 +453,13 @@
   }
   .confirm-btn.yes{ background: var(--main); color: #fff; }
   .confirm-btn.no{ background: #e2ddd0; color: #555; }
-  /* 時間帯別実績 */
-  #actualSalesArea{ overflow-x: auto; }
-  .hourly-table{ border-collapse: collapse; font-size: 0.82rem; min-width: 580px; }
-  .hourly-table th, .hourly-table td{ padding: 5px 6px; border-bottom: 1px solid #e0dbd0; text-align: center; white-space: nowrap; }
-  .hourly-table th{ background: var(--main-light); color: var(--main-dark); font-weight: bold; }
-  .hourly-table .col-name{ text-align: left; font-weight: bold; }
-  .hourly-table input[type="number"]{
-    width: 52px; border: 1px solid #ccc; border-radius: 4px;
-    padding: 3px 4px; font-size: 0.82rem; text-align: center;
-  }
-  .sold-display{ font-size: 0.7rem; color: #888; margin-top: 2px; min-height: 14px; }
-  .sold-neg{ color: #e53; }
-  .cum-display{ font-size: 0.7rem; color: #4a7; margin-top: 1px; min-height: 14px; }
+  /* 時間帯別実績（テーブル本体・固定列・メモ欄のCSSはhourly-table.cssで共通化） */
   .store-section{ margin-bottom: 20px; }
   .store-heading{ font-size: 1rem; font-weight: bold; color: var(--main-dark); margin: 12px 0 6px; }
   .location-input-row{ margin-bottom: 6px; font-size: 0.88rem; }
   .location-input-row input{ border: 1px solid #ccc; border-radius: 4px; padding: 3px 6px; font-size: 0.88rem; width: 140px; margin-left: 4px; }
   .soldout-time-row{ margin-bottom: 6px; font-size: 0.88rem; }
   .soldout-time-row input{ border: 1px solid #ccc; border-radius: 4px; padding: 3px 6px; font-size: 0.88rem; margin-left: 4px; }
-  .made-input{ width: 52px !important; }
-  .slot-subhead{ font-weight: normal; font-size: 0.6rem; opacity: 0.75; }
-  .slot-extra-row{ display: flex; gap: 2px; justify-content: center; margin-top: 2px; }
-  .given-input{ width: 32px !important; font-size: 0.68rem !important; padding: 2px 1px !important; color: #a35; }
-  .received-input{ width: 32px !important; font-size: 0.68rem !important; padding: 2px 1px !important; color: #358; }
-  .moved-input, .moved-rozen-input{ width: 56px !important; color: #358; }
-  .total-row td{ background: #f5f2ec; font-weight: bold; font-size: 0.8rem; color: #555; border-top: 2px solid #d0c8b8; }
-  .total-cell{ min-width: 52px; }
-  .notes-area{ margin-top: 8px; }
-  .notes-label{ font-size: 0.82rem; color: #666; display: block; margin-bottom: 3px; }
-  .notes-area textarea{ width: 100%; max-width: 600px; border: 1px solid #ccc; border-radius: 6px; padding: 6px 8px; font-size: 0.84rem; resize: vertical; box-sizing: border-box; }
   .record-btn{
     margin-top: 12px; padding: 10px 28px; background: var(--main); color: #fff;
     border: none; border-radius: 6px; font-size: 1rem; font-weight: bold; cursor: pointer;
@@ -1409,15 +1387,12 @@ function renderActualSales(){
   area.innerHTML = `
     <div class="store-section">
       <div class="store-heading">🏪 Zuid</div>
-      ${buildStoreTable("Zuid", fillings, zuidTotals)}
+      <div class="table-scroll table-scroll--bounded">${buildStoreTable("Zuid", fillings, zuidTotals)}</div>
       <div class="soldout-time-row">
         販売終了時間：<input type="time" id="soldoutTime-Zuid">
         <span class="notes-label">（完売した場合はその時刻、完売しなかった場合は営業終了時刻）</span>
       </div>
-      <div class="notes-area">
-        <span class="notes-label">今日の販売メモ</span>
-        <textarea id="notes-Zuid" rows="2" placeholder="天気の様子・特記事項など"></textarea>
-      </div>
+      ${buildNotesAreaHtml("Zuid")}
       <button class="record-btn" id="saveZuidBtn">Zuidの実績を記録する</button>
     </div>
     <div class="store-section">
@@ -1425,28 +1400,22 @@ function renderActualSales(){
       <div class="location-input-row">
         販売場所：<input type="text" id="uvaLocationInput" value="UvA" placeholder="UvA" maxlength="20">
       </div>
-      ${buildStoreTable("UvA", fillings, uvaTotals)}
+      <div class="table-scroll table-scroll--bounded">${buildStoreTable("UvA", fillings, uvaTotals)}</div>
       <div class="soldout-time-row">
         販売終了時間：<input type="time" id="soldoutTime-UvA">
         <span class="notes-label">（完売した場合はその時刻、完売しなかった場合は営業終了時刻）</span>
       </div>
-      <div class="notes-area">
-        <span class="notes-label">今日の販売メモ</span>
-        <textarea id="notes-UvA" rows="2" placeholder="天気の様子・特記事項など"></textarea>
-      </div>
+      ${buildNotesAreaHtml("UvA")}
       <button class="record-btn" id="saveUvABtn">UvAの実績を記録する</button>
     </div>
     <div class="store-section">
       <div class="store-heading">🏪 Rozengracht</div>
-      ${buildStoreTable("Rozengracht", fillings, rozenTotals)}
+      <div class="table-scroll table-scroll--bounded">${buildStoreTable("Rozengracht", fillings, rozenTotals)}</div>
       <div class="soldout-time-row">
         販売終了時間：<input type="time" id="soldoutTime-Rozengracht">
         <span class="notes-label">（完売した場合はその時刻、完売しなかった場合は営業終了時刻）</span>
       </div>
-      <div class="notes-area">
-        <span class="notes-label">今日の販売メモ</span>
-        <textarea id="notes-Rozengracht" rows="2" placeholder="天気の様子・特記事項など"></textarea>
-      </div>
+      ${buildNotesAreaHtml("Rozengracht")}
       <button class="record-btn" id="saveRozenBtn">Rozengrachtの実績を記録する</button>
     </div>
   `;
@@ -1454,6 +1423,7 @@ function renderActualSales(){
   area.querySelectorAll(".hourly-input, .made-input, .given-input, .received-input, .moved-input, .moved-rozen-input").forEach(inp =>
     inp.addEventListener("input", () => updateSoldDisplay(["Zuid", "UvA", "Rozengracht"], fillings))
   );
+  ["Zuid", "UvA", "Rozengracht"].forEach(wireNoteLengthWarning);
   const saveBtns = {
     Zuid: document.getElementById("saveZuidBtn"),
     UvA: document.getElementById("saveUvABtn"),

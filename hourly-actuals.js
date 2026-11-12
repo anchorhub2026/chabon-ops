@@ -485,3 +485,30 @@ async function saveStoreActual(ctx){
     return { ok: false, reason: "network", error: e };
   }
 }
+
+// ---------- 今日の販売メモ（店舗×日付ごとに1つ。「時間帯別実績」シートの既存の
+// 「備考」列にそのまま保存される。新しい列は追加しない）----------
+// 500文字は目安（ハード制限ではない）。超えても保存できるが、入力欄の下に注意を表示する。
+const NOTE_LENGTH_GUIDE = 500;
+
+// index.html/uva.html/rozen.htmlで共通のメモ欄HTML。label省略時は「今日の販売メモ」
+// （index.htmlの既存表記に合わせる）。
+function buildNotesAreaHtml(storeKey, label){
+  return `
+    <div class="notes-area">
+      <span class="notes-label">${label || "今日の販売メモ"}</span>
+      <textarea id="notes-${storeKey}" rows="2" placeholder="天気の様子・特記事項など"></textarea>
+      <div class="notes-warning" id="notesWarn-${storeKey}" style="display:none;">⚠️ ${NOTE_LENGTH_GUIDE}文字を超えています（保存はできますが、短くまとめることをおすすめします）</div>
+    </div>`;
+}
+
+// buildNotesAreaHtml()で描画したメモ欄に、文字数の注意表示を紐付ける。
+// renderActualSales等でテーブルを描画した直後に、店舗ごとに1回呼び出す。
+function wireNoteLengthWarning(storeKey){
+  const ta = document.getElementById(`notes-${storeKey}`);
+  const warn = document.getElementById(`notesWarn-${storeKey}`);
+  if(!ta || !warn) return;
+  const check = () => { warn.style.display = ta.value.length > NOTE_LENGTH_GUIDE ? "" : "none"; };
+  ta.addEventListener("input", check);
+  check();
+}

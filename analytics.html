@@ -225,6 +225,9 @@
   td.num{ text-align: right; }
   td.num .sold-main{ font-size: 1rem; font-weight: 600; }
   td.num .cum-sub{ font-size: 10px; color: #999; line-height: 1.3; }
+  td.note-cell{ text-align: left; max-width: 220px; white-space: normal; font-size: 0.82rem; }
+  td.note-cell summary{ cursor: pointer; }
+  td.note-cell .note-full{ margin-top: 4px; color: #555; }
 
   /* 傾向インサイト */
   .insight-list{ list-style: none; margin: 0; padding: 0; }
@@ -368,6 +371,9 @@
 
 <script>
 const SCRIPT_URL = "https://script.google.com/macros/s/AKfycbyxbKMgM4ZiowaJu3cQ4NdLhwSE9-Pet8DbYB3qvgEX2NS2h1Dosgfm62vu7-in52ZT/exec";
+function escapeHtml(s){
+  return String(s).replace(/[&<>"']/g, c => ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;", "'":"&#39;" }[c]));
+}
 const HOURLY_SLOTS = [12, 13, 14, 15, 16, 17, 18];
 const DAY_NAMES = ["日", "月", "火", "水", "木", "金", "土"];
 const WEEKDAY_COLOR_INDEX = { "日":0, "月":1, "火":2, "水":3, "木":4, "金":5, "土":6 };
@@ -740,6 +746,7 @@ function aggregateByDateAndStore(rows){
         soldOutTimes: [],
         movedTotal: 0,       // 他店舗へ移動した数の合計（Zuidへ移動＋Rozengrachtへ移動。移動元の店舗のみ値を持つ）
         finalRemainTotal: 0, // 各具材の最終記録残数（＝移動前の売れ残り）の合計
+        note: "",
       };
     }
     const agg = map[key];
@@ -747,6 +754,7 @@ function aggregateByDateAndStore(rows){
     if(!agg.weather && row.weather) agg.weather = row.weather;
     if(row.temp !== "" && row.temp !== null && row.temp !== undefined) agg.temps.push(Number(row.temp));
     if(row.soldOutTime) agg.soldOutTimes.push(row.soldOutTime);
+    if(!agg.note && row.note) agg.note = row.note;
     agg.movedTotal += (Number(row.movedToZuid) || 0) + (Number(row.movedToRozengracht) || 0);
     const finalRemain = lastKnownRemain(row);
     if(finalRemain !== null) agg.finalRemainTotal += finalRemain;
@@ -780,6 +788,7 @@ function aggregateByDateAndStore(rows){
       soldOutDisplay: soldOutTime,
       movedTotal: agg.movedTotal,
       leftoverTotal,
+      note: agg.note,
     };
   }).sort((a,b) => a.date < b.date ? -1 : (a.date > b.date ? 1 : 0));
 }
@@ -1209,12 +1218,14 @@ function renderDailyTable(){
     { key: "movedTotal", label: "移動" },
     { key: "leftoverTotal", label: "売れ残り" },
   ];
+  // メモは店舗×日付ごとの値のため、複数店舗を合算する「全店舗合計」表示では出さない
+  const showNoteCol = state.selectedStore !== ALL_STORES_KEY;
 
   const headerHtml = cols.map(c => {
     const sorted = state.sortKey === c.key;
     const arrow = sorted ? (state.sortDir === "asc" ? "▲" : "▼") : "▲";
     return `<th class="sortable${sorted ? " sorted" : ""}" data-key="${c.key}">${c.label}<span class="arrow">${arrow}</span></th>`;
-  }).join("");
+  }).join("") + (showNoteCol ? `<th>メモ</th>` : "");
 
   const bodyHtml = rows.map(r => {
     const dt = r.dateObj;
@@ -1229,6 +1240,20 @@ function renderDailyTable(){
       const soldStyle = (v !== null && v < 0) ? ` style="color:#c9533f;font-weight:700;"` : "";
       return `<td class="num"><div class="sold-main"${soldStyle}>${v !== null ? v : "—"}</div>${cumHtml}</td>`;
     }).join("");
+    let noteCell = "";
+    if(showNoteCol){
+      if(r.note){
+        if(r.note.length > 40){
+          const noteHtml = escapeHtml(r.note).replace(/\n/g, "<br>");
+          const noteShort = escapeHtml(r.note.slice(0, 40)) + "…";
+          noteCell = `<td class="note-cell"><details><summary>${noteShort}</summary><div class="note-full">${noteHtml}</div></details></td>`;
+        } else {
+          noteCell = `<td class="note-cell">${escapeHtml(r.note).replace(/\n/g, "<br>")}</td>`;
+        }
+      } else {
+        noteCell = `<td class="note-cell">—</td>`;
+      }
+    }
     return `<tr>
       <td>${dt.getMonth()+1}/${dt.getDate()}</td>
       <td>${r.weekday}曜</td>
@@ -1240,6 +1265,7 @@ function renderDailyTable(){
       <td class="num"><strong>${r.totalSold !== null ? r.totalSold : "—"}</strong></td>
       <td class="num">${r.movedTotal ? `${r.movedTotal}個` : "—"}</td>
       <td class="num">${r.leftoverTotal ? `${r.leftoverTotal}個` : "—"}</td>
+      ${noteCell}
     </tr>`;
   }).join("");
 

@@ -1,0 +1,46 @@
+/* index.html / uva.html / rozen.html で共通の「時間帯別実績」テーブル用CSS。
+   各ページの:rootで定義された --main / --main-dark / --main-light / --card / --line を利用する。 */
+
+.table-scroll{ overflow-x: auto; border: 1px solid var(--line); border-radius: 10px; background: var(--card); }
+/* index.htmlのように長いページの中に表がある場合、高さも固定してスクロールさせることで
+   position:sticky の見出し行がページ全体ではなく表の中だけで機能するようにする。 */
+.table-scroll--bounded{ max-height: 420px; overflow-y: auto; }
+
+table.hourly-table{ border-collapse: collapse; width: 100%; font-size: 0.86rem; }
+table.hourly-table th, table.hourly-table td{
+  padding: 8px 8px; border-bottom: 1px solid var(--line); text-align: center; white-space: nowrap;
+}
+table.hourly-table th{ background: var(--main-light); color: var(--main-dark); font-weight: bold; position: sticky; top: 0; z-index: 2; }
+table.hourly-table .col-name{ text-align: left; font-weight: bold; }
+/* 具材名・作った数の列は横スクロール中も見えるよう固定する（片手でも文脈を見失わないため） */
+table.hourly-table th:nth-child(1), table.hourly-table td:nth-child(1){
+  position: sticky; left: 0; z-index: 1; background: var(--card);
+}
+table.hourly-table th:nth-child(1){ z-index: 3; background: var(--main-light); }
+table.hourly-table th:nth-child(2), table.hourly-table td:nth-child(2){
+  position: sticky; left: 76px; z-index: 1; background: var(--card);
+}
+table.hourly-table th:nth-child(2){ z-index: 3; background: var(--main-light); }
+
+table.hourly-table input[type="number"]{
+  width: 56px; min-height: 44px; border: 1px solid #ccc; border-radius: 8px;
+  padding: 4px; font-size: 1rem; text-align: center;
+}
+.made-input{ background: #f3f1ea; color: #555; }
+.slot-subhead{ font-weight: normal; font-size: 0.62rem; opacity: 0.8; display: block; }
+.slot-extra-row{ display: flex; gap: 4px; justify-content: center; margin-top: 4px; }
+.given-input{ width: 46px !important; min-height: 40px !important; font-size: 0.82rem !important; color: #a35; }
+.received-input{ width: 46px !important; min-height: 40px !important; font-size: 0.82rem !important; color: #358; }
+.moved-input, .moved-rozen-input{ width: 64px !important; color: #358; }
+.sold-display{ font-size: 0.74rem; color: #888; margin-top: 4px; min-height: 16px; }
+.sold-neg{ color: #e53; font-weight: bold; }
+.cum-display{ font-size: 0.74rem; color: #4a7; margin-top: 2px; min-height: 16px; }
+.total-row td{ background: #f5f2ec; font-weight: bold; color: #555; border-top: 2px solid #d0c8b8; }
+
+.notes-area{ margin-top: 8px; }
+.notes-label{ font-size: 0.82rem; color: #666; display: block; margin-bottom: 3px; }
+.notes-area textarea{
+  width: 100%; max-width: 600px; border: 1px solid #ccc; border-radius: 6px;
+  padding: 6px 8px; font-size: 0.84rem; resize: vertical; box-sizing: border-box;
+}
+.notes-warning{ font-size: 0.78rem; color: #a3362a; margin-top: 4px; max-width: 600px; }
