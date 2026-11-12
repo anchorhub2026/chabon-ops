@@ -756,16 +756,18 @@ var HOURLY_SHEET_HEADER = ["日付", "曜日", "天気", "気温", "店舗", "�
   "18時ランチ", "18時スタンプ",
   "12時あげた数", "13時あげた数", "14時あげた数", "15時あげた数", "16時あげた数", "17時あげた数", "18時あげた数",
   "12時受取", "13時受取", "14時受取", "15時受取", "16時受取", "17時受取", "18時受取",
-  "Zuidへ移動", "Rozengrachtへ移動"];
+  "Zuidへ移動", "Rozengrachtへ移動", "更新日時"];
 // 「あげた数」列（単一）・「〇時ランチ」「〇時スタンプ」列は、時間帯ごとの
 // 「〇時あげた数」列（ランチ・スタンプ統合）に置き換えられたため以後は書き込まない
 // （既存行の後方互換のため列自体は残す。過去データの読み取り時はgetHourlySheetRowsで
 // 　新列が空なら旧ランチ・スタンプ列の合計にフォールバックする）
 // 「〇時受取」（他店舗からの合流分。現在はZuid・Rozengrachtが使用）・「Zuidへ移動」
-// （UvAのみ・1日1回）・「Rozengrachtへ移動」（Zuid・UvAのみ・1日1回）は末尾に追加した列。
-// 過去の行はこれらの列を持たないため、読み込み時は空欄=0として扱う
-// （getHourlySheetRowsのv()が""を返し、calcHourlySoldAndCumulative/analytics.html側で
-// 　Number("")=0相当に扱われる）。
+// （UvAのみ・1日1回）・「Rozengrachtへ移動」（Zuid・UvAのみ・1日1回）・「更新日時」は
+// 末尾に追加した列。過去の行はこれらの列を持たないため、読み込み時は空欄=0（更新日時は
+// 空文字）として扱う（getHourlySheetRowsのv()が""を返し、calcHourlySoldAndCumulative/
+// analytics.html側でNumber("")=0相当に扱われる）。
+// 「更新日時」は、uva.html/rozen.html（スタッフ用の店舗別入力ページ）とindex.htmlが
+// 同じ日・同じ店舗を同時に編集した場合の楽観的ロックに使う（handleSaveHourly参照）。
 
 // 各時間帯残数と、その時間帯の「あげた数」「受け取った数」から、時間帯ごとの売れた数・
 // 累計売上を算出する。あげた数はその時間帯で実際に減った分から除外し、受け取った数
@@ -811,7 +813,53 @@ function handleSaveHourly(ss, data) {
   // 3列（A・E・G列）だけを読み取って該当行を特定し、既存値の保持が必要な行だけを
   // 全列読み取る（getHourlySheetRowsの読み取り範囲限定と同じ方針）。
   var keyCols = lastRow >= 2 ? sheet.getRange(2, 1, lastRow - 1, 7).getValues() : [];
+  // 楽観的ロックの比較用に、最終列（更新日時）だけを別途まとめて読む
+  // （keyColsと同じ開始行・件数で読むため、同じインデックスrで対応する行を指す）。
+  var updatedAtCol = lastRow >= 2 ? sheet.getRange(2, HOURLY_SHEET_HEADER.length, lastRow - 1, 1).getValues() : [];
+
+  // 曜日・天気・気温は本来「その日」単位の情報で、本来はどの店舗の行も同じ値を持つ。
+  // index.htmlは毎回これらを送ってくるが、uva.html/rozen.html（スタッフ用の店舗別入力
+  // ページ）は天気情報を取得しないため送ってこない。その場合は、同じ日付の既存行
+  // （店舗は問わない）から曜日・天気・気温を引き継ぐ（空のまま上書きしてしまうと、
+  // 既にindex.html側で保存されていた天気情報が消えてしまうため）。
+  var effectiveWeekday = data.weekday || "";
+  var effectiveWeather = data.weather || "";
+  var effectiveTemp = (data.temp !== undefined && data.temp !== null && data.temp !== "") ? data.temp : "";
+  if (!effectiveWeekday || !effectiveWeather || effectiveTemp === "") {
+    for (var fr = 0; fr < keyCols.length; fr++) {
+      if (normalizeDateCell(keyCols[fr][0]) === String(data.date)) {
+        if (!effectiveWeekday) effectiveWeekday = String(keyCols[fr][1] || "");
+        if (!effectiveWeather) effectiveWeather = String(keyCols[fr][2] || "");
+        if (effectiveTemp === "" && keyCols[fr][3] !== "" && keyCols[fr][3] !== null && keyCols[fr][3] !== undefined) {
+          effectiveTemp = keyCols[fr][3];
+        }
+        break;
+      }
+    }
+  }
+
   (data.stores || []).forEach(function(storeData) {
+    // 楽観的ロック：クライアントが読み込んだ時点の更新日時(expectedUpdatedAt)を送ってきた
+    // 場合、現在シート上の「この日・この店舗」の行のうち最新の更新日時と比較する。
+    // 異なれば、他の端末（index.html・uva.html・rozen.htmlのいずれか）が後から保存した
+    // とみなし、この店舗分は書き込まずにスキップする（クライアント側は保存直前に別途
+    // fetchして比較し、ここに到達する前に止めるのが基本。これはその最終防衛線）。
+    // expectedUpdatedAtが無い（従来互換・新規データ）場合はチェックをスキップする。
+    if (storeData.expectedUpdatedAt) {
+      var currentMax = 0;
+      for (var kr = 0; kr < keyCols.length; kr++) {
+        if (normalizeDateCell(keyCols[kr][0]) === String(data.date) &&
+            String(keyCols[kr][4]) === String(storeData.store)) {
+          var uAt = updatedAtCol[kr][0];
+          var uMs = uAt instanceof Date ? uAt.getTime() : 0;
+          if (uMs > currentMax) currentMax = uMs;
+        }
+      }
+      if (currentMax > 0 && String(currentMax) !== String(storeData.expectedUpdatedAt)) {
+        return; // 競合：この店舗分は書き込まずにスキップする
+      }
+    }
+
     (storeData.items || []).forEach(function(item) {
       var foundRow = -1;
       for (var r = 0; r < keyCols.length; r++) {
@@ -872,21 +920,34 @@ function handleSaveHourly(ss, data) {
         movedRozen = Number(item.movedToRozengracht) || 0;
       }
 
+      // 販売終了時間・備考：uva.html/rozen.html（スタッフ用の店舗別入力ページ）はこれらの
+      // 入力欄を持たないため、キー自体を送ってこない（undefined）。その場合は空文字で
+      // 上書きしてしまわず、既存の値をそのまま保持する。storeData.soldOutTime/noteが
+      // 明示的に（空文字も含めて）送られてきた場合（index.html）は、その値をそのまま使う
+      // （index.htmlでメモ等を意図的に空にして保存するケースと区別するため）。
+      var soldOutTime = (storeData.soldOutTime !== undefined)
+        ? (storeData.soldOutTime || "")
+        : (existing ? String(existing[29] || "") : "");
+      var note = (storeData.note !== undefined)
+        ? (storeData.note || "")
+        : (existing ? String(existing[30] || "") : "");
+
       var calc = calcHourlySoldAndCumulative(total, remains, givens, receiveds);
       var row = [
-        data.date, data.weekday, data.weather, data.temp,
+        data.date, effectiveWeekday, effectiveWeather, effectiveTemp,
         storeData.store, storeData.location,
         item.filling, total,
         remains[0], remains[1], remains[2], remains[3], remains[4], remains[5], remains[6],
         calc.sold[0], calc.sold[1], calc.sold[2], calc.sold[3], calc.sold[4], calc.sold[5], calc.sold[6],
         calc.cumulative[0], calc.cumulative[1], calc.cumulative[2], calc.cumulative[3], calc.cumulative[4], calc.cumulative[5], calc.cumulative[6],
-        storeData.soldOutTime || "",
-        storeData.note || "",
+        soldOutTime,
+        note,
         "", // あげた数（単一・廃止、後方互換のため列のみ維持）
         "", "", "", "", "", "", "", "", "", "", "", "", "", "", // 〇時ランチ・〇時スタンプ（廃止、後方互換のため列のみ維持）
         givens[0], givens[1], givens[2], givens[3], givens[4], givens[5], givens[6],
         receiveds[0], receiveds[1], receiveds[2], receiveds[3], receiveds[4], receiveds[5], receiveds[6],
-        moved, movedRozen
+        moved, movedRozen,
+        new Date()
       ];
       if (foundRow > 0) {
         sheet.getRange(foundRow, 1, 1, row.length).setValues([row]);
@@ -998,6 +1059,9 @@ function getHourlySheetRows(ss, dateFilter) {
       received16: v(57), received17: v(58), received18: v(59),
       movedToZuid: v(60),
       movedToRozengracht: v(61),
+      // 楽観的ロック用。epochミリ秒の数値（文字列化して比較する）で返す。
+      // タイムゾーンや表示形式の差異を気にせず単純比較できるようにするため。
+      updatedAt: r[62] instanceof Date ? r[62].getTime() : "",
     });
   }
   return result;

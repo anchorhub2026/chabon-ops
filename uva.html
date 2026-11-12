@@ -1,0 +1,275 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="UvA 売上入力">
+<link rel="apple-touch-icon" href="./chabon-logo-uva.png">
+<title>UvA 売上入力｜Chabon Ops</title>
+<style>
+  :root{
+    --main: #4a7c59;
+    --main-dark: #335c3e;
+    --main-light: #e9f1ea;
+    --accent: #c9533f;
+    --bg: #faf8f3;
+    --card: #ffffff;
+    --ink: #2b2b28;
+    --line: #e2ddd0;
+  }
+  *{ box-sizing: border-box; }
+  html{ -webkit-text-size-adjust: 100%; }
+  body{
+    margin: 0;
+    font-family: "Hiragino Sans", "Yu Gothic", "Noto Sans JP", sans-serif;
+    background: var(--bg);
+    color: var(--ink);
+    line-height: 1.5;
+    padding-bottom: 40px;
+  }
+  header{
+    background: var(--main);
+    color: #fff;
+    padding: 16px;
+    text-align: center;
+  }
+  header h1{ margin: 0; font-size: 1.15rem; }
+  main{ max-width: 720px; margin: 0 auto; padding: 14px; }
+
+  .date-row{
+    display: flex; align-items: center; gap: 8px;
+    background: var(--card); border: 1px solid var(--line); border-radius: 10px;
+    padding: 10px 12px; margin-bottom: 14px;
+  }
+  .date-row label{ font-weight: bold; color: var(--main-dark); }
+  .date-row select{
+    flex: 1; min-height: 44px; font-size: 1rem; padding: 6px 8px;
+    border: 1px solid var(--line); border-radius: 8px; background: #fff;
+  }
+
+  .off-note, .loading-note{
+    background: var(--card); border: 1px solid var(--line); border-radius: 10px;
+    padding: 20px 14px; text-align: center; color: #777; font-size: 0.95rem;
+  }
+
+  .table-scroll{ overflow-x: auto; border: 1px solid var(--line); border-radius: 10px; background: var(--card); }
+  table.hourly-table{ border-collapse: collapse; width: 100%; font-size: 0.86rem; }
+  table.hourly-table th, table.hourly-table td{
+    padding: 8px 8px; border-bottom: 1px solid var(--line); text-align: center; white-space: nowrap;
+  }
+  table.hourly-table th{ background: var(--main-light); color: var(--main-dark); font-weight: bold; position: sticky; top: 0; z-index: 2; }
+  table.hourly-table .col-name{ text-align: left; font-weight: bold; }
+  /* 具材名・作った数の列は横スクロール中も見えるよう固定する（片手でも文脈を見失わないため） */
+  table.hourly-table th:nth-child(1), table.hourly-table td:nth-child(1){
+    position: sticky; left: 0; z-index: 1; background: var(--card);
+  }
+  table.hourly-table th:nth-child(1){ z-index: 3; background: var(--main-light); }
+  table.hourly-table th:nth-child(2), table.hourly-table td:nth-child(2){
+    position: sticky; left: 76px; z-index: 1; background: var(--card);
+  }
+  table.hourly-table th:nth-child(2){ z-index: 3; background: var(--main-light); }
+
+  table.hourly-table input[type="number"]{
+    width: 56px; min-height: 44px; border: 1px solid #ccc; border-radius: 8px;
+    padding: 4px; font-size: 1rem; text-align: center;
+  }
+  .made-input{ background: #f3f1ea; color: #555; }
+  .slot-subhead{ font-weight: normal; font-size: 0.62rem; opacity: 0.8; display: block; }
+  .slot-extra-row{ display: flex; gap: 4px; justify-content: center; margin-top: 4px; }
+  .given-input{ width: 46px !important; min-height: 40px !important; font-size: 0.82rem !important; color: #a35; }
+  .received-input{ width: 46px !important; min-height: 40px !important; font-size: 0.82rem !important; color: #358; }
+  .moved-input, .moved-rozen-input{ width: 64px !important; color: #358; }
+  .sold-display{ font-size: 0.74rem; color: #888; margin-top: 4px; min-height: 16px; }
+  .sold-neg{ color: #e53; font-weight: bold; }
+  .cum-display{ font-size: 0.74rem; color: #4a7; margin-top: 2px; min-height: 16px; }
+  .total-row td{ background: #f5f2ec; font-weight: bold; color: #555; border-top: 2px solid #d0c8b8; }
+
+  .save-btn{
+    display: block; width: 100%; margin-top: 16px; padding: 14px;
+    min-height: 52px; background: var(--main); color: #fff; border: none; border-radius: 10px;
+    font-size: 1.08rem; font-weight: bold; cursor: pointer;
+  }
+  .save-btn:disabled{ background: #aaa; cursor: default; }
+  .save-btn:active:not(:disabled){ background: var(--main-dark); }
+
+  .status-msg{ margin-top: 10px; padding: 10px 12px; border-radius: 8px; font-size: 0.92rem; text-align: center; display: none; }
+  .status-msg.show{ display: block; }
+  .status-msg.success{ background: #e4f3e8; color: var(--main-dark); border: 1px solid #b9ddc3; }
+  .status-msg.error{ background: #fbe6e3; color: #a3362a; border: 1px solid #f0bdb5; font-weight: bold; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>🏪 UvA 売上入力</h1>
+</header>
+
+<main>
+  <div class="date-row">
+    <label for="dateSelect">日付</label>
+    <select id="dateSelect"></select>
+  </div>
+  <div id="contentArea"><p class="loading-note">読み込み中...</p></div>
+</main>
+
+<script src="confirmed-plan.js"></script>
+<script src="date-format.js"></script>
+<script src="hourly-actuals.js"></script>
+<script>
+const STORE_KEY = "UvA";
+const SHIFT_SPREADSHEET_ID = "1PHf1o3smqIQdeFkhBHjBZUEub7VtRcynQLllmSR7w-s"; // シフト回答／確定プラン
+const SCRIPT_URL = "https://script.google.com/macros/s/AKfycbyxbKMgM4ZiowaJu3cQ4NdLhwSE9-Pet8DbYB3qvgEX2NS2h1Dosgfm62vu7-in52ZT/exec";
+const FILLINGS = ["ツナマヨ","スパイシーツナマヨ","テリヤキチキン","サーモン","スパイシー味噌","枝豆","梅","うなぎ","今月のおにぎり"];
+
+const state = {
+  confirmedPlanByDate: {}, // "M/D" -> 確定プラン（confirmed-plan.js由来）
+  selectedIso: "",
+  fillings: [],
+  totals: {},
+  expectedUpdatedAt: null,
+};
+
+function pad2(n){ return String(n).padStart(2, "0"); }
+function isoDateLocal(d){ return `${d.getFullYear()}-${pad2(d.getMonth()+1)}-${pad2(d.getDate())}`; }
+function mdLabel(d){ return `${d.getMonth()+1}/${d.getDate()}`; }
+
+// 確定プランシートを取得する。パース処理はconfirmed-plan.js（index.html・admin.htmlと共通）の
+// parseConfirmedPlansSheetを使う
+async function fetchConfirmedPlan(){
+  try{
+    const url = `https://docs.google.com/spreadsheets/d/${SHIFT_SPREADSHEET_ID}/gviz/tq?tqx=out:json&sheet=${encodeURIComponent("確定プラン")}`;
+    const res = await fetch(url);
+    const text = await res.text();
+    const match = text.match(/setResponse\(([\s\S]*)\);\s*$/);
+    if(!match) return {};
+    const json = JSON.parse(match[1]);
+    return parseConfirmedPlansSheet(json);
+  }catch(e){
+    console.error("確定プランの取得に失敗しました", e);
+    return {};
+  }
+}
+
+// 今日〜過去3日分の日付選択肢を作る（入力し忘れの修正用）
+function buildDateOptions(){
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const opts = [];
+  for(let i = 0; i <= 3; i++){
+    const d = new Date(today);
+    d.setDate(d.getDate() - i);
+    opts.push({ iso: isoDateLocal(d), dateObj: d, label: formatDateWithWeekday(d) });
+  }
+  return opts;
+}
+
+function renderDateOptions(){
+  const opts = buildDateOptions();
+  const sel = document.getElementById("dateSelect");
+  sel.innerHTML = opts.map(o => `<option value="${o.iso}">${o.label}</option>`).join("");
+  state.selectedIso = opts[0].iso;
+  sel.value = state.selectedIso;
+  sel.addEventListener("change", () => {
+    state.selectedIso = sel.value;
+    loadForSelectedDate();
+  });
+}
+
+function formatSavedAtLabel(d){
+  return `${formatDateWithWeekday(d)}${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
+}
+
+function showStatus(kind, text){
+  const el = document.getElementById("statusMsg");
+  if(!el) return;
+  el.className = `status-msg show ${kind}`;
+  el.textContent = text;
+}
+function clearStatus(){
+  const el = document.getElementById("statusMsg");
+  if(el){ el.className = "status-msg"; el.textContent = ""; }
+}
+
+async function loadForSelectedDate(){
+  const area = document.getElementById("contentArea");
+  area.innerHTML = `<p class="loading-note">読み込み中...</p>`;
+
+  const dateObj = new Date(`${state.selectedIso}T00:00:00`);
+  const key = mdLabel(dateObj);
+  const plan = state.confirmedPlanByDate[key];
+  const totalsResult = plan ? getStoreTotals(plan, null) : null;
+  const totals = totalsResult ? totalsResult.uvaTotals : null;
+  const fillings = totals ? FILLINGS.filter(f => (totals[f] || 0) > 0) : [];
+
+  if(!plan || fillings.length === 0){
+    area.innerHTML = `<p class="off-note">この日は営業日ではありません。</p>`;
+    return;
+  }
+
+  state.fillings = fillings;
+  state.totals = totals;
+
+  // location入力欄は無い（UvAは「あげた数」「移動」等はbuildStoreTable内の列で入力できる）
+  area.innerHTML = `
+    <div class="table-scroll">${buildStoreTable(STORE_KEY, fillings, totals, HOURLY_SLOTS, true)}</div>
+  `;
+
+  area.insertAdjacentHTML("beforeend", `
+    <button type="button" class="save-btn" id="saveBtn" disabled>読み込み中...</button>
+    <div class="status-msg" id="statusMsg"></div>
+  `);
+
+  area.querySelectorAll(".hourly-input, .given-input, .received-input, .moved-input, .moved-rozen-input").forEach(inp =>
+    inp.addEventListener("input", () => updateStoreSoldDisplay(STORE_KEY, fillings))
+  );
+
+  document.getElementById("saveBtn").addEventListener("click", handleSaveClick);
+
+  // 保存済みデータを復元する（復元完了まで保存ボタンは無効化し、空欄での誤上書きを防ぐ）
+  const rows = await fetchHourlyData(SCRIPT_URL, state.selectedIso);
+  restoreHourlyInputs(rows, state.selectedIso);
+  updateStoreSoldDisplay(STORE_KEY, fillings);
+  state.expectedUpdatedAt = maxUpdatedAtForStore(rows, STORE_KEY);
+
+  const btn = document.getElementById("saveBtn");
+  if(btn){ btn.disabled = false; btn.textContent = "UvAの実績を記録する"; }
+}
+
+async function handleSaveClick(){
+  const btn = document.getElementById("saveBtn");
+  if(btn){ btn.disabled = true; btn.textContent = "送信中..."; }
+  clearStatus();
+
+  const result = await saveStoreActual({
+    scriptUrl: SCRIPT_URL,
+    storeKey: STORE_KEY,
+    dateIso: state.selectedIso,
+    fillings: state.fillings,
+    expectedUpdatedAt: state.expectedUpdatedAt,
+  });
+
+  if(result.ok){
+    state.expectedUpdatedAt = result.expectedUpdatedAt;
+    showStatus("success", `保存しました（${formatSavedAtLabel(result.savedAt)}）`);
+    if(btn){ btn.disabled = false; btn.textContent = "UvAの実績を記録する"; }
+  } else if(result.reason === "conflict"){
+    showStatus("error", "⚠️ 他の端末で更新されています。再読み込みしてください。");
+    if(btn){ btn.disabled = false; btn.textContent = "UvAの実績を記録する"; }
+  } else {
+    showStatus("error", "⚠️ 保存に失敗しました。通信状態を確認してもう一度お試しください。");
+    if(btn){ btn.disabled = false; btn.textContent = "UvAの実績を記録する"; }
+  }
+}
+
+async function init(){
+  renderDateOptions();
+  state.confirmedPlanByDate = await fetchConfirmedPlan();
+  await loadForSelectedDate();
+}
+
+init();
+</script>
+</body>
+</html>
