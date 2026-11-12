@@ -498,6 +498,8 @@
     <a href="shift.html">📝 シフト入力</a>
     <a href="production.html">📋 ニギニギ隊生産数</a>
     <a href="admin.html">🔧 管理画面</a>
+    <a href="uva.html">🏪 UvA 売上入力</a>
+    <a href="rozen.html">🏪 Rozen 売上入力</a>
   </nav>
 </header>
 
@@ -563,6 +565,7 @@
 <script src="confirmed-plan.js"></script>
 <script src="active-members.js"></script>
 <script src="date-format.js"></script>
+<script src="hourly-actuals.js"></script>
 <script>
 const LAT = 52.3676, LON = 4.9041;
 const SPREADSHEET_ID = "1rQtRUSP5e7qOjnT4RPvMGfWrEFcFL89AsLe8cjGIW4U"; // チセさんの生産データ
@@ -783,7 +786,7 @@ const FILLINGS = ["ツナマヨ","スパイシーツナマヨ","テリヤキチ�
 const DAY_NAMES = ["日","月","火","水","木","金","土"];
 
 const OPERATING_DAYS = [1, 2, 3, 4]; // 月火水木
-const HOURLY_SLOTS = [12, 13, 14, 15, 16, 17, 18];
+// HOURLY_SLOTSはhourly-actuals.jsで定義済み（index.html/uva.html/rozen.htmlで共通）
 
 const state = {
   members: ACTIVE_MEMBERS.map(name => ({ name, on: name !== "MIKI" })),
@@ -797,6 +800,7 @@ const state = {
   todayDraft: null, // forecast from "作業中プラン" for today: { zuidFillingQty, uvaFillingQty, ... } | null
   openWeekKey: null, // 週間ビューで展開中の日付キー "M/D" | null
   storeSettings: {}, // 店舗名 -> {startDate,endDate,weekdays,weekdayQty,weekendQty}（admin.htmlで設定）
+  hourlyUpdatedAtByStore: {}, // 店舗名 -> 時間帯別実績の最新更新日時(epochミリ秒)。保存前の楽観的ロック基準
 };
 
 // 今月のおにぎり追加分(5%)は、枝豆・梅・うなぎの比率は変えず、変動具材5種の合計(0.89→0.84)を按分縮小して確保
@@ -1385,122 +1389,10 @@ function renderWeekDetail(){
   `;
 }
 
-function getTodayFillingTotals(plan){
-  const totals = {};
-  (plan.memberNames || []).forEach(name => {
-    fillingQtyMapToItems(plan.memberFillingQty[name]).forEach(it => {
-      if(it.qty > 0) totals[it.filling] = (totals[it.filling] || 0) + it.qty;
-    });
-  });
-  fillingQtyMapToItems(plan.hqBreakdown).forEach(it => {
-    if(it.qty > 0) totals[it.filling] = (totals[it.filling] || 0) + it.qty;
-  });
-  return totals;
-}
+// getTodayFillingTotals()・getStoreTotals()はhourly-actuals.jsに共通化
+// （index.html/uva.html/rozen.htmlで共通利用）
 
-// 確定プランに具材別の内訳（zuidBreakdown/uvaBreakdown）がある場合は最優先でそれを使う。
-// 無い場合（確定プランがその日無い、または内訳列が無い古い確定行）は
-// ドラフトの zuidFillingQty / uvaFillingQty を使い、
-// それも無い場合は全具材合計を zuid:uva の比率で按分して返す
-function getStoreTotals(plan, draftForecast){
-  if(plan && plan.hasDetailBreakdown){
-    const z = {}, u = {}, ro = {};
-    FILLINGS.forEach(f => {
-      z[f] = Number(plan.zuidBreakdown[f] || 0);
-      u[f] = Number(plan.uvaBreakdown[f] || 0);
-      ro[f] = Number((plan.rozenBreakdown && plan.rozenBreakdown[f]) || 0);
-    });
-    return { zuidTotals: z, uvaTotals: u, rozenTotals: ro };
-  }
-  if(draftForecast && draftForecast.zuidFillingQty && draftForecast.uvaFillingQty){
-    const z = {}, u = {}, ro = {};
-    FILLINGS.forEach(f => {
-      z[f] = Number(draftForecast.zuidFillingQty[f] || 0);
-      u[f] = Number(draftForecast.uvaFillingQty[f] || 0);
-      ro[f] = Number((draftForecast.rozenFillingQty && draftForecast.rozenFillingQty[f]) || 0);
-    });
-    return { zuidTotals: z, uvaTotals: u, rozenTotals: ro };
-  }
-  // フォールバック：全具材合計を店舗合計比率で按分（Rozengrachtは按分せず確定数のみ別枠で加える）
-  const all = getTodayFillingTotals(plan);
-  const grand = (plan.zuid || 0) + (plan.uva || 0);
-  const ratio = grand > 0 ? (plan.zuid || 0) / grand : 0.5;
-  const z = {}, u = {}, ro = {};
-  FILLINGS.forEach(f => {
-    const t = all[f] || 0;
-    z[f] = Math.round(t * ratio);
-    u[f] = t - z[f];
-    ro[f] = 0;
-  });
-  return { zuidTotals: z, uvaTotals: u, rozenTotals: ro };
-}
-
-function buildStoreTable(storeKey, fillings, totals){
-  // Zuid・Rozengrachtは、他店舗からの合流分「受け取った数」を時間帯ごとに入力できる
-  // （Zuidへの受け取りはUvAから、Rozengrachtへの受け取りはZuid・UvAから）。
-  // UvAのみ、営業終了時に残った分をZuidへ運ぶ「Zuidへ移動した数」を1日1回（具材ごと）入力できる。
-  // Zuid・UvAは、営業終了時に残った分をRozengrachtへ運ぶ「Rozengrachtへ移動した数」を
-  // 同じく1日1回（具材ごと）入力できる。
-  const showReceived = storeKey === "Zuid" || storeKey === "Rozengracht";
-  const showMovedToZuid = storeKey === "UvA";
-  const showMovedToRozengracht = storeKey === "Zuid" || storeKey === "UvA";
-  const receivedTitle = storeKey === "Zuid" ? "受け取った数（UvAから）" : "受け取った数（他店舗から）";
-  const slotSubhead = showReceived ? "残り／あげ／受取" : "残り／あげ";
-  const slotHeaders = HOURLY_SLOTS.map(h => `<th>${h}時<br><span class="slot-subhead">${slotSubhead}</span></th>`).join("");
-  const rows = fillings.map((f, fi) => {
-    const slotCells = HOURLY_SLOTS.map((h, si) => `
-      <td>
-        <input type="number" class="hourly-input"
-               data-store="${storeKey}" data-filling="${f}" data-slot="${si}"
-               min="0" placeholder="—">
-        <div class="slot-extra-row">
-          <input type="number" class="given-input" title="あげた数"
-                 data-store="${storeKey}" data-filling="${f}" data-slot="${si}"
-                 min="0" placeholder="あげ" value="0">
-          ${showReceived ? `<input type="number" class="received-input" title="${receivedTitle}"
-                 data-store="${storeKey}" data-filling="${f}" data-slot="${si}"
-                 min="0" placeholder="受取" value="0">` : ""}
-        </div>
-        <div class="sold-display" id="sold-${storeKey}-${fi}-${si}"></div>
-        <div class="cum-display" id="cum-${storeKey}-${fi}-${si}"></div>
-      </td>`).join("");
-    const movedZuidCell = showMovedToZuid ? `<td><input type="number" class="moved-input" title="Zuidへ移動した数"
-                 data-store="${storeKey}" data-filling="${f}"
-                 min="0" placeholder="0" value="0"></td>` : "";
-    const movedRozenCell = showMovedToRozengracht ? `<td><input type="number" class="moved-rozen-input" title="Rozengrachtへ移動した数"
-                 data-store="${storeKey}" data-filling="${f}"
-                 min="0" placeholder="0" value="0"></td>` : "";
-    return `<tr>
-      <td class="col-name">${f}</td>
-      <td><input type="number" class="made-input"
-                 data-store="${storeKey}" data-filling="${f}"
-                 value="${totals[f]}" min="0"></td>
-      ${movedZuidCell}
-      ${movedRozenCell}
-      ${slotCells}
-    </tr>`;
-  }).join("");
-  const remainCells = HOURLY_SLOTS.map((h, si) =>
-    `<td class="total-cell"><span id="total-remain-${storeKey}-${si}"></span></td>`).join("");
-  const soldCells = HOURLY_SLOTS.map((h, si) =>
-    `<td class="total-cell"><span id="total-sold-${storeKey}-${si}"></span></td>`).join("");
-  const cumCells = HOURLY_SLOTS.map((h, si) =>
-    `<td class="total-cell"><span id="total-cum-${storeKey}-${si}"></span></td>`).join("");
-  const movedZuidHeader = showMovedToZuid ? `<th>Zuidへ<br>移動</th>` : "";
-  const movedRozenHeader = showMovedToRozengracht ? `<th>Rozengrachtへ<br>移動</th>` : "";
-  const movedZuidTotalCell = showMovedToZuid ? `<td class="total-cell"><span id="total-moved-${storeKey}"></span></td>` : "";
-  const movedRozenTotalCell = showMovedToRozengracht ? `<td class="total-cell"><span id="total-movedRozen-${storeKey}"></span></td>` : "";
-  const movedPlaceholderCells = `${showMovedToZuid ? "<td>—</td>" : ""}${showMovedToRozengracht ? "<td>—</td>" : ""}`;
-  return `<table class="hourly-table">
-    <thead><tr><th class="col-name">具材</th><th>作った数</th>${movedZuidHeader}${movedRozenHeader}${slotHeaders}</tr></thead>
-    <tbody>
-      ${rows}
-      <tr class="total-row"><td class="col-name">残り合計</td><td class="total-cell"><span id="total-made-${storeKey}"></span></td>${movedZuidTotalCell}${movedRozenTotalCell}${remainCells}</tr>
-      <tr class="total-row"><td class="col-name">売った合計</td><td class="total-cell"><span id="total-sold-grand-${storeKey}"></span></td>${movedPlaceholderCells}${soldCells}</tr>
-      <tr class="total-row"><td class="col-name">全具材累計売上</td><td>—</td>${movedPlaceholderCells}${cumCells}</tr>
-    </tbody>
-  </table>`;
-}
+// buildStoreTable()はhourly-actuals.jsに共通化（index.html/uva.html/rozen.htmlで共通利用）
 
 function renderActualSales(){
   const area = document.getElementById("actualSalesArea");
@@ -1560,14 +1452,14 @@ function renderActualSales(){
   `;
 
   area.querySelectorAll(".hourly-input, .made-input, .given-input, .received-input, .moved-input, .moved-rozen-input").forEach(inp =>
-    inp.addEventListener("input", () => updateSoldDisplay(fillings))
+    inp.addEventListener("input", () => updateSoldDisplay(["Zuid", "UvA", "Rozengracht"], fillings))
   );
   const saveBtns = {
     Zuid: document.getElementById("saveZuidBtn"),
     UvA: document.getElementById("saveUvABtn"),
     Rozengracht: document.getElementById("saveRozenBtn"),
   };
-  Object.entries(saveBtns).forEach(([storeKey, btn]) => btn.addEventListener("click", () => saveStoreActual(storeKey)));
+  Object.entries(saveBtns).forEach(([storeKey, btn]) => btn.addEventListener("click", () => handleSaveStoreClick(storeKey)));
 
   // 保存済みデータを読み込んで入力欄を復元する。復元が完了する前に保存ボタンが押されると、
   // まだ空のままの入力欄の値（空欄）が送信され、既に保存済みの実績を上書きして消してしまう
@@ -1597,9 +1489,15 @@ async function refreshHourlyRecords(){
   const fillings = FILLINGS.filter(f => (zuidTotals[f] || 0) > 0 || (uvaTotals[f] || 0) > 0 || (rozenTotals[f] || 0) > 0);
   if(fillings.length === 0) return;
 
-  const rows = await fetchHourlyData(today.dateStr);
+  const rows = await fetchHourlyData(SCRIPT_URL, today.dateStr);
   restoreHourlyInputs(rows, today.dateStr);
-  updateSoldDisplay(fillings);
+  updateSoldDisplay(["Zuid", "UvA", "Rozengracht"], fillings);
+
+  // 楽観的ロックの基準値（保存前チェック用）を、店舗ごとに最新の更新日時で更新しておく
+  if(!state.hourlyUpdatedAtByStore) state.hourlyUpdatedAtByStore = {};
+  ["Zuid", "UvA", "Rozengracht"].forEach(storeKey => {
+    state.hourlyUpdatedAtByStore[storeKey] = maxUpdatedAtForStore(rows, storeKey);
+  });
 }
 
 async function handleRefreshHourlyClick(){
@@ -1612,206 +1510,13 @@ async function handleRefreshHourlyClick(){
   }
 }
 
-function updateSoldDisplay(fillings){
-  ["Zuid", "UvA", "Rozengracht"].forEach(storeKey => {
-    const nSlots = HOURLY_SLOTS.length;
-    const remainTotals = new Array(nSlots).fill(0);
-    const soldTotals = new Array(nSlots).fill(0);
-    const cumTotals = new Array(nSlots).fill(0);
-    const remainCount = new Array(nSlots).fill(0);
-    const soldCount = new Array(nSlots).fill(0);
-    const cumCount = new Array(nSlots).fill(0);
-    let madeTotal = 0;
-    let movedTotal = 0;
-    let movedRozenTotal = 0;
+// updateSoldDisplay()・fetchHourlyData()・restoreHourlyInputs()はhourly-actuals.jsに共通化
+// （index.html/uva.html/rozen.htmlで共通利用）。fetchHourlyDataの呼び出しはfetchHourlyData(SCRIPT_URL, dateIso)。
 
-    fillings.forEach((f, fi) => {
-      const madeEl = document.querySelector(`.made-input[data-store="${storeKey}"][data-filling="${f}"]`);
-      const made = madeEl ? (parseInt(madeEl.value, 10) || 0) : 0;
-      madeTotal += made;
-
-      const movedEl = document.querySelector(`.moved-input[data-store="${storeKey}"][data-filling="${f}"]`);
-      if(movedEl) movedTotal += (parseInt(movedEl.value, 10) || 0);
-
-      const movedRozenEl = document.querySelector(`.moved-rozen-input[data-store="${storeKey}"][data-filling="${f}"]`);
-      if(movedRozenEl) movedRozenTotal += (parseInt(movedRozenEl.value, 10) || 0);
-
-      // 完売後の自動ゼロ入力：残数が0になったら以降の空欄に0を入力
-      let hitZero = false;
-      HOURLY_SLOTS.forEach((h, si) => {
-        const el = document.querySelector(`.hourly-input[data-store="${storeKey}"][data-filling="${f}"][data-slot="${si}"]`);
-        if(!el) return;
-        if(hitZero && el.value === "") el.value = "0";
-        if(el.value !== "" && parseInt(el.value, 10) === 0) hitZero = true;
-      });
-
-      const vals = HOURLY_SLOTS.map((h, si) => {
-        const el = document.querySelector(`.hourly-input[data-store="${storeKey}"][data-filling="${f}"][data-slot="${si}"]`);
-        return (el && el.value !== "") ? parseInt(el.value, 10) : null;
-      });
-
-      let givenSum = 0;
-      let receivedSum = 0;
-      let lastKnownCum = null;
-      HOURLY_SLOTS.forEach((h, si) => {
-        const soldEl = document.getElementById(`sold-${storeKey}-${fi}-${si}`);
-        const cumEl = document.getElementById(`cum-${storeKey}-${fi}-${si}`);
-        const curr = vals[si];
-        const givenEl = document.querySelector(`.given-input[data-store="${storeKey}"][data-filling="${f}"][data-slot="${si}"]`);
-        const given = givenEl ? (parseInt(givenEl.value, 10) || 0) : 0;
-        const receivedEl = document.querySelector(`.received-input[data-store="${storeKey}"][data-filling="${f}"][data-slot="${si}"]`);
-        const received = receivedEl ? (parseInt(receivedEl.value, 10) || 0) : 0;
-        if(curr !== null){
-          remainTotals[si] += curr;
-          remainCount[si]++;
-        }
-        givenSum += given;
-        receivedSum += received;
-        // 累計売上 = 作った数 ＋（0〜今の時間帯までのUvAからの受け取った数の累計）
-        //            − その時点の残り個数 −（0〜今の時間帯までのあげた数の累計）
-        // （Code.gsのcalcHourlySoldAndCumulativeと同じ計算式。UvAは受け取った数が常に0のため
-        //   Zuidだけ実質的に受け取り分が加味される）
-        if(curr !== null){
-          const cum = made + receivedSum - curr - givenSum;
-          if(cumEl) cumEl.textContent = `累計:${cum}`;
-          cumTotals[si] += cum;
-          cumCount[si]++;
-          lastKnownCum = cum;
-        } else {
-          if(cumEl) cumEl.textContent = "";
-          // 「全具材累計売上」は本来"その時点までの累計"を表す値のため、この具材だけ
-          // その時間帯が未入力でも合計から丸ごと除外してしまうと、他の具材は入力済みなのに
-          // 合計だけ不自然に小さくなってしまう（例: 17時81→18時15）。
-          // その具材の直近に判明している累計値をそのまま繰り越して合計に含めることで、
-          // 未入力の具材が1つでもあると合計が実態より小さく見える問題を防ぐ。
-          if(lastKnownCum !== null){
-            cumTotals[si] += lastKnownCum;
-            cumCount[si]++;
-          }
-        }
-        if(curr === null){ if(soldEl) soldEl.textContent = ""; return; }
-        const prev = si === 0 ? made : vals[si - 1];
-        if(prev === null){ if(soldEl) soldEl.textContent = ""; return; }
-        // あげた数はその時間帯で実際に減った分から除外し、受け取った数（UvAからの合流分）は
-        // 残りが見かけ上増える要因なので加算してから、純粋な販売数を算出する
-        const sold = (prev + received - curr) - given;
-        if(soldEl){
-          soldEl.textContent = `売:${sold}`;
-          soldEl.className = sold < 0 ? "sold-display sold-neg" : "sold-display";
-        }
-        soldTotals[si] += sold;
-        soldCount[si]++;
-      });
-    });
-
-    // 合計行を更新
-    const mEl = document.getElementById(`total-made-${storeKey}`);
-    if(mEl) mEl.textContent = String(madeTotal);
-    const movedEl = document.getElementById(`total-moved-${storeKey}`);
-    if(movedEl) movedEl.textContent = String(movedTotal);
-    const movedRozenEl = document.getElementById(`total-movedRozen-${storeKey}`);
-    if(movedRozenEl) movedRozenEl.textContent = String(movedRozenTotal);
-    let soldGrandTotal = 0;
-    let soldGrandCount = 0;
-    HOURLY_SLOTS.forEach((h, si) => {
-      const rEl = document.getElementById(`total-remain-${storeKey}-${si}`);
-      const sEl = document.getElementById(`total-sold-${storeKey}-${si}`);
-      const cEl = document.getElementById(`total-cum-${storeKey}-${si}`);
-      if(rEl) rEl.textContent = remainCount[si] > 0 ? String(remainTotals[si]) : "";
-      if(sEl) sEl.textContent = soldCount[si] > 0 ? String(soldTotals[si]) : "";
-      if(cEl) cEl.textContent = cumCount[si] > 0 ? String(cumTotals[si]) : "";
-      if(soldCount[si] > 0){ soldGrandTotal += soldTotals[si]; soldGrandCount++; }
-    });
-    // 「作った数」列の位置に、全時間帯・全具材を通した売った合計数を表示する
-    const sgEl = document.getElementById(`total-sold-grand-${storeKey}`);
-    if(sgEl) sgEl.textContent = soldGrandCount > 0 ? String(soldGrandTotal) : "";
-  });
-}
-
-// dateIso（yyyy-MM-dd）を指定すると、Apps Script側でその日付の行だけに絞って
-// 返すため、実績シートの行数が増えてもレスポンスが肥大化しない
-async function fetchHourlyData(dateIso){
-  try{
-    const url = `${SCRIPT_URL}?type=hourly${dateIso ? `&date=${encodeURIComponent(dateIso)}` : ""}`;
-    const res = await fetch(url, { cache: "no-store" });
-    const json = await res.json();
-    return json.rows || [];
-  }catch(e){
-    console.warn("時間帯別実績の取得失敗:", e);
-    return [];
-  }
-}
-
-function restoreHourlyInputs(rows, todayIso){
-  const slotKeys = ["r12","r13","r14","r15","r16","r17","r18"];
-  const givenKeys = ["given12","given13","given14","given15","given16","given17","given18"];
-  const receivedKeys = ["received12","received13","received14","received15","received16","received17","received18"];
-  const lunchKeys = ["lunch12","lunch13","lunch14","lunch15","lunch16","lunch17","lunch18"];
-  const stampKeys = ["stamp12","stamp13","stamp14","stamp15","stamp16","stamp17","stamp18"];
-  const noteRestored = {};
-  const soldOutRestored = {};
-  rows.filter(r => r.date === todayIso).forEach(row => {
-    const sk = row.store;
-    const f  = row.filling;
-    // 作った数を復元
-    const madeEl = document.querySelector(`.made-input[data-store="${sk}"][data-filling="${f}"]`);
-    if(madeEl && row.total !== "" && row.total !== null && row.total !== undefined)
-      madeEl.value = row.total;
-    // Zuidへ移動した数を復元（UvAのみ）
-    if(row.movedToZuid !== "" && row.movedToZuid !== null && row.movedToZuid !== undefined){
-      const movedEl = document.querySelector(`.moved-input[data-store="${sk}"][data-filling="${f}"]`);
-      if(movedEl) movedEl.value = String(row.movedToZuid);
-    }
-    // Rozengrachtへ移動した数を復元（Zuid・UvAのみ）
-    if(row.movedToRozengracht !== "" && row.movedToRozengracht !== null && row.movedToRozengracht !== undefined){
-      const movedRozenEl = document.querySelector(`.moved-rozen-input[data-store="${sk}"][data-filling="${f}"]`);
-      if(movedRozenEl) movedRozenEl.value = String(row.movedToRozengracht);
-    }
-    // 時間帯残数・あげた数・受け取った数を復元
-    slotKeys.forEach((key, si) => {
-      const v = row[key];
-      if(v !== "" && v !== null && v !== undefined){
-        const el = document.querySelector(`.hourly-input[data-store="${sk}"][data-filling="${f}"][data-slot="${si}"]`);
-        if(el) el.value = String(v);
-      }
-      // 新形式「あげた数」があればそれを使い、なければ旧形式（ランチ＋スタンプ）にフォールバックする
-      let givenV = row[givenKeys[si]];
-      if(givenV === "" || givenV === null || givenV === undefined){
-        const lunchV = Number(row[lunchKeys[si]] || 0);
-        const stampV = Number(row[stampKeys[si]] || 0);
-        givenV = (lunchV || stampV) ? (lunchV + stampV) : "";
-      }
-      if(givenV !== "" && givenV !== null && givenV !== undefined){
-        const givenEl = document.querySelector(`.given-input[data-store="${sk}"][data-filling="${f}"][data-slot="${si}"]`);
-        if(givenEl) givenEl.value = String(givenV);
-      }
-      const receivedV = row[receivedKeys[si]];
-      if(receivedV !== "" && receivedV !== null && receivedV !== undefined){
-        const receivedEl = document.querySelector(`.received-input[data-store="${sk}"][data-filling="${f}"][data-slot="${si}"]`);
-        if(receivedEl) receivedEl.value = String(receivedV);
-      }
-    });
-    // 備考を復元（店舗ごとに1回）
-    if(!noteRestored[sk] && row.note){
-      const noteEl = document.getElementById(`notes-${sk}`);
-      if(noteEl) noteEl.value = row.note;
-      noteRestored[sk] = true;
-    }
-    // UvA 販売場所名を復元
-    if(sk === "UvA" && row.location && row.location !== "UvA"){
-      const locEl = document.getElementById("uvaLocationInput");
-      if(locEl) locEl.value = row.location;
-    }
-    // 販売終了時間を復元（店舗ごとに1回）
-    if(!soldOutRestored[sk] && row.soldOutTime){
-      const soldOutEl = document.getElementById(`soldoutTime-${sk}`);
-      if(soldOutEl) soldOutEl.value = row.soldOutTime;
-      soldOutRestored[sk] = true;
-    }
-  });
-}
-
-async function saveStoreActual(storeKey){
+// 保存ボタンのクリックハンドラ。実際の計算・送信・楽観的ロックのチェックは
+// hourly-actuals.jsのsaveStoreActual()（index.html/uva.html/rozen.html共通）に委譲し、
+// ここではボタンの表示（送信中→結果）だけを担当する。
+async function handleSaveStoreClick(storeKey){
   const today = state.dailyResults[0];
   const plan = state.confirmedPlanByDate[mdLabel(today.dateStr)];
   if(!plan) return;
@@ -1825,55 +1530,34 @@ async function saveStoreActual(storeKey){
   const note = (document.getElementById(`notes-${storeKey}`) || {value:""}).value.trim();
   const soldOutTime = (document.getElementById(`soldoutTime-${storeKey}`) || {value:""}).value.trim();
 
-  const items = fillings.map(f => {
-    const madeEl = document.querySelector(`.made-input[data-store="${storeKey}"][data-filling="${f}"]`);
-    const made = madeEl ? (parseInt(madeEl.value, 10) || 0) : 0;
-    const movedEl = document.querySelector(`.moved-input[data-store="${storeKey}"][data-filling="${f}"]`);
-    const moved = movedEl ? (parseInt(movedEl.value, 10) || 0) : 0;
-    const movedRozenEl = document.querySelector(`.moved-rozen-input[data-store="${storeKey}"][data-filling="${f}"]`);
-    const movedRozen = movedRozenEl ? (parseInt(movedRozenEl.value, 10) || 0) : 0;
-    const sv = HOURLY_SLOTS.map((h, si) => {
-      const el = document.querySelector(`.hourly-input[data-store="${storeKey}"][data-filling="${f}"][data-slot="${si}"]`);
-      return (el && el.value !== "") ? parseInt(el.value, 10) : "";
-    });
-    const gv = HOURLY_SLOTS.map((h, si) => {
-      const el = document.querySelector(`.given-input[data-store="${storeKey}"][data-filling="${f}"][data-slot="${si}"]`);
-      return el ? (parseInt(el.value, 10) || 0) : 0;
-    });
-    const rv = HOURLY_SLOTS.map((h, si) => {
-      const el = document.querySelector(`.received-input[data-store="${storeKey}"][data-filling="${f}"][data-slot="${si}"]`);
-      return el ? (parseInt(el.value, 10) || 0) : 0;
-    });
-    return { filling: f, total: made, movedToZuid: moved, movedToRozengracht: movedRozen,
-      r12: sv[0], r13: sv[1], r14: sv[2], r15: sv[3], r16: sv[4], r17: sv[5], r18: sv[6],
-      given12: gv[0], given13: gv[1], given14: gv[2], given15: gv[3], given16: gv[4], given17: gv[5], given18: gv[6],
-      received12: rv[0], received13: rv[1], received14: rv[2], received15: rv[3], received16: rv[4], received17: rv[5], received18: rv[6] };
-  });
-
-  const payload = {
-    type: "saveHourly",
-    date: today.dateStr,
-    weekday: DAY_NAMES[today.dow] + "曜",
-    weather: w.text,
-    temp: Math.round(today.maxTemp),
-    stores: [{ store: storeKey, location, items, note, soldOutTime }],
-  };
-
-  console.log(`【${storeKey}】実績送信payload:`, payload);
-
   const btnId = storeKey === "Zuid" ? "saveZuidBtn" : storeKey === "UvA" ? "saveUvABtn" : "saveRozenBtn";
   const btn = document.getElementById(btnId);
   if(btn){ btn.disabled = true; btn.textContent = "送信中..."; }
   const t0 = Date.now();
-  try{
-    await fetch(SCRIPT_URL, { method: "POST", mode: "no-cors", body: JSON.stringify(payload) });
+
+  const result = await saveStoreActual({
+    scriptUrl: SCRIPT_URL, storeKey, dateIso: today.dateStr, fillings,
+    weekday: DAY_NAMES[today.dow] + "曜", weather: w.text, temp: Math.round(today.maxTemp),
+    location, note, soldOutTime,
+    expectedUpdatedAt: state.hourlyUpdatedAtByStore && state.hourlyUpdatedAtByStore[storeKey],
+  });
+
+  if(result.ok){
     console.log(`[index.html] saveStoreActual(${storeKey}) 保存: ${Date.now() - t0}ms`);
+    if(!state.hourlyUpdatedAtByStore) state.hourlyUpdatedAtByStore = {};
+    state.hourlyUpdatedAtByStore[storeKey] = result.expectedUpdatedAt;
     if(btn){ btn.textContent = "✓ 記録しました"; }
     setTimeout(() => {
       if(btn){ btn.textContent = `${storeKey}の実績を記録する`; btn.disabled = false; }
     }, 3000);
-  }catch(e){
-    console.error(`実績記録失敗（${Date.now() - t0}ms経過後にエラー）:`, e);
+  } else if(result.reason === "conflict"){
+    console.warn(`[index.html] saveStoreActual(${storeKey}) 他の端末で更新されていたため保存を中止しました`);
+    if(btn){ btn.textContent = "⚠️ 他の端末で更新されています。再読み込みしてください"; }
+    setTimeout(() => {
+      if(btn){ btn.textContent = `${storeKey}の実績を記録する`; btn.disabled = false; }
+    }, 5000);
+  } else {
+    console.error(`実績記録失敗（${Date.now() - t0}ms経過後にエラー）:`, result.error);
     if(btn){ btn.textContent = `${storeKey}の実績を記録する`; btn.disabled = false; }
   }
 }
