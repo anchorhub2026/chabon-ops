@@ -453,7 +453,33 @@
   }
   .confirm-btn.yes{ background: var(--main); color: #fff; }
   .confirm-btn.no{ background: #e2ddd0; color: #555; }
-  /* 時間帯別実績（テーブル本体・固定列・メモ欄のCSSはhourly-table.cssで共通化） */
+  /* 時間帯別実績（テーブル本体・固定列・メモ欄の構造はhourly-table.cssで共通化。
+     ただしindex.htmlは一覧性を優先するため、サイズ（幅・高さ・余白・文字サイズ）だけは
+     共通化前の元のサイズに戻す。固定列・固定見出し行の動き自体はhourly-table.css側の
+     position:sticky指定をそのまま使う（ここでは上書きしない）。
+     #actualSalesAreaで囲むことで、hourly-table.cssの同名クラスより確実に優先させる。 */
+  #actualSalesArea .hourly-table{ font-size: 0.82rem; min-width: 580px; }
+  #actualSalesArea .hourly-table th, #actualSalesArea .hourly-table td{ padding: 5px 6px; }
+  #actualSalesArea .hourly-table input[type="number"]{
+    width: 52px; min-height: 0; border-radius: 4px; padding: 3px 4px; font-size: 0.82rem;
+  }
+  #actualSalesArea .sold-display{ font-size: 0.7rem; margin-top: 2px; min-height: 14px; }
+  #actualSalesArea .sold-neg{ font-weight: normal; }
+  #actualSalesArea .cum-display{ font-size: 0.7rem; margin-top: 1px; min-height: 14px; }
+  #actualSalesArea .made-input{ width: 52px !important; }
+  #actualSalesArea .slot-subhead{ font-size: 0.6rem; opacity: 0.75; }
+  #actualSalesArea .slot-extra-row{ gap: 2px; margin-top: 2px; }
+  #actualSalesArea .given-input{ width: 32px !important; min-height: 0 !important; font-size: 0.68rem !important; padding: 2px 1px !important; }
+  #actualSalesArea .received-input{ width: 32px !important; min-height: 0 !important; font-size: 0.68rem !important; padding: 2px 1px !important; }
+  #actualSalesArea .moved-input, #actualSalesArea .moved-rozen-input{ width: 56px !important; }
+  #actualSalesArea .total-row td{ font-size: 0.8rem; }
+  #actualSalesArea .total-cell{ min-width: 52px; }
+  /* 2列目（作った数）の固定位置(left)は、1列目「具材名」の実際の表示幅に合わせている。
+     サイズを元に戻した分、具材名列の幅も変わるため、hourly-table.cssの76px固定値のままだと
+     横スクロール時に2列目が1列目（具材名の文字）に重なって隠れてしまう。
+     最長の具材名「スパイシーツナマヨ」を表示した状態で実測した幅（約116px）に
+     余裕を持たせた118pxに上書きする。 */
+  #actualSalesArea .hourly-table th:nth-child(2), #actualSalesArea .hourly-table td:nth-child(2){ left: 118px; }
   .store-section{ margin-bottom: 20px; }
   .store-heading{ font-size: 1rem; font-weight: bold; color: var(--main-dark); margin: 12px 0 6px; }
   .location-input-row{ margin-bottom: 6px; font-size: 0.88rem; }
