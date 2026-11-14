@@ -375,7 +375,30 @@
     padding: 14px 18px;
     border-radius: 18px 18px 0 0;
     letter-spacing: 0.04em;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
   }
+  .modal-date-head-label{ flex: 1; min-width: 0; }
+  .breakdown-toggle-btn{
+    flex-shrink: 0;
+    background: rgba(255,255,255,0.18);
+    color: #fff;
+    border: 1px solid rgba(255,255,255,0.4);
+    border-radius: 100px;
+    padding: 4px 11px;
+    font-size: 0.68rem;
+    font-weight: 700;
+    font-family: inherit;
+    letter-spacing: 0.02em;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+  .breakdown-toggle-btn:active{ background: rgba(255,255,255,0.3); }
+  /* 既定では店舗別内訳を隠す。表示切替ボタンで.show-breakdownが付いたときだけ見せる */
+  .modal-store-breakdown{ display: none; }
+  .modal-body.show-breakdown .modal-store-breakdown{ display: block; }
   .modal-body{ padding: 14px 18px; }
   .modal-member-row{
     display: flex;
@@ -515,7 +538,10 @@
 
 <div class="modal-overlay" id="detailModal">
   <div class="modal-box">
-    <div class="modal-date-head" id="modalDateHead"></div>
+    <div class="modal-date-head">
+      <span class="modal-date-head-label" id="modalDateHead"></span>
+      <button type="button" class="breakdown-toggle-btn" id="breakdownToggleBtn">内訳を表示</button>
+    </div>
     <div class="modal-body" id="modalBody"></div>
     <div class="modal-close-wrap">
       <button class="modal-close-btn" id="modalCloseBtn">閉じる</button>
@@ -838,6 +864,21 @@ function renderCalendar(){
 }
 
 /* ── Modal ── */
+// 店舗別内訳の表示/非表示は、見やすさのための端末ごとの便利機能としてlocalStorageに
+// 覚えておく（本番データの読み書きには一切関与しない）
+function loadBreakdownVisible(){
+  try{ return localStorage.getItem("chabon_production_showBreakdown") === "1"; }catch(e){ return false; }
+}
+function saveBreakdownVisible(show){
+  try{ localStorage.setItem("chabon_production_showBreakdown", show ? "1" : "0"); }catch(e){}
+}
+function applyBreakdownVisible(show){
+  const bodyEl = document.getElementById("modalBody");
+  const btnEl = document.getElementById("breakdownToggleBtn");
+  if(bodyEl) bodyEl.classList.toggle("show-breakdown", show);
+  if(btnEl) btnEl.textContent = show ? "内訳を隠す" : "内訳を表示";
+}
+
 function openModal(key){
   const plan = allPlans[key];
   if(!plan) return;
@@ -859,6 +900,7 @@ function openModal(key){
     bodyHtml += `<p style="color:#999;text-align:center;margin:12px 0;">この日の割り振りはありません</p>`;
   }
   document.getElementById("modalBody").innerHTML = bodyHtml;
+  applyBreakdownVisible(loadBreakdownVisible());
   document.getElementById("detailModal").classList.add("show");
   document.body.style.overflow = "hidden";
 }
@@ -888,6 +930,11 @@ async function init(){
   document.getElementById("modalCloseBtn").addEventListener("click", closeModal);
   document.getElementById("detailModal").addEventListener("click", e => {
     if(e.target === document.getElementById("detailModal")) closeModal();
+  });
+  document.getElementById("breakdownToggleBtn").addEventListener("click", () => {
+    const show = !loadBreakdownVisible();
+    saveBreakdownVisible(show);
+    applyBreakdownVisible(show);
   });
 
   try{

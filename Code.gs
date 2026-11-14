@@ -94,7 +94,9 @@ function findConfirmedPlanRow(values, dateStr) {
 // 記録するために末尾に追加した列。既存の「ニギニギ隊内訳」列（6列目、具材合計）は
 // 一切変更しないため、月次支払い集計等はこの列を参照しない限り影響を受けない。
 // これより前に確定された行はこの列が空（＝店舗別内訳データなし）として扱われる。
-var CONFIRMED_PLAN_HEADERS = ["日付", "曜日", "Zuid確定数", "UvA確定数", "チセ分", "ニギニギ隊内訳", "本部製造数", "本部内訳", "確定日時", "Zuid内訳", "UvA内訳", "チセ内訳", "修正日時", "Rozen確定数", "Rozen内訳", "ニギニギ隊内訳（店舗別）"];
+// チセ優先担当（17列目）は、その日のチセ分を最優先で担当させるメンバー（自動/YUMI/MARI/
+// CHIKAKO/MIKI）を記録する列。これより前に確定された行はこの列が空（＝自動）として扱われる。
+var CONFIRMED_PLAN_HEADERS = ["日付", "曜日", "Zuid確定数", "UvA確定数", "チセ分", "ニギニギ隊内訳", "本部製造数", "本部内訳", "確定日時", "Zuid内訳", "UvA内訳", "チセ内訳", "修正日時", "Rozen確定数", "Rozen内訳", "ニギニギ隊内訳（店舗別）", "チセ優先担当"];
 
 function ensureConfirmedPlanSheet(ss) {
   var sheet = ss.getSheetByName("確定プラン");
@@ -147,8 +149,8 @@ function handleConfirmPlan(ss, data) {
     // Rozen確定数・Rozen内訳（14・15列目）は「修正日時」のような特別な保護を持たないため、
     // 新規確定・再送のどちらでも常に最新の値に上書きする
     sheet.getRange(targetRow, 14, 1, 2).setValues([[day.rozen || 0, day.rozenBreakdown || ""]]);
-    // ニギニギ隊内訳（店舗別）（16列目）も同様に常に最新の値へ上書きする
-    sheet.getRange(targetRow, 16).setValue(day.ningiBreakdownByStore || "");
+    // ニギニギ隊内訳（店舗別）（16列目）・チセ優先担当（17列目）も同様に常に最新の値へ上書きする
+    sheet.getRange(targetRow, 16, 1, 2).setValues([[day.ningiBreakdownByStore || "", day.chisePriorityAssignee || "自動"]]);
   }
 }
 
@@ -195,7 +197,8 @@ function handleReviseConfirmedDay(ss, data) {
     ts,
     data.rozen || 0,
     data.rozenBreakdown || "",
-    data.ningiBreakdownByStore || ""
+    data.ningiBreakdownByStore || "",
+    data.chisePriorityAssignee || "自動"
   ];
   sheet.getRange(foundRow, 1, 1, row.length).setValues([row]);
 }
@@ -263,6 +266,9 @@ function handleGetConfirmedPlans(ss) {
         // ニギニギ隊内訳（店舗別）（16列目）は後から追加した列のため、それより前に確定された
         // 行では空文字になる（どの店舗の分かを誰が担当したかが分からない＝店舗別内訳データなしとして扱う）
         ningiBreakdownByStore: String(r[15] || ""),
+        // チセ優先担当（17列目）は後から追加した列のため、それより前に確定された行では
+        // 空文字になる（＝自動として扱う）
+        chisePriorityAssignee: String(r[16] || "") || "自動",
       });
     } catch (rowErr) {
       // この行はスキップして次の行へ
@@ -306,10 +312,14 @@ function handleSaveDraft(ss, data) {
   var sheet = ss.getSheetByName("作業中プラン");
   if (!sheet) {
     sheet = ss.insertSheet("作業中プラン");
-    sheet.appendRow(["日付", "forecast", "prod", "更新日時", "prodStore"]);
+    sheet.appendRow(["日付", "forecast", "prod", "更新日時", "prodStore", "チセ優先担当"]);
   } else if (sheet.getLastColumn() < 5) {
     // prodStore（ニギニギ隊内訳の店舗別の下書き）は後から追加した列。既存データの列位置は変えない
     sheet.getRange(1, 5).setValue("prodStore");
+  } else if (sheet.getLastColumn() < 6) {
+    // チセ優先担当（その日のチセ分を最優先で担当するメンバー）も後から追加した列。
+    // 既存データの列位置は変えない
+    sheet.getRange(1, 6).setValue("チセ優先担当");
   }
   var values = sheet.getDataRange().getValues();
   var foundRow = -1;
@@ -340,10 +350,11 @@ function handleSaveDraft(ss, data) {
     JSON.stringify(data.forecast || {}),
     JSON.stringify(data.prod || {}),
     new Date(),
-    JSON.stringify(data.prodStore || {})
+    JSON.stringify(data.prodStore || {}),
+    data.chisePriorityAssignee || "自動"
   ];
   if (foundRow > 0) {
-    sheet.getRange(foundRow, 1, 1, 5).setValues([row]);
+    sheet.getRange(foundRow, 1, 1, 6).setValues([row]);
   } else {
     sheet.appendRow(row);
   }
