@@ -1231,7 +1231,7 @@
 <main>
 
   <div id="fetchFailureBanner" class="fetch-failure-banner" style="display:none;"></div>
-  <p id="storeMismatchRecalcNotice" class="monthly-onigiri-recalc-notice" style="display:none;"></p>
+  <div id="unsavedChangesBanner" class="fetch-failure-banner" style="display:none;"></div>
 
   <section>
     <h2>販売予測数・生産割り振り<span class="badge">来週・再来週 月〜金</span></h2>
@@ -2021,17 +2021,6 @@ function memberOrderWithinGroup(name){
   return 0;
 }
 
-// 手動編集でメンバーの個数を増やすとき、どの店舗の本部の空きから優先して割り当てるか。
-// MIKI・MARI・CHIKAKO（第一・第二グループ）：UvA→Rozengracht→チセ→Zuidの順（店舗優先順位と同じ）。
-// YUMI（第三グループ）：Zuid→チセ→Rozengracht→UvAの順（Zuid分を優先）。
-function memberIncreaseOrder(name){
-  return memberGroupRank(name) === MEMBER_GROUPS.length - 1 ? STORE_PRIORITY_REVERSE : STORE_PRIORITY;
-}
-// 個数を減らすときはその逆順（最後に割り当てた店舗分から先に返す）
-function memberDecreaseOrder(name){
-  return memberGroupRank(name) === MEMBER_GROUPS.length - 1 ? STORE_PRIORITY : STORE_PRIORITY_REVERSE;
-}
-
 // 自動割り振りで、ある店舗の必要数を誰に優先して割り振るかを決める「その店舗での優先順位」。
 // 通常はメンバーの優先グループ（①MIKI・MARI→②CHIKAKO→③YUMI）のままだが、Zuidだけは
 // YUMIを最優先にする（YUMIは一番遠いためZuid分を優先担当する、というメンバー側の優先順位を、
@@ -2082,18 +2071,63 @@ function ensureMemberFillingQty(day, working, memberBreakdowns){
   });
 }
 
-// day.memberStoreFillingQty[name] = {店舗: {具材名: 個数}}。手動編集で触れたメンバー
-// （day.prodManuallyEdited[name] === true）には触れない（手動編集時はadjustMemberStoreFillingQty
-// が既に更新済みのため）。未編集のメンバーは常に最新の自動割り振り結果と同期させる。
-function ensureMemberStoreFillingQty(day, working, memberStoreBreakdowns){
-  if(!day.memberStoreFillingQty) day.memberStoreFillingQty = {};
-  if(!day.prodManuallyEdited) day.prodManuallyEdited = {};
-  working.forEach((name, i) => {
-    if(!day.memberStoreFillingQty[name] || !day.prodManuallyEdited[name]){
-      day.memberStoreFillingQty[name] = memberStoreBreakdowns[i]
-        ? JSON.parse(JSON.stringify(memberStoreBreakdowns[i])) : {};
-    }
+// day.memberFillingQty（メンバー×具材の確定した合計個数）と店舗の必要数から、
+// 店舗別の内訳を毎回ゼロから計算し直す純関数。memberFillingQtyだけが唯一の正とし、
+// 店舗別の内訳はそこから必ず導出される値にすることで、個数と内訳が構造的にずれなくする
+// （個数を保存するときに内訳を別途インクリメンタルに調整する、という仕組み自体を廃止した）。
+// 具材ごとに、店舗優先順位の順に、その店舗での優先グループ（groupRankForStore。Zuidだけは
+// ③YUMIが最優先）の順にメンバーへ割り当てる。手動入力がどの店舗の必要数も超えないことは
+// 入力側（prod-cell-inputのハンドラ）で保証されているため、通常は全員分がどこかの店舗に
+// 収まるが、保険としてどうしても収まらない分は「割当先なし」(UNASSIGNED_STORE_KEY)として
+// 返す（実在の店舗の必要数には一切影響しない）。
+function computeMemberStoreBreakdown(day, workingNames, memberFillingQty){
+  const result = {};
+  workingNames.forEach(name => { result[name] = {}; });
+
+  FILLINGS.forEach(f => {
+    const remaining = {};
+    workingNames.forEach(name => {
+      remaining[name] = (memberFillingQty[name] && memberFillingQty[name][f]) || 0;
+    });
+
+    STORE_PRIORITY.forEach(store => {
+      let room = storeNeedFor(day, store, f);
+      if(room <= 0) return;
+      const order = [...workingNames].sort((a, b) => {
+        const ra = groupRankForStore(a, store), rb = groupRankForStore(b, store);
+        if(ra !== rb) return ra - rb;
+        const oa = memberOrderWithinGroup(a), ob = memberOrderWithinGroup(b);
+        if(oa !== ob) return oa - ob;
+        return workingNames.indexOf(a) - workingNames.indexOf(b);
+      });
+      order.forEach(name => {
+        if(room <= 0) return;
+        const take = Math.min(room, remaining[name]);
+        if(take > 0){
+          if(!result[name][store]) result[name][store] = {};
+          result[name][store][f] = (result[name][store][f] || 0) + take;
+          remaining[name] -= take;
+          room -= take;
+        }
+      });
+    });
+
+    workingNames.forEach(name => {
+      if(remaining[name] > 0){
+        if(!result[name][UNASSIGNED_STORE_KEY]) result[name][UNASSIGNED_STORE_KEY] = {};
+        result[name][UNASSIGNED_STORE_KEY][f] = (result[name][UNASSIGNED_STORE_KEY][f] || 0) + remaining[name];
+      }
+    });
   });
+
+  return result;
+}
+
+// day.memberStoreFillingQty[name] = {店舗: {具材名: 個数}}。手動編集かどうかに関わらず、
+// 常にcomputeMemberStoreBreakdownでday.memberFillingQtyから丸ごと再計算する
+// （店舗別内訳だけを独立して保存・保持することは一切しない）。
+function ensureMemberStoreFillingQty(day, working){
+  day.memberStoreFillingQty = computeMemberStoreBreakdown(day, working, day.memberFillingQty || {});
 }
 
 function sumQtyMap(map){
@@ -2117,36 +2151,19 @@ function rozenFinal(day){ return day.rozenOpen ? sumQtyMap(day.rozenFillingQty) 
 // 画面読み込み時の自動再計算（このチェックの不合格による復元拒否）が
 // どの日付で発生したかを松木さんに報告するために集める。
 let recalculatedOnigiriDates = [];
-// 店舗別の内訳（memberStoreFillingQty/prodStore）が各店舗の必要数と矛盾していたため、
-// 自動的に再計算した日付のISO一覧（renderStoreMismatchRecalcNoticeで画面上部に表示する）。
-let recalculatedStoreMismatchDates = [];
 
-// 保存された店舗別内訳(memberStoreFillingQty)が、現在の各店舗の必要数と矛盾していないかを
-// 判定する。店舗ごとに「ニギニギ隊＋CHISEの割り振り合計」がその店舗のその具材の必要数を
-// 超えていれば、古いデータ（必要数が変わった後も残っている、または過去のバグで店舗の必要数を
-// 超えて積み上がってしまった等）とみなす。割当先なし(UNASSIGNED_STORE_KEY)は実在の店舗の
-// 必要数を消費しないため、このチェックの対象外（他の店舗の整合性には影響しない）。
-function isStoreBreakdownConsistent(day, memberStoreFillingQty){
-  if(!memberStoreFillingQty) return true;
-  return FILLINGS.every(f => STORE_PRIORITY.every(store => {
-    const allocated = Object.values(memberStoreFillingQty).reduce((s, byStore) =>
-      s + ((byStore && byStore[store] && byStore[store][f]) || 0), 0);
-    return allocated <= storeNeedFor(day, store, f);
-  }));
-}
-
-function isProdSnapshotConsistent(day, memberFillingQty, memberStoreFillingQty){
+// 保存済みのメンバー別内訳(prod)が、現在の必要数と整合しているかを判定する（具材合計のみ）。
+// 店舗別の内訳(memberStoreFillingQty)はここでは一切見ない。memberStoreFillingQtyは
+// day.memberFillingQtyと店舗の必要数から毎回computeMemberStoreBreakdownで再計算する
+// 派生値であり、それ単体で保存・復元される状態を持たないため、個数と店舗別内訳が
+// 構造的にずれることがなく、店舗別内訳自体の古さを別途チェックする必要が無くなった。
+function isProdSnapshotConsistent(day, memberFillingQty){
   if(!memberFillingQty) return true;
   const fillingOk = FILLINGS.every(f => {
     const savedForFilling = Object.values(memberFillingQty).reduce((s, qtyMap) => s + ((qtyMap && qtyMap[f]) || 0), 0);
     return savedForFilling <= neededQtyFor(day, f);
   });
   if(!fillingOk) return false;
-
-  if(!isStoreBreakdownConsistent(day, memberStoreFillingQty)){
-    if(day.iso && !recalculatedStoreMismatchDates.includes(day.iso)) recalculatedStoreMismatchDates.push(day.iso);
-    return false;
-  }
 
   // 今月のおにぎりの月次担当が設定されている月は、担当者（本部が担当の場合は誰も）以外の
   // メンバーに「今月のおにぎり」が割り振られている保存データを古いデータとみなす
@@ -2680,7 +2697,7 @@ function splitProdTableHtml(day){
     const hqBreakdownId = `hqBreakdown-${day.dateKey}-${f}`;
     const hqBreakdownHtml = storeBreakdownDetailsHtml(hqBreakdownId, hqStoreBreakdownParts(day, f, working));
     return `<tr>
-        <td class="f-name">${f}</td>
+        <td class="f-name">${f}<span class="hq-over-badge filling-cap-warn" id="fillingCapWarn-${day.dateKey}-${f}" style="display:none;"></span></td>
         ${memberCells}
         <td class="cell-readonly" id="prodHq-${day.dateKey}-${f}">
           <span id="prodHqVal-${day.dateKey}-${f}">${hqDisplay}</span>${hqBreakdownHtml}
@@ -3019,58 +3036,6 @@ function allocatedAtStoreAcrossAll(day, workingNames, store, filling){
     s + ((day.memberStoreFillingQty[n] && day.memberStoreFillingQty[n][store] && day.memberStoreFillingQty[n][store][filling]) || 0), 0);
 }
 
-// 手動編集でメンバー×具材の合計個数を変えたとき、その差分をどの店舗分から増減するかを、
-// そのメンバー自身の優先順序（memberIncreaseOrder/memberDecreaseOrder。MIKI・MARI・CHIKAKOは
-// UvA→Rozengracht→チセ→Zuidの順、YUMIはZuid→チセ→Rozengracht→UvAの順）で自動調整する。
-// 増やす場合：「本部がまだ持っている分」（＝その店舗の必要数－working全員の割り当て合計。
-// 編集対象メンバー自身の現在分も含めて考慮するため、他メンバーの割り当てを侵食しない）から
-// 順に割り当てる。本部にも空きが無ければ、割り当て先なし（UNASSIGNED_STORE_KEY）として記録し、
-// 内訳のポップアップで警告表示する（他の店舗の必要数を超えて割り当てることは絶対にしない）。
-// 減らす場合：その逆順で、自分の割り当て（割り当て先なし分を含めて先に）から減らし、本部に戻す。
-function adjustMemberStoreFillingQty(day, name, filling, delta, workingNames){
-  if(!delta) return;
-  if(!day.memberStoreFillingQty) day.memberStoreFillingQty = {};
-  if(!day.memberStoreFillingQty[name]) day.memberStoreFillingQty[name] = {};
-  const byStore = day.memberStoreFillingQty[name];
-
-  if(delta > 0){
-    let left = delta;
-    memberIncreaseOrder(name).forEach(store => {
-      if(left <= 0) return;
-      const need = storeNeedFor(day, store, filling);
-      const allocatedAll = allocatedAtStoreAcrossAll(day, workingNames, store, filling);
-      const hqRoom = Math.max(0, need - allocatedAll);
-      const add = Math.min(left, hqRoom);
-      if(add > 0){
-        if(!byStore[store]) byStore[store] = {};
-        byStore[store][filling] = ((byStore[store] && byStore[store][filling]) || 0) + add;
-        left -= add;
-      }
-    });
-    // どの店舗にも本部の空きが残っていない（手動入力が必要数を大きく超えた場合）は、
-    // 「割当先なし」として記録する（他の店舗の必要数を超えて積み増すことはしない）
-    if(left > 0){
-      if(!byStore[UNASSIGNED_STORE_KEY]) byStore[UNASSIGNED_STORE_KEY] = {};
-      byStore[UNASSIGNED_STORE_KEY][filling] = (byStore[UNASSIGNED_STORE_KEY][filling] || 0) + left;
-    }
-  } else {
-    let left = -delta;
-    // 「割当先なし」分があれば、実際の店舗の割り当てより先にそちらから減らす
-    const decreaseOrder = [UNASSIGNED_STORE_KEY, ...memberDecreaseOrder(name)];
-    decreaseOrder.forEach(store => {
-      if(left <= 0) return;
-      const current = (byStore[store] && byStore[store][filling]) || 0;
-      const remove = Math.min(left, current);
-      if(remove > 0){
-        byStore[store][filling] = current - remove;
-        left -= remove;
-      }
-    });
-    // それでも引ききれない場合（内訳の記録がそもそも合計と一致していなかった場合）は、
-    // マイナスにはせず静かに切り捨てる
-  }
-}
-
 // その日の最終生産割り振りの確定版データを1ヶ所で計算する（描画・確定保存の両方で共用）
 // 確定プランがある日は、その内容をそのまま表示する（ライブ再計算で上書きしない）。
 // 具材別内訳のある確定データであれば、現在の予測（neededQtyFor）との差分も合わせて返す。
@@ -3151,9 +3116,13 @@ function computeDaySnapshot(day){
   const allocationTarget = total;
   const isOverCap = capTotal > allocationTarget;
 
-  const { memberBreakdowns, memberStoreBreakdowns, monthlyOnigiriWarning } = buildProductionPlan(day, working, memberCaps);
+  // buildProductionPlanはmemberBreakdowns（具材ごとの自動割り振り個数）だけを使う。
+  // 店舗別の内訳(memberStoreBreakdowns)はbuildProductionPlanの最適化過程の内部値であり、
+  // 手動編集後の実際の個数とは無関係にずれていく可能性があるため使わず、
+  // ensureMemberStoreFillingQty側でday.memberFillingQty確定後に毎回計算し直す。
+  const { memberBreakdowns, monthlyOnigiriWarning } = buildProductionPlan(day, working, memberCaps);
   ensureMemberFillingQty(day, working, memberBreakdowns);
-  ensureMemberStoreFillingQty(day, working, memberStoreBreakdowns);
+  ensureMemberStoreFillingQty(day, working);
 
   // ニギニギ隊合計は「現在実際にテーブルに入っている個数」（手動編集も含む）の合計。
   // CHISEはニギニギ隊ではない別枠（本部＝総生産数−ニギニギ隊−CHISE）のため、
@@ -3289,6 +3258,17 @@ function updateBreakdownDetails(el, parts){
   }
 }
 
+// 具材ごとの合計入力が必要数を超えようとして入力をクランプしたときに、一時的に
+// 「⚠️必要数○個を超えています」を表示する（数秒後に自動で消える）
+function showFillingCapWarning(day, filling, needed){
+  const el = document.getElementById(`fillingCapWarn-${day.dateKey}-${filling}`);
+  if(!el) return;
+  el.textContent = `⚠️必要数${needed}個を超えています`;
+  el.style.display = "";
+  clearTimeout(el.__hideTimer);
+  el.__hideTimer = setTimeout(() => { el.style.display = "none"; }, 4000);
+}
+
 function refreshProductionCellDerived(day){
   const snap = computeDaySnapshot(day);
 
@@ -3356,13 +3336,27 @@ function bindProductionDayEvents(day){
     input.addEventListener("input", () => {
       const name = input.dataset.name;
       const filling = input.dataset.filling;
-      const newQty = Math.max(0, parseInt(input.value, 10) || 0);
-      const oldQty = (day.memberFillingQty[name] && day.memberFillingQty[name][filling]) || 0;
+      let newQty = Math.max(0, parseInt(input.value, 10) || 0);
       if(!day.memberFillingQty[name]) day.memberFillingQty[name] = {};
+
+      // メンバーの具材ごとの個数の合計（全メンバー）が、その具材の必要数（全店舗の合計）を
+      // 超えないようにする。他のメンバーの現在値はそのままに、このセルの入力だけを
+      // 必要数に収まる範囲にクランプする（超えた分は受け付けない）
+      const needed = neededQtyFor(day, filling);
+      const othersSum = Object.keys(day.memberFillingQty).reduce((s, n) => {
+        if(n === name) return s;
+        return s + ((day.memberFillingQty[n] && day.memberFillingQty[n][filling]) || 0);
+      }, 0);
+      const maxAllowed = Math.max(0, needed - othersSum);
+      if(newQty > maxAllowed){
+        newQty = maxAllowed;
+        input.value = String(newQty);
+        showFillingCapWarning(day, filling, needed);
+      }
+
       day.memberFillingQty[name][filling] = newQty;
-      // 変更した個数を、どの店舗分から増減するか（そのメンバー自身の優先順序）で自動調整する。
-      // 増やす場合は他のメンバーの割り当てを侵食しないよう、working全員の現在の割り当てを見る
-      adjustMemberStoreFillingQty(day, name, filling, newQty - oldQty, Object.keys(day.memberFillingQty));
+      // 店舗別の内訳はday.memberFillingQtyと店舗の必要数から毎回計算し直す値のため、
+      // ここで個別に調整する必要はない（refreshProductionCellDerived内で再計算される）
       if(!day.prodManuallyEdited) day.prodManuallyEdited = {};
       day.prodManuallyEdited[name] = true;
       saveProdAlloc(day);
@@ -3420,8 +3414,6 @@ function bindProductionDayEvents(day){
         if(!day.revisingWorking || day.revisingWorking.includes(name)) return;
         day.revisingWorking.push(name);
         if(!day.memberFillingQty[name]) day.memberFillingQty[name] = buildFillingDefaults(0);
-        if(!day.memberStoreFillingQty) day.memberStoreFillingQty = {};
-        if(!day.memberStoreFillingQty[name]) day.memberStoreFillingQty[name] = {};
         if(!day.prodManuallyEdited) day.prodManuallyEdited = {};
         day.prodManuallyEdited[name] = true;
         if(!day.revisingMemberCaps) day.revisingMemberCaps = {};
@@ -3431,8 +3423,6 @@ function bindProductionDayEvents(day){
         if(name !== CHISE_MEMBER || (day.memberFillingQty && CHISE_MEMBER in day.memberFillingQty)) return;
         if(!day.memberFillingQty) day.memberFillingQty = {};
         day.memberFillingQty[CHISE_MEMBER] = buildFillingDefaults(0);
-        if(!day.memberStoreFillingQty) day.memberStoreFillingQty = {};
-        day.memberStoreFillingQty[CHISE_MEMBER] = {};
         if(!day.prodManuallyEdited) day.prodManuallyEdited = {};
         day.prodManuallyEdited[CHISE_MEMBER] = true;
         saveProdAlloc(day);
@@ -3463,15 +3453,11 @@ function startRevisingDay(day){
   });
 
   const memberFillingQty = {};
-  const memberStoreFillingQty = {};
   const prodManuallyEdited = {};
   const revisingMemberCaps = {};
   working.forEach(name => {
     const qtyMap = { ...buildFillingDefaults(0), ...(confirmed.memberFillingQty[name] || {}) };
     memberFillingQty[name] = qtyMap;
-    memberStoreFillingQty[name] = JSON.parse(JSON.stringify(
-      (confirmed.memberStoreFillingQty && confirmed.memberStoreFillingQty[name]) || {}
-    ));
     prodManuallyEdited[name] = true; // 自動割り振りに書き換えられないよう、全員手動編集済み扱いにする
     revisingMemberCaps[name] = FILLINGS.reduce((s, f) => s + (qtyMap[f] || 0), 0);
   });
@@ -3494,7 +3480,8 @@ function startRevisingDay(day){
   day.uvaOpen = day.uvaOpen || confirmed.uva > 0;
   day.rozenOpen = day.rozenOpen || (confirmed.rozen || 0) > 0;
   day.memberFillingQty = memberFillingQty;
-  day.memberStoreFillingQty = memberStoreFillingQty;
+  // memberStoreFillingQtyはrenderDayBlock→computeDaySnapshotの中で、上のmemberFillingQtyと
+  // 直前に設定した店舗の必要数(zuidFillingQty等)から毎回計算し直されるため、ここでは設定しない
   day.prodManuallyEdited = prodManuallyEdited;
   day.revisingWorking = working;
   day.revisingMemberCaps = revisingMemberCaps;
@@ -3640,29 +3627,54 @@ function scheduleDraftSave(day){
   }, 800);
 }
 
-// 指定した日の「作業中プラン」の現在の更新日時をgviz経由で取得する（保存直前の競合確認用）。
+// 指定した日の「作業中プラン」の現在の更新日時を取得する（保存直前・保存直後の競合確認用）。
+// gviz経由（fetchSheetJson）はGoogleスプレッドシート側のキャッシュにより、書き込み直後だと
+// 数秒程度古い値が返ることがあり、保存した直後に自分自身の書き込みを読み直す用途には使えない
+// （これが原因で、2回目以降の自分の保存が「他の端末で更新されています」と誤判定され続ける
+// バグがあった）。Code.gs側でSpreadsheetAppを使って直接読む専用エンドポイントを使うことで、
+// 書き込み直後でも常に最新の値を取得できるようにする。
 // 行がまだ無い場合はnull、確認自体に失敗した場合（オフライン等）はundefinedを返す。
 async function fetchDraftUpdatedAt(iso){
   try{
-    const json = await fetchSheetJson("作業中プラン", SHIFT_SPREADSHEET_ID);
-    const rows = json.table.rows || [];
-    for(const r of rows){
-      const c = r.c;
-      if(!c || !c[0]) continue;
-      if(parseGvizDateCell(c[0]) === iso){
-        return (c[3] && c[3].v !== undefined && c[3].v !== null) ? String(c[3].v) : null;
-      }
-    }
-    return null;
+    const res = await fetch(`${SCRIPT_URL}?type=draftUpdatedAt&date=${encodeURIComponent(iso)}`, { cache: "no-store" });
+    const json = await res.json();
+    return json.updatedAt !== undefined ? json.updatedAt : null;
   }catch(e){
     console.error("作業中プランの更新日時確認に失敗しました", e);
     return undefined;
   }
 }
 
+// 楽観的ロックの競合で保存が止まっている日（iso）の集合。画面上部のバナーに
+// 「保存されていない変更があります」とまとめて表示するために使う
+const unsavedDraftConflictIsos = new Set();
+
+function renderUnsavedChangesBanner(){
+  const el = document.getElementById("unsavedChangesBanner");
+  if(!el) return;
+  if(unsavedDraftConflictIsos.size === 0){
+    el.style.display = "none";
+    return;
+  }
+  const sorted = [...unsavedDraftConflictIsos].sort();
+  el.textContent = `⚠️ 保存されていない変更があります（${sorted.join("、")}）。他の端末・タブで更新されているため、再読み込みして内容を確認してください。`;
+  el.style.display = "";
+}
+
 function showDraftConflictMessage(day){
   const el = document.getElementById(`draftConflict-${day.dateKey}`);
   if(el) el.textContent = "⚠️ 他の端末で更新されています。再読み込みしてください";
+  if(day.iso) unsavedDraftConflictIsos.add(day.iso);
+  renderUnsavedChangesBanner();
+}
+
+function clearDraftConflictMessage(day){
+  const el = document.getElementById(`draftConflict-${day.dateKey}`);
+  if(el) el.textContent = "";
+  if(day.iso && unsavedDraftConflictIsos.has(day.iso)){
+    unsavedDraftConflictIsos.delete(day.iso);
+    renderUnsavedChangesBanner();
+  }
 }
 
 async function saveDraftToSheet(day){
@@ -3699,10 +3711,12 @@ async function saveDraftToSheet(day){
   };
   try{
     await fetch(SCRIPT_URL, { method: "POST", mode: "no-cors", body: JSON.stringify(payload) });
-    // この端末自身が保存した内容を次回の比較基準にするため、保存後の最新の更新日時を再取得する
-    // （サーバー側はnew Date()で書き込むため、正確な値はここで読み直すまで分からない）
+    // この端末自身が保存した内容を次回の比較基準にするため、保存後の最新の更新日時を再取得する。
+    // fetchDraftUpdatedAtはCode.gs側でSpreadsheetAppを直接読むため、書き込み直後でも
+    // 必ず今回の書き込みを反映した値が返る（gvizのキャッシュ遅延を踏まない）
     const latest = await fetchDraftUpdatedAt(day.iso);
     if(latest !== undefined) day.draftUpdatedAtRaw = latest;
+    clearDraftConflictMessage(day);
   }catch(e){ console.warn("ドラフト保存失敗:", e); }
 }
 
@@ -3825,17 +3839,16 @@ function applyDraftToDay(day, draft){
   if(fc.zuidOpen !== undefined) day.zuidOpen = fc.zuidOpen;
   if(fc.uvaOpen  !== undefined) day.uvaOpen  = fc.uvaOpen;
   if(draft.prod && Object.keys(draft.prod).length > 0){
-    if(isProdSnapshotConsistent(day, draft.prod, draft.prodStore)){
+    if(isProdSnapshotConsistent(day, draft.prod)){
       day.memberFillingQty = { ...draft.prod };
-      day.memberStoreFillingQty = draft.prodStore ? JSON.parse(JSON.stringify(draft.prodStore)) : {};
       if(!day.prodManuallyEdited) day.prodManuallyEdited = {};
       Object.keys(draft.prod).forEach(name => { day.prodManuallyEdited[name] = true; });
     } else {
       // 必要数が変わった後も「作業中プラン」シートに古い内訳が残っている状態
-      // （具材合計・店舗別のいずれかが現在の必要数と矛盾している）。
+      // （具材合計が現在の必要数合計と矛盾している）。
       // 古いデータを復元せず、prodManuallyEditedも立てないことで、通常の
       // 自動計算（buildProductionPlan）に基づく現在の必要数からの再計算に任せる。
-      console.warn(`[admin.html] ${day.iso}: 作業中プランの内訳が古いため自動再計算しました（保存内訳合計が現在の必要数合計を超過、または店舗別の内訳が矛盾しています）。`);
+      console.warn(`[admin.html] ${day.iso}: 作業中プランの内訳が古いため自動再計算しました（保存内訳合計が現在の必要数合計を超過しています）。`);
     }
   }
 }
@@ -4020,25 +4033,9 @@ function renderMonthlyOnigiriRecalcNotice(){
   el.style.display = "";
 }
 
-// 保存されていた店舗別の内訳が各店舗の必要数と矛盾していたため、自動的に再計算した日付を
-// 画面上部に表示する（isStoreBreakdownConsistentがfalseを返した日がrecalculatedStoreMismatchDatesに
-// 記録される。確定済みの日は元々このチェックの対象外のため、ここにも出てこない）。
-function renderStoreMismatchRecalcNotice(){
-  const el = document.getElementById("storeMismatchRecalcNotice");
-  if(!el) return;
-  if(recalculatedStoreMismatchDates.length === 0){
-    el.style.display = "none";
-    return;
-  }
-  const sorted = [...recalculatedStoreMismatchDates].sort();
-  el.textContent = `⚠️ 保存されていた店舗別の内訳が必要数と合わなくなっていたため、次の作業中プランの日付を自動的に再計算しました：${sorted.join("、")}`;
-  el.style.display = "";
-}
-
 function initMonthlyOnigiriSection(){
   renderMonthlyOnigiriList();
   renderMonthlyOnigiriRecalcNotice();
-  renderStoreMismatchRecalcNotice();
 
   const addBtn = document.getElementById("monthlyOnigiriAddBtn");
   const statusEl = document.getElementById("monthlyOnigiriStatus");
@@ -4350,9 +4347,11 @@ function loadForecastData(day){
   }catch(e){ return false; }
 }
 
+// memberStoreFillingQty（店舗別内訳）はday.memberFillingQtyと店舗の必要数から毎回
+// 再計算する派生値のため、別途localStorageに保存・復元する必要が無い
+// （保存していた旧データが残っていても、次の描画で上書きされるため無害）
 function saveProdAlloc(day){
   try{ localStorage.setItem(`chabon_prod_${mdLabel(day.dateObj)}`, JSON.stringify(day.memberFillingQty || {})); }catch(e){}
-  try{ localStorage.setItem(`chabon_prodStore_${mdLabel(day.dateObj)}`, JSON.stringify(day.memberStoreFillingQty || {})); }catch(e){}
   scheduleDraftSave(day);
 }
 
@@ -4361,20 +4360,14 @@ function loadProdAllocData(day){
     const raw = localStorage.getItem(`chabon_prod_${mdLabel(day.dateObj)}`);
     if(!raw) return false;
     const parsed = JSON.parse(raw);
-    let parsedStore = {};
-    try{
-      const rawStore = localStorage.getItem(`chabon_prodStore_${mdLabel(day.dateObj)}`);
-      parsedStore = rawStore ? JSON.parse(rawStore) : {};
-    }catch(e){ parsedStore = {}; }
-    if(!isProdSnapshotConsistent(day, parsed, parsedStore)){
+    if(!isProdSnapshotConsistent(day, parsed)){
       // 必要数が変わった後もlocalStorageに古い内訳が残っている状態
-      // （具材合計・店舗別のいずれかが現在の必要数と矛盾している）。
+      // （具材合計が現在の必要数合計と矛盾している）。
       // 古いデータを復元せず、通常の自動計算に基づく現在の必要数からの再計算に任せる。
-      console.warn(`[admin.html] ${day.iso}: localStorageの内訳が古いため自動再計算しました（保存内訳合計が現在の必要数合計を超過、または店舗別の内訳が矛盾しています）。`);
+      console.warn(`[admin.html] ${day.iso}: localStorageの内訳が古いため自動再計算しました（保存内訳合計が現在の必要数合計を超過しています）。`);
       return false;
     }
     day.memberFillingQty = parsed;
-    day.memberStoreFillingQty = parsedStore;
     if(!day.prodManuallyEdited) day.prodManuallyEdited = {};
     Object.keys(day.memberFillingQty).forEach(name => { day.prodManuallyEdited[name] = true; });
     return true;
@@ -4793,7 +4786,6 @@ async function refreshAllData(){
     state.monthlyOnigiriAssignments = (monthlyOnigiriData && monthlyOnigiriData.assignments) || {};
     state.monthlyOnigiriInvalidRows = (monthlyOnigiriData && monthlyOnigiriData.invalidRows) || [];
     recalculatedOnigiriDates = [];
-    recalculatedStoreMismatchDates = [];
     // buildDays()がUvA学事暦補正を計算できるよう、buildDays()より前に反映しておく
     state.uvaAcademicCalendar = parseUvaAcademicCalendarSheet(uvaCalendarJson);
     state.uvaAcademicCoefficients = parseUvaAcademicCoefficientsSheet(uvaCoefficientsJson);
@@ -4845,7 +4837,6 @@ async function refreshAllData(){
     renderMonthlyOnigiriList();
     renderUvaAcademicCoefficientsList();
     renderMonthlyOnigiriRecalcNotice();
-    renderStoreMismatchRecalcNotice();
 
     if(btn){ btn.textContent = "✓ 更新しました"; }
   }catch(e){
@@ -5136,7 +5127,6 @@ async function init(){
     state.monthlyOnigiriAssignments = (monthlyOnigiriData && monthlyOnigiriData.assignments) || {};
     state.monthlyOnigiriInvalidRows = (monthlyOnigiriData && monthlyOnigiriData.invalidRows) || [];
     recalculatedOnigiriDates = [];
-    recalculatedStoreMismatchDates = [];
     // buildDays()がUvA学事暦補正を計算できるよう、buildDays()より前に反映しておく
     state.uvaAcademicCalendar = parseUvaAcademicCalendarSheet(uvaCalendarJson);
     state.uvaAcademicCoefficients = parseUvaAcademicCoefficientsSheet(uvaCoefficientsJson);
