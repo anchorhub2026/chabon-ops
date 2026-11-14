@@ -90,7 +90,11 @@ function findConfirmedPlanRow(values, dateStr) {
 // Rozen確定数・Rozen内訳（14・15列目）は、Rozengracht店オープンに伴い末尾に追加した列。
 // 既存の列位置・意味は一切変えていないため、これより前に確定された行はこの2列が空
 // （＝Rozengracht分0個）として扱われる（handleGetConfirmedPlans参照）。
-var CONFIRMED_PLAN_HEADERS = ["日付", "曜日", "Zuid確定数", "UvA確定数", "チセ分", "ニギニギ隊内訳", "本部製造数", "本部内訳", "確定日時", "Zuid内訳", "UvA内訳", "チセ内訳", "修正日時", "Rozen確定数", "Rozen内訳"];
+// ニギニギ隊内訳（店舗別）（16列目）は、生産割り振りで「どの店舗の分を誰が担当したか」を
+// 記録するために末尾に追加した列。既存の「ニギニギ隊内訳」列（6列目、具材合計）は
+// 一切変更しないため、月次支払い集計等はこの列を参照しない限り影響を受けない。
+// これより前に確定された行はこの列が空（＝店舗別内訳データなし）として扱われる。
+var CONFIRMED_PLAN_HEADERS = ["日付", "曜日", "Zuid確定数", "UvA確定数", "チセ分", "ニギニギ隊内訳", "本部製造数", "本部内訳", "確定日時", "Zuid内訳", "UvA内訳", "チセ内訳", "修正日時", "Rozen確定数", "Rozen内訳", "ニギニギ隊内訳（店舗別）"];
 
 function ensureConfirmedPlanSheet(ss) {
   var sheet = ss.getSheetByName("確定プラン");
@@ -143,6 +147,8 @@ function handleConfirmPlan(ss, data) {
     // Rozen確定数・Rozen内訳（14・15列目）は「修正日時」のような特別な保護を持たないため、
     // 新規確定・再送のどちらでも常に最新の値に上書きする
     sheet.getRange(targetRow, 14, 1, 2).setValues([[day.rozen || 0, day.rozenBreakdown || ""]]);
+    // ニギニギ隊内訳（店舗別）（16列目）も同様に常に最新の値へ上書きする
+    sheet.getRange(targetRow, 16).setValue(day.ningiBreakdownByStore || "");
   }
 }
 
@@ -188,7 +194,8 @@ function handleReviseConfirmedDay(ss, data) {
     data.chiseBreakdown || "",
     ts,
     data.rozen || 0,
-    data.rozenBreakdown || ""
+    data.rozenBreakdown || "",
+    data.ningiBreakdownByStore || ""
   ];
   sheet.getRange(foundRow, 1, 1, row.length).setValues([row]);
 }
@@ -253,6 +260,9 @@ function handleGetConfirmedPlans(ss) {
         uvaBreakdown: String(r[10] || ""),
         chiseBreakdown: String(r[11] || ""),
         rozenBreakdown: String(r[14] || ""),
+        // ニギニギ隊内訳（店舗別）（16列目）は後から追加した列のため、それより前に確定された
+        // 行では空文字になる（どの店舗の分かを誰が担当したかが分からない＝店舗別内訳データなしとして扱う）
+        ningiBreakdownByStore: String(r[15] || ""),
       });
     } catch (rowErr) {
       // この行はスキップして次の行へ
@@ -296,7 +306,10 @@ function handleSaveDraft(ss, data) {
   var sheet = ss.getSheetByName("作業中プラン");
   if (!sheet) {
     sheet = ss.insertSheet("作業中プラン");
-    sheet.appendRow(["日付", "forecast", "prod", "更新日時"]);
+    sheet.appendRow(["日付", "forecast", "prod", "更新日時", "prodStore"]);
+  } else if (sheet.getLastColumn() < 5) {
+    // prodStore（ニギニギ隊内訳の店舗別の下書き）は後から追加した列。既存データの列位置は変えない
+    sheet.getRange(1, 5).setValue("prodStore");
   }
   var values = sheet.getDataRange().getValues();
   var foundRow = -1;
@@ -326,10 +339,11 @@ function handleSaveDraft(ss, data) {
     data.date,
     JSON.stringify(data.forecast || {}),
     JSON.stringify(data.prod || {}),
-    new Date()
+    new Date(),
+    JSON.stringify(data.prodStore || {})
   ];
   if (foundRow > 0) {
-    sheet.getRange(foundRow, 1, 1, 4).setValues([row]);
+    sheet.getRange(foundRow, 1, 1, 5).setValues([row]);
   } else {
     sheet.appendRow(row);
   }
@@ -361,6 +375,8 @@ function getDraftsData(ss, startIso, endIso) {
         date: dateStr,
         forecast: JSON.parse(rows[i][1] || "{}"),
         prod: JSON.parse(rows[i][2] || "{}"),
+        // prodStore（ニギニギ隊内訳の店舗別）は後から追加した列のため、無い行は{}になる
+        prodStore: JSON.parse(rows[i][4] || "{}"),
       });
     } catch (err) {}
   }

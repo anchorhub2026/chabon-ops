@@ -780,6 +780,10 @@
   table.day-sub-table th.sub-prod-head{ background: #dde6ee; color: #2c5272; }
   table.day-sub-table td.cell-readonly{ color: #666; }
   table.day-sub-table td.cell-row-total{ font-weight: bold; color: var(--main-dark); }
+  /* メンバー×具材セルの店舗別内訳（タップで開く）。普段は「内訳」の1行だけで表を圧迫しない */
+  .prod-cell-breakdown{ font-size: 0.66rem; color: #888; margin-top: 2px; }
+  .prod-cell-breakdown summary{ cursor: pointer; }
+  .prod-cell-breakdown div{ white-space: nowrap; text-align: left; }
   /* 具材テーブルの合計行（実際に確定・入力されている値）は、推奨数カードのヘッダーより
      目立つよう大きめのフォントサイズにする */
   table.day-sub-table tfoot td{
@@ -1983,16 +1987,42 @@ function getMonthlyOnigiriAssignee(day){
   return (state.monthlyOnigiriAssignments || {})[monthKeyForDay(day)] || null;
 }
 
-// 生産割り振りの優先順位（MARI最優先→CHIKAKO→YUMI→MIKI）。
-// 総生産数が全員分の希望を満たせない場合、最低保証(30個)をこの順で確保する。
-// リストに無いメンバーは最優先度リストの誰よりも後（最下位）として扱う。
-const MEMBER_PRIORITY = ["MARI", "CHIKAKO", "YUMI", "MIKI"];
-const PRODUCTION_FLOOR_QTY = 30;
+// 生産割り振りの考え方：「どの店舗の分を、誰に優先して割り振るか」。
+// 店舗優先順位（先に割り振る順）：MIKI・MARIは本部に持ち込むのでUvA・Rozengracht分を優先担当。
+// YUMIは一番遠いためZuid分を優先担当。CHIKAKOはその間を埋める。
+const STORE_PRIORITY = ["UvA", "Rozengracht", "チセ", "Zuid"];
+// 手動編集時、変更した個数をどの店舗分から増減するかを決める順序（店舗優先順位の逆順）
+const STORE_PRIORITY_REVERSE = ["Zuid", "チセ", "Rozengracht", "UvA"];
+// メンバーの優先順位：①MIKI・MARI（同グループ内は残りの希望数が多い方を優先）②CHIKAKO③YUMI。
+// グループに無いメンバー（CHISE等）は最下位グループとして扱う（CHISEはcap=0のため実質対象外）。
+const MEMBER_GROUPS = [["MIKI", "MARI"], ["CHIKAKO"], ["YUMI"]];
 const MAX_FILLING_TYPES_PER_MEMBER = 2;
 
-function memberPriorityRank(name){
-  const idx = MEMBER_PRIORITY.indexOf(name);
-  return idx === -1 ? MEMBER_PRIORITY.length : idx;
+function memberGroupRank(name){
+  for(let g = 0; g < MEMBER_GROUPS.length; g++){ if(MEMBER_GROUPS[g].includes(name)) return g; }
+  return MEMBER_GROUPS.length;
+}
+
+// 同グループ内（MIKI・MARI）での並び順（希望数が完全に同点の場合のタイブレーク用）。
+// 指示の記載順（MIKI→MARI）をそのまま使う。
+function memberOrderWithinGroup(name){
+  for(let g = 0; g < MEMBER_GROUPS.length; g++){
+    const idx = MEMBER_GROUPS[g].indexOf(name);
+    if(idx !== -1) return idx;
+  }
+  return 0;
+}
+
+// 店舗ごとの、その具材の必要数。neededQtyFor()の内訳版（店舗優先順位の各店舗に対応）。
+function storeNeedFor(day, store, filling){
+  if(store === "UvA") return day.uvaOpen ? (day.uvaFillingQty[filling] || 0) : 0;
+  if(store === "Rozengracht") return day.rozenOpen ? (day.rozenFillingQty[filling] || 0) : 0;
+  if(store === "Zuid") return day.zuidOpen ? (day.zuidFillingQty[filling] || 0) : 0;
+  if(store === "チセ"){
+    const chise = state.chiseByDate[mdLabel(day.dateObj)];
+    return (chise && chise.breakdown[filling]) || 0;
+  }
+  return 0;
 }
 
 // 販売予測数カードで入力された具材ごとの必要数（Zuid＋UvA）
@@ -2019,6 +2049,20 @@ function ensureMemberFillingQty(day, working, memberBreakdowns){
       day.memberFillingQty[name] = qtyMap;
     } else {
       FILLINGS.forEach(f => { if(!(f in day.memberFillingQty[name])) day.memberFillingQty[name][f] = 0; });
+    }
+  });
+}
+
+// day.memberStoreFillingQty[name] = {店舗: {具材名: 個数}}。手動編集で触れたメンバー
+// （day.prodManuallyEdited[name] === true）には触れない（手動編集時はadjustMemberStoreFillingQty
+// が既に更新済みのため）。未編集のメンバーは常に最新の自動割り振り結果と同期させる。
+function ensureMemberStoreFillingQty(day, working, memberStoreBreakdowns){
+  if(!day.memberStoreFillingQty) day.memberStoreFillingQty = {};
+  if(!day.prodManuallyEdited) day.prodManuallyEdited = {};
+  working.forEach((name, i) => {
+    if(!day.memberStoreFillingQty[name] || !day.prodManuallyEdited[name]){
+      day.memberStoreFillingQty[name] = memberStoreBreakdowns[i]
+        ? JSON.parse(JSON.stringify(memberStoreBreakdowns[i])) : {};
     }
   });
 }
@@ -2493,6 +2537,19 @@ function splitForecastTableHtml(day){
     </table>`;
 }
 
+// メンバー×具材のセルの下に、タップで開ける店舗別内訳を表示する（表の見た目は崩さない）。
+// 内訳が無い（qty=0）場合は何も表示しない。
+function storeBreakdownSummaryHtml(day, name, filling){
+  const byStore = (day.memberStoreFillingQty && day.memberStoreFillingQty[name]) || {};
+  const parts = STORE_PRIORITY
+    .map(store => ({ store, qty: (byStore[store] && byStore[store][filling]) || 0 }))
+    .filter(p => p.qty > 0);
+  if(parts.length === 0) return "";
+  return `<details class="prod-cell-breakdown"><summary>内訳</summary>${
+    parts.map(p => `<div>${p.store}×${p.qty}</div>`).join("")
+  }</details>`;
+}
+
 function splitProdTableHtml(day){
   const snap = computeDaySnapshot(day);
   const { working, memberCaps, hqBreakdown, hqQty, memberTotals, ningiTotal, chiseManualQty, fillingOveredBy } = snap;
@@ -2523,9 +2580,10 @@ function splitProdTableHtml(day){
     const isFixedHq = ALWAYS_HQ_FILLINGS.includes(f);
     const memberCells = working.map(name => {
       const qty = (day.memberFillingQty[name] && day.memberFillingQty[name][f]) || 0;
+      const breakdownHtml = isFixedHq ? "" : storeBreakdownSummaryHtml(day, name, f);
       return (isFixedHq || locked)
-        ? `<td class="cell-readonly">${qty || "—"}</td>`
-        : `<td>${prodCellStepperHtml(day, name, f, qty)}</td>`;
+        ? `<td class="cell-readonly">${qty || "—"}${breakdownHtml}</td>`
+        : `<td>${prodCellStepperHtml(day, name, f, qty)}${breakdownHtml}</td>`;
     }).join("");
     const hqVal = hqBreakdown[f] || 0;
     const prodRowTotal = working.reduce((s, name) => s + ((day.memberFillingQty[name] && day.memberFillingQty[name][f]) || 0), 0) + hqVal;
@@ -2716,54 +2774,50 @@ function renderDayBlock(day){
   bindProductionDayEvents(day);
 }
 
-// 必要数（ALLOC_FILLINGS順）を「テープ」として、出勤メンバーの設定生産数(cap)で
-// 順番に切り出していく。1人のメンバーが今の具材で使い切れなければ次の具材に進み、
-// capが先に尽きたら次のメンバーは同じ具材の続きから始める（境界の具材は前後で共有されうる）。
-// これにより「担当具材は原則2種類まで」「具材の割り振り数は必要数を超えない」
-// 「メンバーの合計はcapを超えない」を同時に満たす。
-// 必要数の多い具材から順に処理する。
+// 「どの店舗の分を、誰に優先して割り振るか」で考える。店舗優先順位(STORE_PRIORITY:
+// UvA→Rozengracht→チセ→Zuid)の順に、その店舗の具材別の必要数を、メンバー優先順位
+// (MEMBER_GROUPS: ①MIKI・MARI→②CHIKAKO→③YUMI)の順に、各メンバーの残りの希望数(cap)の
+// 範囲で割り振る。3個単位（パック単位）で切り出し、どの店舗・メンバーにも割り振れなかった分は
+// 本部に回る。
 //
 // 人選（pickLeastLoaded）の優先順位：
-// 1) 最低保証(30個)にまだ達していない人がいれば、その中で優先順位(MARI→CHIKAKO→YUMI→MIKI)が
-//    高い人を優先する（総生産数が全員分に足りない場合、優先順位の低いYUMI・MIKIは
-//    30個を下回ってもよい＝MARI・CHIKAKOが優先的に確保される）
-// 2) 全員が最低保証を達成済み（または自身のcapで頭打ち）なら、現在の合計が最も少ない人を優先する
-//    （＝残りの生産数をなるべく均等に配る、既存ロジック）
+// 1) メンバーの優先グループ（MIKI・MARI→CHIKAKO→YUMI）が高い人を優先する
+// 2) 同グループ内（MIKI・MARI）は、残りの希望数(cap)が多い方を優先する
 // 3) 同点の場合は、既にその具材を担当している人 → 担当具材数が2種類未満の人、の順で優先し、
-//    「担当具材は原則2種類まで」を可能な限り守る
-// 最低保証未達の人がいない（全員済み・対象外）状態では、選ばれた人の残り容量をまるごと渡すため、
-// 「1人に収まる具材は1人に集中させる」という既存の挙動も結果的に保たれる
+//    「担当具材は原則2種類まで・同じ具材はできるだけ同じ人にまとめる」を可能な限り守る
+//    （UvAのテリヤキを担当した人が、後続のRozengrachtのテリヤキでも優先される）
+// 4) それでも同点なら、指示の記載順（MIKI→MARI）で確定させる
 function buildProductionPlan(day, working, memberCaps){
   const totals = working.map(() => 0);
   const remaining = working.map((_, i) => memberCaps[i]);
   const memberBreakdowns = working.map(() => ({}));
+  const memberStoreBreakdowns = working.map(() => ({})); // [i] = {store: {filling: qty}}
   const fillingTypeCount = working.map(() => 0);
   const hqBreakdown = {};
   let monthlyOnigiriWarning = null;
 
   // iがjより優先されるべきならtrue
   function isBetterCandidate(i, j, f){
-    const iBelowFloor = totals[i] < PRODUCTION_FLOOR_QTY;
-    const jBelowFloor = totals[j] < PRODUCTION_FLOOR_QTY;
-    if(iBelowFloor !== jBelowFloor) return iBelowFloor;
+    const gi = memberGroupRank(working[i]), gj = memberGroupRank(working[j]);
+    if(gi !== gj) return gi < gj;
 
-    if(iBelowFloor && jBelowFloor){
-      const pi = memberPriorityRank(working[i]), pj = memberPriorityRank(working[j]);
-      if(pi !== pj) return pi < pj;
-    } else if(totals[i] !== totals[j]){
-      return totals[i] < totals[j];
-    }
-
-    // 担当具材の集中度で同点を解消（原則2種類までルール）
+    // 同じ具材はできるだけ同じ人にまとめる（例：UvAのテリヤキとRozengrachtのテリヤキを同じ人に）。
+    // 残りの希望数より先にこれを見ることで、既に担当している人を確実に優先する
     const iHasFilling = !!memberBreakdowns[i][f];
     const jHasFilling = !!memberBreakdowns[j][f];
     if(iHasFilling !== jHasFilling) return iHasFilling;
+
+    // 同じグループ内では、残りの希望数が多い方から割り振る
+    if(remaining[i] !== remaining[j]) return remaining[i] > remaining[j];
+
+    // 担当具材の種類数（原則2種類まで）で同点を解消
     const iUnder2 = fillingTypeCount[i] < MAX_FILLING_TYPES_PER_MEMBER;
     const jUnder2 = fillingTypeCount[j] < MAX_FILLING_TYPES_PER_MEMBER;
     if(iUnder2 !== jUnder2) return iUnder2;
-    if(totals[i] !== totals[j]) return totals[i] < totals[j];
-    // それでも同点なら優先順位で確定させる（working配列の並び順に依存させない）
-    return memberPriorityRank(working[i]) < memberPriorityRank(working[j]);
+    // それでも同点なら、同グループ内の記載順（MIKI→MARI）で確定させる
+    const oi = memberOrderWithinGroup(working[i]), oj = memberOrderWithinGroup(working[j]);
+    if(oi !== oj) return oi < oj;
+    return i < j; // working配列内の並び順で安定させる
   }
 
   // 「担当具材は原則2種類まで」を尊重した候補（respectTypeCap=true）で探し、
@@ -2786,68 +2840,65 @@ function buildProductionPlan(day, working, memberCaps){
     return idx !== -1 ? idx : pickLeastLoaded(minRoom, f, false);
   }
 
-  function give(mi, f, qty){
+  function give(mi, store, f, qty){
     if(qty <= 0) return;
     if(!memberBreakdowns[mi][f]) fillingTypeCount[mi]++;
     memberBreakdowns[mi][f] = (memberBreakdowns[mi][f] || 0) + qty;
+    if(!memberStoreBreakdowns[mi][store]) memberStoreBreakdowns[mi][store] = {};
+    memberStoreBreakdowns[mi][store][f] = (memberStoreBreakdowns[mi][store][f] || 0) + qty;
     totals[mi] += qty;
     remaining[mi] -= qty;
   }
 
   // 今月のおにぎり：月次担当者が設定されている月は、通常の優先順位ループより先に
-  // 担当者のcapから全数（Zuid＋UvA＋チセを合わせた必要数すべて）を確保する。
-  // 担当者のcapで足りない分・担当者がシフトに入っていない分（本部が担当の月を含む）は
-  // ここでは割り振らず、下のALLOC_FILLINGSからも除外することで、computeDaySnapshot側の
+  // 担当者のcapから全数を確保する。店舗優先順位の順に積み増し、capが足りなくなった
+  // 時点で打ち切り、残り（担当者がシフトに入っていない・本部が担当の月を含む）は
+  // ここでは割り振らず、下のループからも除外することで、computeDaySnapshot側の
   // 「必要数－ニギニギ隊生産量」の差分計算により自動的に本部へ回る。
   const monthlyAssignee = getMonthlyOnigiriAssignee(day);
   if(monthlyAssignee){
-    const monthlyNeed = neededQtyFor(day, MONTHLY_ONIGIRI_FILLING);
-    if(monthlyNeed > 0 && MEMBERS.includes(monthlyAssignee)){
-      const assigneeIdx = working.indexOf(monthlyAssignee);
-      if(assigneeIdx === -1){
+    const assigneeIdx = working.indexOf(monthlyAssignee);
+    let monthlyShort = 0;
+    STORE_PRIORITY.forEach(store => {
+      const need = storeNeedFor(day, store, MONTHLY_ONIGIRI_FILLING);
+      if(need <= 0) return;
+      if(assigneeIdx === -1 || !MEMBERS.includes(monthlyAssignee)){
         // シフトに入っていない（cap=0）→ 全数を本部に回す
-        monthlyOnigiriWarning = `今月のおにぎり：担当者のcap不足のため本部に${monthlyNeed}個`;
-      } else {
-        const take = Math.min(monthlyNeed, remaining[assigneeIdx]);
-        give(assigneeIdx, MONTHLY_ONIGIRI_FILLING, take);
-        if(take < monthlyNeed){
-          monthlyOnigiriWarning = `今月のおにぎり：担当者のcap不足のため本部に${monthlyNeed - take}個`;
-        }
+        monthlyShort += need;
+        return;
       }
+      const take = Math.min(need, remaining[assigneeIdx]);
+      give(assigneeIdx, store, MONTHLY_ONIGIRI_FILLING, take);
+      if(take < need) monthlyShort += (need - take);
+    });
+    // monthlyAssignee === "本部" の場合は意図的な設定のため、上のループは何も確保せず
+    // （assigneeIdxが-1になる）、全数が自動的に本部へ回る。警告も表示しない。
+    if(monthlyShort > 0 && monthlyAssignee !== "本部"){
+      monthlyOnigiriWarning = `今月のおにぎり：担当者のcap不足のため本部に${monthlyShort}個`;
     }
-    // monthlyAssignee === "本部" の場合は意図的な設定のため、ここでは何もせず
-    // （誰にも割り振らない）、全数が自動的に本部へ回る。警告も表示しない。
   }
 
-  const itemsByNeedDesc = ALLOC_FILLINGS
-    .filter(f => !(monthlyAssignee && f === MONTHLY_ONIGIRI_FILLING))
-    .map(f => ({ f, need: neededQtyFor(day, f) }))
-    .sort((a, b) => b.need - a.need);
+  STORE_PRIORITY.forEach(store => {
+    const itemsByNeedDesc = ALLOC_FILLINGS
+      .filter(f => !(monthlyAssignee && f === MONTHLY_ONIGIRI_FILLING))
+      .map(f => ({ f, need: storeNeedFor(day, store, f) }))
+      .sort((a, b) => b.need - a.need);
 
-  itemsByNeedDesc.forEach(({ f, need }) => {
-    let left = need;
-    if(left <= 0) return;
+    itemsByNeedDesc.forEach(({ f, need }) => {
+      let left = need;
+      if(left <= 0) return;
 
-    // 優先順位に従って人を選び、詰めていく。
-    // ・最低保証(30個)未達の人には、その場でcapを使い切らせず「30に届く分」だけ渡してから
-    //   次の優先順位の人に回す（そうしないと上位優先者がcapを独占し、下位優先者が
-    //   総生産数的には足りているはずの最低保証にすら届かなくなってしまう）
-    // ・全員が最低保証済み（または対象外）になれば、1回のpickで残り容量をまるごと渡すため、
-    //   結果的に「1人に収まる具材は1人に集中させる」という既存の挙動も保たれる
-    while(left > 0){
-      const idx = pickBest(3, f);
-      if(idx === -1) break;
-      let cap = remaining[idx];
-      if(totals[idx] < PRODUCTION_FLOOR_QTY){
-        cap = Math.min(cap, PRODUCTION_FLOOR_QTY - totals[idx]);
+      while(left > 0){
+        const idx = pickBest(3, f);
+        if(idx === -1) break;
+        const take = Math.min(left, remaining[idx]);
+        const floored = Math.floor(take / 3) * 3;
+        if(floored <= 0) break;
+        give(idx, store, f, floored);
+        left -= floored;
       }
-      const take = Math.min(left, cap);
-      const floored = Math.floor(take / 3) * 3;
-      if(floored <= 0) break;
-      give(idx, f, floored);
-      left -= floored;
-    }
-    if(left > 0) hqBreakdown[f] = (hqBreakdown[f] || 0) + left;
+      if(left > 0) hqBreakdown[f] = (hqBreakdown[f] || 0) + left;
+    });
   });
 
   ALWAYS_HQ_FILLINGS.forEach(f => {
@@ -2855,7 +2906,53 @@ function buildProductionPlan(day, working, memberCaps){
     if(v > 0) hqBreakdown[f] = (hqBreakdown[f] || 0) + v;
   });
 
-  return { memberBreakdowns, memberQtys: totals, hqBreakdown, monthlyOnigiriWarning };
+  return { memberBreakdowns, memberStoreBreakdowns, memberQtys: totals, hqBreakdown, monthlyOnigiriWarning };
+}
+
+// 手動編集でメンバー×具材の合計個数を変えたとき、その差分をどの店舗分から増減するかを、
+// 店舗優先順位の逆順（Zuid→チセ→Rozengracht→UvA）で自動調整する。増やす場合は各店舗
+// 自体の必要数を上限として積み増し、減らす場合はZuidから順に取り崩す。
+function adjustMemberStoreFillingQty(day, name, filling, delta){
+  if(!delta) return;
+  if(!day.memberStoreFillingQty) day.memberStoreFillingQty = {};
+  if(!day.memberStoreFillingQty[name]) day.memberStoreFillingQty[name] = {};
+  const byStore = day.memberStoreFillingQty[name];
+
+  if(delta > 0){
+    let left = delta;
+    STORE_PRIORITY_REVERSE.forEach(store => {
+      if(left <= 0) return;
+      const need = storeNeedFor(day, store, filling);
+      const current = (byStore[store] && byStore[store][filling]) || 0;
+      const room = Math.max(0, need - current);
+      const add = Math.min(left, room);
+      if(add > 0){
+        if(!byStore[store]) byStore[store] = {};
+        byStore[store][filling] = current + add;
+        left -= add;
+      }
+    });
+    // 全店舗の必要数を使い切ってもなお余る場合（手動入力が必要数を大きく超えた場合）は、
+    // 逆順の最初（Zuid）にそのまま積む（内訳の記録先が必要なため）
+    if(left > 0){
+      const store = STORE_PRIORITY_REVERSE[0];
+      if(!byStore[store]) byStore[store] = {};
+      byStore[store][filling] = (byStore[store][filling] || 0) + left;
+    }
+  } else {
+    let left = -delta;
+    STORE_PRIORITY_REVERSE.forEach(store => {
+      if(left <= 0) return;
+      const current = (byStore[store] && byStore[store][filling]) || 0;
+      const remove = Math.min(left, current);
+      if(remove > 0){
+        byStore[store][filling] = current - remove;
+        left -= remove;
+      }
+    });
+    // それでも引ききれない場合（内訳の記録がそもそも合計と一致していなかった場合）は、
+    // マイナスにはせず静かに切り捨てる
+  }
 }
 
 // その日の最終生産割り振りの確定版データを1ヶ所で計算する（描画・確定保存の両方で共用）
@@ -2864,6 +2961,7 @@ function buildProductionPlan(day, working, memberCaps){
 function computeConfirmedDaySnapshot(day, confirmed){
   day.isConfirmedPlan = true;
   day.memberFillingQty = confirmed.memberFillingQty;
+  day.memberStoreFillingQty = confirmed.memberStoreFillingQty || {};
   day.prodManuallyEdited = {};
 
   const working = confirmed.memberNames;
@@ -2937,8 +3035,9 @@ function computeDaySnapshot(day){
   const allocationTarget = total;
   const isOverCap = capTotal > allocationTarget;
 
-  const { memberBreakdowns, monthlyOnigiriWarning } = buildProductionPlan(day, working, memberCaps);
+  const { memberBreakdowns, memberStoreBreakdowns, monthlyOnigiriWarning } = buildProductionPlan(day, working, memberCaps);
   ensureMemberFillingQty(day, working, memberBreakdowns);
+  ensureMemberStoreFillingQty(day, working, memberStoreBreakdowns);
 
   // ニギニギ隊合計は「現在実際にテーブルに入っている個数」（手動編集も含む）の合計。
   // CHISEはニギニギ隊ではない別枠（本部＝総生産数−ニギニギ隊−CHISE）のため、
@@ -3103,8 +3202,12 @@ function bindProductionDayEvents(day){
     input.addEventListener("input", () => {
       const name = input.dataset.name;
       const filling = input.dataset.filling;
+      const newQty = Math.max(0, parseInt(input.value, 10) || 0);
+      const oldQty = (day.memberFillingQty[name] && day.memberFillingQty[name][filling]) || 0;
       if(!day.memberFillingQty[name]) day.memberFillingQty[name] = {};
-      day.memberFillingQty[name][filling] = Math.max(0, parseInt(input.value, 10) || 0);
+      day.memberFillingQty[name][filling] = newQty;
+      // 変更した個数を、どの店舗分から増減するか（Zuid→チセ→Rozengracht→UvAの順）自動調整する
+      adjustMemberStoreFillingQty(day, name, filling, newQty - oldQty);
       if(!day.prodManuallyEdited) day.prodManuallyEdited = {};
       day.prodManuallyEdited[name] = true;
       saveProdAlloc(day);
@@ -3130,7 +3233,9 @@ function bindProductionDayEvents(day){
       showConfirm(`${day.label}の生産割り振りをリセットしますか？`, () => {
         const dateStr = mdLabel(day.dateObj);
         try{ localStorage.removeItem(`chabon_prod_${dateStr}`); }catch(e){}
+        try{ localStorage.removeItem(`chabon_prodStore_${dateStr}`); }catch(e){}
         day.memberFillingQty = {};
+        day.memberStoreFillingQty = {};
         day.prodManuallyEdited = {};
         renderDayBlock(day);
         renderCellStatusTable();
@@ -3160,6 +3265,8 @@ function bindProductionDayEvents(day){
         if(!day.revisingWorking || day.revisingWorking.includes(name)) return;
         day.revisingWorking.push(name);
         if(!day.memberFillingQty[name]) day.memberFillingQty[name] = buildFillingDefaults(0);
+        if(!day.memberStoreFillingQty) day.memberStoreFillingQty = {};
+        if(!day.memberStoreFillingQty[name]) day.memberStoreFillingQty[name] = {};
         if(!day.prodManuallyEdited) day.prodManuallyEdited = {};
         day.prodManuallyEdited[name] = true;
         if(!day.revisingMemberCaps) day.revisingMemberCaps = {};
@@ -3169,6 +3276,8 @@ function bindProductionDayEvents(day){
         if(name !== CHISE_MEMBER || (day.memberFillingQty && CHISE_MEMBER in day.memberFillingQty)) return;
         if(!day.memberFillingQty) day.memberFillingQty = {};
         day.memberFillingQty[CHISE_MEMBER] = buildFillingDefaults(0);
+        if(!day.memberStoreFillingQty) day.memberStoreFillingQty = {};
+        day.memberStoreFillingQty[CHISE_MEMBER] = {};
         if(!day.prodManuallyEdited) day.prodManuallyEdited = {};
         day.prodManuallyEdited[CHISE_MEMBER] = true;
         saveProdAlloc(day);
@@ -3199,11 +3308,15 @@ function startRevisingDay(day){
   });
 
   const memberFillingQty = {};
+  const memberStoreFillingQty = {};
   const prodManuallyEdited = {};
   const revisingMemberCaps = {};
   working.forEach(name => {
     const qtyMap = { ...buildFillingDefaults(0), ...(confirmed.memberFillingQty[name] || {}) };
     memberFillingQty[name] = qtyMap;
+    memberStoreFillingQty[name] = JSON.parse(JSON.stringify(
+      (confirmed.memberStoreFillingQty && confirmed.memberStoreFillingQty[name]) || {}
+    ));
     prodManuallyEdited[name] = true; // 自動割り振りに書き換えられないよう、全員手動編集済み扱いにする
     revisingMemberCaps[name] = FILLINGS.reduce((s, f) => s + (qtyMap[f] || 0), 0);
   });
@@ -3226,6 +3339,7 @@ function startRevisingDay(day){
   day.uvaOpen = day.uvaOpen || confirmed.uva > 0;
   day.rozenOpen = day.rozenOpen || (confirmed.rozen || 0) > 0;
   day.memberFillingQty = memberFillingQty;
+  day.memberStoreFillingQty = memberStoreFillingQty;
   day.prodManuallyEdited = prodManuallyEdited;
   day.revisingWorking = working;
   day.revisingMemberCaps = revisingMemberCaps;
@@ -3292,6 +3406,7 @@ async function publishDayRevision(day){
   const ningiBreakdown = snap.working
     .map(name => `${name}:${memberFillingToString(day.memberFillingQty[name])}`)
     .join("；");
+  const ningiBreakdownByStore = ningiBreakdownByStoreToString(day, snap.working);
   const chise = state.chiseByDate[mdKey];
   const zuidBreakdown = day.zuidOpen ? day.zuidFillingQty : {};
   const uvaBreakdown = day.uvaOpen ? day.uvaFillingQty : {};
@@ -3317,6 +3432,7 @@ async function publishDayRevision(day){
     uvaBreakdown: uvaBreakdownStr,
     rozenBreakdown: rozenBreakdownStr,
     chiseBreakdown: chiseBreakdownStr,
+    ningiBreakdownByStore,
     expectedConfirmedAt: day.revisingExpectedConfirmedAtRaw || undefined,
   };
 
@@ -3327,10 +3443,14 @@ async function publishDayRevision(day){
     // 再読み込みなしでも画面にすぐ反映されるよう、送信した内容でstate.confirmedPlansByDateも
     // 即時更新する（次回の読み込み時にはgviz経由で取得した正確な日時に置き換わる）
     const memberFillingQty = {};
-    snap.working.forEach(name => { memberFillingQty[name] = { ...buildFillingDefaults(0), ...(day.memberFillingQty[name] || {}) }; });
+    const memberStoreFillingQty = {};
+    snap.working.forEach(name => {
+      memberFillingQty[name] = { ...buildFillingDefaults(0), ...(day.memberFillingQty[name] || {}) };
+      memberStoreFillingQty[name] = JSON.parse(JSON.stringify((day.memberStoreFillingQty || {})[name] || {}));
+    });
     state.confirmedPlansByDate[mdKey] = {
       zuid: zuidFinal(day), uva: uvaFinal(day), rozen: rozenFinal(day), chise: snap.chiseQty,
-      memberNames: snap.working, memberFillingQty,
+      memberNames: snap.working, memberFillingQty, memberStoreFillingQty,
       hqQty: snap.hqQty, hqBreakdown: { ...snap.hqBreakdown },
       confirmedAtLabel: "たった今", confirmedAtRaw: "",
       zuidBreakdown: parseFillingBreakdownString(zuidBreakdownStr),
@@ -3419,6 +3539,7 @@ async function saveDraftToSheet(day){
       rozenOpen: day.rozenOpen,
     },
     prod: day.memberFillingQty || {},
+    prodStore: day.memberStoreFillingQty || {},
     expectedUpdatedAt: day.draftUpdatedAtRaw || undefined,
   };
   try{
@@ -3551,6 +3672,7 @@ function applyDraftToDay(day, draft){
   if(draft.prod && Object.keys(draft.prod).length > 0){
     if(isProdSnapshotConsistent(day, draft.prod)){
       day.memberFillingQty = { ...draft.prod };
+      day.memberStoreFillingQty = draft.prodStore ? JSON.parse(JSON.stringify(draft.prodStore)) : {};
       if(!day.prodManuallyEdited) day.prodManuallyEdited = {};
       Object.keys(draft.prod).forEach(name => { day.prodManuallyEdited[name] = true; });
     } else {
@@ -4058,6 +4180,7 @@ function loadForecastData(day){
 
 function saveProdAlloc(day){
   try{ localStorage.setItem(`chabon_prod_${mdLabel(day.dateObj)}`, JSON.stringify(day.memberFillingQty || {})); }catch(e){}
+  try{ localStorage.setItem(`chabon_prodStore_${mdLabel(day.dateObj)}`, JSON.stringify(day.memberStoreFillingQty || {})); }catch(e){}
   scheduleDraftSave(day);
 }
 
@@ -4073,6 +4196,10 @@ function loadProdAllocData(day){
       return false;
     }
     day.memberFillingQty = parsed;
+    try{
+      const rawStore = localStorage.getItem(`chabon_prodStore_${mdLabel(day.dateObj)}`);
+      day.memberStoreFillingQty = rawStore ? JSON.parse(rawStore) : {};
+    }catch(e){ day.memberStoreFillingQty = {}; }
     if(!day.prodManuallyEdited) day.prodManuallyEdited = {};
     Object.keys(day.memberFillingQty).forEach(name => { day.prodManuallyEdited[name] = true; });
     return true;
@@ -4083,6 +4210,7 @@ function resetDayData(day){
   const dateStr = mdLabel(day.dateObj);
   try{ localStorage.removeItem(`chabon_forecast_${dateStr}`); }catch(e){}
   try{ localStorage.removeItem(`chabon_prod_${dateStr}`); }catch(e){}
+  try{ localStorage.removeItem(`chabon_prodStore_${dateStr}`); }catch(e){}
   day.zuidOpen = day.zuid !== null;
   day.zuidFillingQty = day.zuid ? buildFillingDefaults(day.zuid.total) : buildFillingDefaults(0);
   day.uvaOpen = day.uva !== null;
@@ -4090,6 +4218,7 @@ function resetDayData(day){
   day.rozenOpen = day.rozen !== null;
   day.rozenFillingQty = day.rozen ? buildFillingDefaults(day.rozen.total) : buildFillingDefaults(0);
   day.memberFillingQty = {};
+  day.memberStoreFillingQty = {};
   day.prodManuallyEdited = {};
   saveDraftToSheet(day);  // シートのドラフトもリセット状態で上書き
   renderDayBlock(day);
@@ -4239,6 +4368,26 @@ function memberFillingToString(qtyMap){
   return FILLINGS.filter(f => (qtyMap && qtyMap[f] || 0) > 0).map(f => `${f}×${qtyMap[f]}`).join(" ");
 }
 
+// 1人分の店舗別内訳を文字列化（例："UvA テリヤキチキン×8 サーモン×8｜Rozengracht テリヤキチキン×10"）。
+// 店舗優先順位の順に並べ、割り振りが無い店舗は省略する。
+function memberStoreBreakdownToString(day, name){
+  const byStore = (day.memberStoreFillingQty && day.memberStoreFillingQty[name]) || {};
+  return STORE_PRIORITY
+    .map(store => {
+      const str = memberFillingToString(byStore[store] || {});
+      return str ? `${store} ${str}` : "";
+    })
+    .filter(Boolean)
+    .join("｜");
+}
+
+// 「ニギニギ隊内訳（店舗別）」列用の文字列全体を組み立てる（例："MIKI:UvA テリヤキチキン×8｜Rozengracht
+// テリヤキチキン×10；MARI:..."）。既存の「ニギニギ隊内訳」列（具材合計）とは別の列に保存するため、
+// 具材合計の集計（月次支払い等）には一切影響しない。
+function ningiBreakdownByStoreToString(day, working){
+  return working.map(name => `${name}:${memberStoreBreakdownToString(day, name)}`).join("；");
+}
+
 function hqBreakdownToString(hqBreakdown){
   return Object.entries(hqBreakdown).filter(([, q]) => q > 0).map(([f, q]) => `${f}×${q}`).join(" ");
 }
@@ -4263,6 +4412,7 @@ async function confirmWeek(weekIndex){
     const ningiBreakdown = snap.working
       .map(name => `${name}:${memberFillingToString(d.memberFillingQty[name])}`)
       .join("；");
+    const ningiBreakdownByStore = ningiBreakdownByStoreToString(d, snap.working);
     const chise = state.chiseByDate[mdLabel(d.dateObj)];
     const zuidBreakdown = d.zuidOpen ? d.zuidFillingQty : {};
     const uvaBreakdown = d.uvaOpen ? d.uvaFillingQty : {};
@@ -4285,6 +4435,9 @@ async function confirmWeek(weekIndex){
       uvaBreakdown: memberFillingToString(uvaBreakdown),
       rozenBreakdown: memberFillingToString(rozenBreakdown),
       chiseBreakdown: memberFillingToString(chiseBreakdown),
+      // ニギニギ隊内訳（店舗別）：どの店舗の分を誰が担当したかの記録。末尾の新しい列に保存する。
+      // 既存の「ニギニギ隊内訳」列（具材合計）は変えないため、月次支払い集計には影響しない
+      ningiBreakdownByStore,
       // state.confirmedPlansByDateを即時反映するための生データ（送信ペイロードには含めない）
       _local: { snap, zuidBreakdown, uvaBreakdown, rozenBreakdown, chiseBreakdown },
     };
@@ -4317,10 +4470,14 @@ async function confirmWeek(weekIndex){
       // ニギニギ隊の内訳は、確定時点の day.memberFillingQty（working分のみ）をそのままコピーする
       const srcDay = days.find(d => mdLabel(d.dateObj) === date);
       const memberFillingQty = {};
-      snap.working.forEach(name => { memberFillingQty[name] = { ...buildFillingDefaults(0), ...(srcDay.memberFillingQty[name] || {}) }; });
+      const memberStoreFillingQty = {};
+      snap.working.forEach(name => {
+        memberFillingQty[name] = { ...buildFillingDefaults(0), ...(srcDay.memberFillingQty[name] || {}) };
+        memberStoreFillingQty[name] = JSON.parse(JSON.stringify((srcDay.memberStoreFillingQty || {})[name] || {}));
+      });
       state.confirmedPlansByDate[date] = {
         zuid: zuidFinal(srcDay), uva: uvaFinal(srcDay), rozen: rozenFinal(srcDay), chise: snap.chiseQty,
-        memberNames: snap.working, memberFillingQty,
+        memberNames: snap.working, memberFillingQty, memberStoreFillingQty,
         hqQty: snap.hqQty, hqBreakdown: { ...snap.hqBreakdown },
         confirmedAtLabel: "確定済み",
         zuidBreakdown, uvaBreakdown, rozenBreakdown, chiseBreakdown, hasDetailBreakdown: true,
