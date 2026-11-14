@@ -2002,7 +2002,6 @@ const STORE_PRIORITY_REVERSE = ["Zuid", "チセ", "Rozengracht", "UvA"];
 // メンバーの優先順位：①MIKI・MARI（同グループ内は残りの希望数が多い方を優先）②CHIKAKO③YUMI。
 // グループに無いメンバー（CHISE等）は最下位グループとして扱う（CHISEはcap=0のため実質対象外）。
 const MEMBER_GROUPS = [["MIKI", "MARI"], ["CHIKAKO"], ["YUMI"]];
-const MAX_FILLING_TYPES_PER_MEMBER = 2;
 // 手動で個数を増やしたが、どの店舗にも本部の空きが無かった分を記録する疑似店舗キー
 // （内訳のポップアップで「割当先なし」として警告付きで表示する。実在の店舗ではないため
 // STORE_PRIORITYには含めない＝storeNeedFor等の必要数計算には一切関与しない）。
@@ -2124,12 +2123,26 @@ function computeMemberStoreBreakdown(day, workingNames, memberFillingQty){
       if(take > 0){ give(monthlyAssignee, "Zuid", f, take); remaining[monthlyAssignee] -= take; zuidRoom -= take; }
     }
 
-    // フェーズ1：UvA→Rozengracht→チセ を MIKI・MARI→CHIKAKOの順（YUMIグループは対象外）で埋める
+    // フェーズ1：UvA→Rozengracht→チセ をYUMIグループ以外（MARI・MIKI・CHIKAKO）で埋める。
+    // UvAはMARI・MIKIを優先しCHIKAKOは足りない場合だけの対象（手順Aに合わせ、常に
+    // memberGroupRank順＝CHIKAKOを最後に回す）。Rozengracht・チセは手順B・Cで
+    // 割合（ratio）優先・3人フラットに割り振られているため、ここでの店舗内訳の再構成も
+    // 「その具材を多く持っている人から優先して店舗の枠を埋める」という量ベースの順序にする
+    // （MARI・MIKIを常に優先する固定順にすると、実際にはCHIKAKOが多く担当している具材でも
+    // 店舗内訳がMARI・MIKI側に偏ってしまい、実際の割り振りと食い違う）。
     const groupALeftoverByStore = {};
     ["UvA", "Rozengracht", "チセ"].forEach(store => {
       let room = storeNeedFor(day, store, f);
       if(room > 0){
-        const order = sortByRank(groupANames, n => memberGroupRank(n));
+        const order = (store === "UvA")
+          ? sortByRank(groupANames, n => memberGroupRank(n))
+          : [...groupANames].sort((a, b) => {
+              const diff = remaining[b] - remaining[a];
+              if(diff !== 0) return diff;
+              const oa = memberOrderWithinGroup(a), ob = memberOrderWithinGroup(b);
+              if(oa !== ob) return oa - ob;
+              return workingNames.indexOf(a) - workingNames.indexOf(b);
+            });
         order.forEach(name => {
           if(room <= 0) return;
           const take = Math.min(room, remaining[name]);
@@ -2950,86 +2963,113 @@ function renderDayBlock(day){
   bindProductionDayEvents(day);
 }
 
-// 「どの店舗の分を、誰に優先して割り振るか」で考える。店舗優先順位(STORE_PRIORITY:
-// UvA→Rozengracht→チセ→Zuid)の順に、その店舗の具材別の必要数を、メンバー優先順位
-// (MEMBER_GROUPS: ①MIKI・MARI→②CHIKAKO→③YUMI)の順に、各メンバーの残りの希望数(cap)の
-// 範囲で割り振る。3個単位（パック単位）で切り出し、どの店舗・メンバーにも割り振れなかった分は
-// 本部に回る。
+// 松木さんが実際に手で調整するときの考え方をそのまま手順にする。
+// 手順A（UvA）：MARI・MIKIだけに割り当てる。2人の希望数で足りない場合だけCHIKAKOに割り当て、
+//   画面に通知する（uvaChikakoHelpNotice）。
+// 手順B（Rozengracht）：MARI・MIKI・CHIKAKOで、「割り振り数÷希望数」の低い人から優先して分ける
+//   （YUMIには割り当てない。足りない場合は本部に回す）。
+// 手順C（チセ）：手順Bと同じ3人で、割合の低い人から優先して分ける。3人の希望数で足りない
+//   場合だけYUMIに割り当て、それでも足りない場合は本部に回す。
+// 手順D（Zuid）：今月のおにぎりの担当者分はまず直接割り当てる。それ以外はYUMI・CHIKAKO・
+//   MARI・MIKIを対象に、割合の低い人から優先して割り当てる（YUMIは他の店舗を担当しない分、
+//   割り振り開始時点の割合が0のため自然にZuidの中心になる）。
+// 手順E：枝豆・梅・うなぎは常に本部。各手順で割り振れなかった残りも本部に回る。
 //
-// 人選（pickLeastLoaded）の優先順位：
-// 1) メンバーの優先グループ（MIKI・MARI→CHIKAKO→YUMI）が高い人を優先する
-// 2) 同グループ内（MIKI・MARI）は、残りの希望数(cap)が多い方を優先する
-// 3) 同点の場合は、既にその具材を担当している人 → 担当具材数が2種類未満の人、の順で優先し、
-//    「担当具材は原則2種類まで・同じ具材はできるだけ同じ人にまとめる」を可能な限り守る
-//    （UvAのテリヤキを担当した人が、後続のRozengrachtのテリヤキでも優先される）
-// 4) それでも同点なら、指示の記載順（MIKI→MARI）で確定させる
+// 人選の優先順位（各手順内）：
+// 1) 同じ具材はできるだけ同じ人にまとめる（既に担当している人を優先）
+// 2) 「割り振り数÷希望数」が低い人を優先する（手順A・Dは対象メンバーを絞ることで、
+//    MARI・MIKIがUvA確保のために割合が高くなっても良い、YUMIは他店舗を担当しない分
+//    割合が低くて良い、という考え方を反映する）
+// 3) 同点なら指示の記載順（MIKI→MARI）、それでも同点なら安定した順序で確定させる
 function buildProductionPlan(day, working, memberCaps){
   const totals = working.map(() => 0);
   const remaining = working.map((_, i) => memberCaps[i]);
   const memberBreakdowns = working.map(() => ({}));
   const memberStoreBreakdowns = working.map(() => ({})); // [i] = {store: {filling: qty}}
-  const fillingTypeCount = working.map(() => 0);
   const hqBreakdown = {};
   let monthlyOnigiriWarning = null;
+  let uvaChikakoHelpNotice = false;
 
-  // iがjより優先されるべきならtrue。rankFn(name)で渡された、そのフェーズでの優先順位
-  // （フェーズ1＝MIKI・MARI→CHIKAKO、フェーズ2＝YUMI→CHIKAKO→MIKI・MARI等）で比較する。
-  function isBetterCandidate(i, j, f, rankFn){
-    const gi = rankFn(working[i]), gj = rankFn(working[j]);
-    if(gi !== gj) return gi < gj;
+  // 割り振り数÷希望数（割合）。希望数0の人は候補にしない（Infinityにして最後に回す）
+  function ratio(i){ return memberCaps[i] > 0 ? totals[i] / memberCaps[i] : Infinity; }
 
-    // 同じ具材はできるだけ同じ人にまとめる（例：UvAのテリヤキとRozengrachtのテリヤキを同じ人に）。
-    // 残りの希望数より先にこれを見ることで、既に担当している人を確実に優先する
+  // 同じ具材を既に担当している人を、割合が多少高くても優先する許容幅。
+  // これより割合の差が大きい場合は、具材をまとめることより割合を揃えることを優先する
+  const CONCENTRATION_RATIO_TOLERANCE = 0.15;
+
+  // iがjより優先されるべきならtrue。
+  function isBetterCandidate(i, j, f){
     const iHasFilling = !!memberBreakdowns[i][f];
     const jHasFilling = !!memberBreakdowns[j][f];
-    if(iHasFilling !== jHasFilling) return iHasFilling;
+    const ri = ratio(i), rj = ratio(j);
+    // 同じ具材はできるだけ同じ人にまとめたいが、既に担当している人の割合が、
+    // まだ担当していない人よりかなり高い場合は、まとめることより割合を揃えることを優先する
+    if(iHasFilling !== jHasFilling){
+      const hasIdx = iHasFilling ? i : j, noIdx = iHasFilling ? j : i;
+      if(ratio(hasIdx) <= ratio(noIdx) + CONCENTRATION_RATIO_TOLERANCE) return iHasFilling;
+    }
 
-    // 同じグループ内では、残りの希望数が多い方から割り振る
-    if(remaining[i] !== remaining[j]) return remaining[i] > remaining[j];
+    // 割り振り数÷希望数が低い人を優先する
+    if(ri !== rj) return ri < rj;
 
-    // 担当具材の種類数（原則2種類まで）で同点を解消（あくまでタイブレークであり、
-    // これを理由に希望数の余裕があるメンバーを候補から外すことはしない。以前は
-    // ハードな除外条件になっていたため、本来割り振るべき優先順位の高いメンバーより
-    // 低い優先順位のメンバーに回ってしまう不具合があった）
-    const iUnder2 = fillingTypeCount[i] < MAX_FILLING_TYPES_PER_MEMBER;
-    const jUnder2 = fillingTypeCount[j] < MAX_FILLING_TYPES_PER_MEMBER;
-    if(iUnder2 !== jUnder2) return iUnder2;
-    // それでも同点なら、同グループ内の記載順（MIKI→MARI）で確定させる
+    // それでも同点なら、指示の記載順（MIKI→MARI）、working配列内の並び順で確定させる
     const oi = memberOrderWithinGroup(working[i]), oj = memberOrderWithinGroup(working[j]);
     if(oi !== oj) return oi < oj;
-    return i < j; // working配列内の並び順で安定させる
+    return i < j;
   }
 
+  // 具材ごとに、既に1個以上割り振られたメンバーのインデックスを集める
+  // （「1つの具材はできるだけ少ない人数(1〜2人)にまとめる」の判定に使う）。
+  // ただしYUMIは、Zuidを中心に担当する立場上、UvA/Rozengracht/チセで既に他の2人が
+  // その具材を担当していても、Zuid分については優先して割り当てられる対象から外さない
+  // （手順Dの「YUMIを優先して割り当て」を、2人まとめの制約より上位に置く）。
+  const fillingAssignees = {};
+  function headcountOf(f){ return fillingAssignees[f] ? fillingAssignees[f].size : 0; }
+
   // eligibleIdx（候補者のインデックス一覧）の中から、希望数の残りがminRoom以上ある人のうち、
-  // rankFnで最も優先される人を選ぶ
-  function pickBest(minRoom, f, eligibleIdx, rankFn){
-    let best = -1;
-    for(const i of eligibleIdx){
-      if(remaining[i] < minRoom) continue;
-      if(best === -1 || isBetterCandidate(i, best, f, rankFn)) best = i;
+  // 最も優先される人を選ぶ。まず「既に担当している人、またはまだ2人に達していない人、
+  // またはYUMI（exemptHeadcountForがtrueの場合）」の中から探し、該当者がいなければ
+  // （2人とも希望数に余裕が無い等）制約を緩めて全候補から探す（供給を無駄にしないため。
+  // 本来割り振るべき人が他の理由で見つからない場合だけ3人目を使う）。
+  function pickBest(minRoom, f, eligibleIdx, exemptHeadcountFor){
+    function search(respectHeadcountLimit){
+      let best = -1;
+      for(const i of eligibleIdx){
+        if(remaining[i] < minRoom) continue;
+        if(respectHeadcountLimit && i !== exemptHeadcountFor){
+          const has = !!memberBreakdowns[i][f];
+          if(!has && headcountOf(f) >= 2) continue;
+        }
+        if(best === -1 || isBetterCandidate(i, best, f)) best = i;
+      }
+      return best;
     }
-    return best;
+    const idx = search(true);
+    return idx !== -1 ? idx : search(false);
   }
 
   function give(mi, store, f, qty){
     if(qty <= 0) return;
-    if(!memberBreakdowns[mi][f]) fillingTypeCount[mi]++;
     memberBreakdowns[mi][f] = (memberBreakdowns[mi][f] || 0) + qty;
     if(!memberStoreBreakdowns[mi][store]) memberStoreBreakdowns[mi][store] = {};
     memberStoreBreakdowns[mi][store][f] = (memberStoreBreakdowns[mi][store][f] || 0) + qty;
     totals[mi] += qty;
     remaining[mi] -= qty;
+    if(!fillingAssignees[f]) fillingAssignees[f] = new Set();
+    fillingAssignees[f].add(mi);
   }
 
-  // ある店舗の、ある具材の必要数needを、eligibleIdxの中からrankFnの優先順位に従って、
+  // ある店舗の、ある具材の必要数needを、eligibleIdxの中から優先順位に従って、
   // 希望数の範囲（3個単位）で割り振る。割り振れなかった残りを返す。
-  function allocateAtStore(store, f, need, eligibleIdx, rankFn){
+  // exemptHeadcountForに指定したメンバー（Zuidの場合のYUMI）は、2人まとめの制約を
+  // 受けずに優先的に候補になれる。
+  function allocateAtStore(store, f, need, eligibleIdx, exemptHeadcountFor){
     let left = need;
     while(left > 0){
       // 必要数の残り(left)が3個未満ならその分だけで足りる人を探す。3個以上あるときは
       // 最低3個は渡せる人を探す（1〜2個のような中途半端な量を誰かに割り振らないため）
       const minRoom = Math.min(3, left);
-      const idx = pickBest(minRoom, f, eligibleIdx, rankFn);
+      const idx = pickBest(minRoom, f, eligibleIdx, exemptHeadcountFor);
       if(idx === -1) break;
       const take = Math.min(left, remaining[idx]);
       // この1人でその店舗の残り必要数をちょうど渡しきれる場合は、端数を気にせずそのまま渡す
@@ -3043,77 +3083,75 @@ function buildProductionPlan(day, working, memberCaps){
     return left;
   }
 
+  const idxOf = name => working.indexOf(name);
+  const mariIdx = idxOf("MARI"), mikiIdx = idxOf("MIKI"), chikakoIdx = idxOf("CHIKAKO"), yumiIdx = idxOf("YUMI");
+  const uvaMainIdx = [mariIdx, mikiIdx].filter(i => i !== -1);
+  const rozenChiseIdx = [mariIdx, mikiIdx, chikakoIdx].filter(i => i !== -1);
+  const zuidIdx = [yumiIdx, chikakoIdx, mariIdx, mikiIdx].filter(i => i !== -1);
   const monthlyAssignee = getMonthlyOnigiriAssignee(day);
-  // フェーズ1はMIKI・MARI・CHIKAKO（YUMIのグループ以外）だけが対象、フェーズ3はYUMIの
-  // グループだけが対象。グループに属さないメンバー（CHISE）はcap=0のため実質対象外のまま、
-  // フェーズ1側（YUMIグループではない）に含めておく。
-  const yumiGroupRank = MEMBER_GROUPS.length - 1;
-  const groupAIdx = working.map((_, i) => i).filter(i => memberGroupRank(working[i]) !== yumiGroupRank);
-  const yumiIdx = working.map((_, i) => i).filter(i => memberGroupRank(working[i]) === yumiGroupRank);
-  const allIdx = working.map((_, i) => i);
 
-  // フェーズ1：UvA→Rozengracht→チセ の分を、MIKI・MARI→CHIKAKOの順（希望数の範囲）で
-  // 割り振る（YUMIはこのフェーズの対象外。希望数を使い切った場合だけ、フェーズ3で引き継ぐ）。
-  // 今月のおにぎりの月次担当も、UvA・Rozengracht・チセの分はここで特別扱いせず通常通り
-  // 競合させる（Zuidの分だけ、フェーズ2で担当者に直接割り当てる）。
-  const groupALeftover = {}; // {store: {filling: 割り振れなかった個数}}
-  ["UvA", "Rozengracht", "チセ"].forEach(store => {
-    groupALeftover[store] = {};
-    const itemsByNeedDesc = ALLOC_FILLINGS
-      .map(f => ({ f, need: storeNeedFor(day, store, f) }))
-      .sort((a, b) => b.need - a.need);
-    itemsByNeedDesc.forEach(({ f, need }) => {
-      if(need <= 0) return;
-      const left = allocateAtStore(store, f, need, groupAIdx, name => memberGroupRank(name));
-      if(left > 0) groupALeftover[store][f] = left;
-    });
-  });
-
-  // フェーズ2：Zuidの分を割り振る。今月のおにぎりは担当者に直接割り当てる（他のメンバーとは
-  // 競合しない＝担当制を維持。担当者の希望数が足りない分は本部に回す）。それ以外の具材は
-  // YUMI→CHIKAKO→MIKI・MARIの順（groupRankForStoreのZuid反転順）で割り振る。
-  {
-    const itemsByNeedDesc = ALLOC_FILLINGS
-      .map(f => ({ f, need: storeNeedFor(day, "Zuid", f) }))
-      .sort((a, b) => b.need - a.need);
-    itemsByNeedDesc.forEach(({ f, need }) => {
-      if(need <= 0) return;
-      if(monthlyAssignee && f === MONTHLY_ONIGIRI_FILLING){
-        const assigneeIdx = working.indexOf(monthlyAssignee);
-        let left = need;
-        if(assigneeIdx !== -1 && MEMBERS.includes(monthlyAssignee)){
-          const take = Math.min(left, remaining[assigneeIdx]);
-          give(assigneeIdx, "Zuid", f, take);
-          left -= take;
-        }
-        if(left > 0){
-          hqBreakdown[f] = (hqBreakdown[f] || 0) + left;
-          // monthlyAssignee === "本部" の場合は意図的な設定のため警告は出さない
-          if(monthlyAssignee !== "本部") monthlyOnigiriWarning = `今月のおにぎり：担当者のcap不足のため本部に${left}個`;
-        }
-        return;
-      }
-      const left = allocateAtStore("Zuid", f, need, allIdx, name => groupRankForStore(name, "Zuid"));
-      if(left > 0) hqBreakdown[f] = (hqBreakdown[f] || 0) + left;
-    });
+  function itemsDesc(store){
+    return ALLOC_FILLINGS.map(f => ({ f, need: storeNeedFor(day, store, f) })).sort((a, b) => b.need - a.need);
   }
 
-  // フェーズ3：フェーズ1で埋まらなかったUvA・Rozengracht・チセの残りを、YUMIグループの
-  // 残り希望数（フェーズ2のZuid割り振り後）で、チセ→Rozengracht→UvAの順に吸収する
-  // （希望数に余裕のあるメンバーがいるのに、本部に残さないため）。
-  ["チセ", "Rozengracht", "UvA"].forEach(store => {
-    Object.entries(groupALeftover[store]).forEach(([f, need]) => {
-      const left = allocateAtStore(store, f, need, yumiIdx, () => 0);
-      if(left > 0) hqBreakdown[f] = (hqBreakdown[f] || 0) + left;
-    });
+  // 手順A：UvAはMARI・MIKIだけに割り当てる。2人の希望数で足りない場合だけCHIKAKOに割り当てる
+  itemsDesc("UvA").forEach(({ f, need }) => {
+    if(need <= 0) return;
+    let left = allocateAtStore("UvA", f, need, uvaMainIdx);
+    if(left > 0 && chikakoIdx !== -1){
+      const before = left;
+      left = allocateAtStore("UvA", f, left, [chikakoIdx]);
+      if(left < before) uvaChikakoHelpNotice = true;
+    }
+    if(left > 0) hqBreakdown[f] = (hqBreakdown[f] || 0) + left;
   });
 
+  // 手順B：RozengrachtはMARI・MIKI・CHIKAKOで、割合の低い人から優先して分ける（YUMIは対象外）
+  itemsDesc("Rozengracht").forEach(({ f, need }) => {
+    if(need <= 0) return;
+    const left = allocateAtStore("Rozengracht", f, need, rozenChiseIdx);
+    if(left > 0) hqBreakdown[f] = (hqBreakdown[f] || 0) + left;
+  });
+
+  // 手順C：チセはMARI・MIKI・CHIKAKOで分け、足りない分だけYUMIに割り当てる
+  itemsDesc("チセ").forEach(({ f, need }) => {
+    if(need <= 0) return;
+    let left = allocateAtStore("チセ", f, need, rozenChiseIdx);
+    if(left > 0 && yumiIdx !== -1) left = allocateAtStore("チセ", f, left, [yumiIdx]);
+    if(left > 0) hqBreakdown[f] = (hqBreakdown[f] || 0) + left;
+  });
+
+  // 手順D：Zuid。今月のおにぎりは担当者に直接割り当てる（他のメンバーとは競合しない＝
+  // 担当制を維持。担当者の希望数が足りない分は本部に回す）。それ以外はYUMI・CHIKAKO・
+  // MARI・MIKIを対象に、割合の低い人から優先して割り当てる。
+  itemsDesc("Zuid").forEach(({ f, need }) => {
+    if(need <= 0) return;
+    if(monthlyAssignee && f === MONTHLY_ONIGIRI_FILLING){
+      const assigneeIdx = working.indexOf(monthlyAssignee);
+      let left = need;
+      if(assigneeIdx !== -1 && MEMBERS.includes(monthlyAssignee)){
+        const take = Math.min(left, remaining[assigneeIdx]);
+        give(assigneeIdx, "Zuid", f, take);
+        left -= take;
+      }
+      if(left > 0){
+        hqBreakdown[f] = (hqBreakdown[f] || 0) + left;
+        // monthlyAssignee === "本部" の場合は意図的な設定のため警告は出さない
+        if(monthlyAssignee !== "本部") monthlyOnigiriWarning = `今月のおにぎり：担当者のcap不足のため本部に${left}個`;
+      }
+      return;
+    }
+    const left = allocateAtStore("Zuid", f, need, zuidIdx, yumiIdx);
+    if(left > 0) hqBreakdown[f] = (hqBreakdown[f] || 0) + left;
+  });
+
+  // 手順E：枝豆・梅・うなぎは常に本部
   ALWAYS_HQ_FILLINGS.forEach(f => {
     const v = neededQtyFor(day, f);
     if(v > 0) hqBreakdown[f] = (hqBreakdown[f] || 0) + v;
   });
 
-  return { memberBreakdowns, memberStoreBreakdowns, memberQtys: totals, hqBreakdown, monthlyOnigiriWarning };
+  return { memberBreakdowns, memberStoreBreakdowns, memberQtys: totals, hqBreakdown, monthlyOnigiriWarning, uvaChikakoHelpNotice };
 }
 
 // 店舗storeの、具材fillingについて、working全員（CHISE含む）が現在割り当てられている合計
@@ -3163,7 +3201,7 @@ function computeConfirmedDaySnapshot(day, confirmed){
   return {
     chiseQty, total, working, memberCaps: memberTotals, capTotal: ningiTotal, allocationTarget: total,
     isOverCap: false, hqBreakdown, hqQty, memberTotals, ningiTotal, chiseManualQty, fillingOveredBy: {}, hasFillingOverage: false,
-    monthlyOnigiriWarning: null, monthlyOnigiriMisassignedWarning: null, isConfirmedPlan: true, isRevising: false,
+    monthlyOnigiriWarning: null, uvaChikakoHelpNotice: false, monthlyOnigiriMisassignedWarning: null, isConfirmedPlan: true, isRevising: false,
     confirmedForecastDiff, confirmedAtLabel: confirmed.confirmedAtLabel,
   };
 }
@@ -3208,7 +3246,7 @@ function computeDaySnapshot(day){
   // 店舗別の内訳(memberStoreBreakdowns)はbuildProductionPlanの最適化過程の内部値であり、
   // 手動編集後の実際の個数とは無関係にずれていく可能性があるため使わず、
   // ensureMemberStoreFillingQty側でday.memberFillingQty確定後に毎回計算し直す。
-  const { memberBreakdowns, monthlyOnigiriWarning } = buildProductionPlan(day, working, memberCaps);
+  const { memberBreakdowns, monthlyOnigiriWarning, uvaChikakoHelpNotice } = buildProductionPlan(day, working, memberCaps);
   ensureMemberFillingQty(day, working, memberBreakdowns);
   ensureMemberStoreFillingQty(day, working);
 
@@ -3268,6 +3306,7 @@ function computeDaySnapshot(day){
     // 意味を持たないため表示しない。今月のおにぎりの担当違反は上の実値ベースの
     // monthlyOnigiriMisassignedWarningで（修正中かどうかに関わらず）検知する
     monthlyOnigiriWarning: isRevising ? null : monthlyOnigiriWarning,
+    uvaChikakoHelpNotice: isRevising ? false : uvaChikakoHelpNotice,
     monthlyOnigiriMisassignedWarning,
     isConfirmedPlan: false, isRevising, confirmedForecastDiff: [], confirmedAtLabel: "",
   };
@@ -3282,6 +3321,13 @@ function fillingOverageWarningHtml(snap){
 function monthlyOnigiriWarningHtml(snap){
   if(!snap.monthlyOnigiriWarning) return "";
   return `<div class="warning-line">⚠️ ${snap.monthlyOnigiriWarning}</div>`;
+}
+
+// UvAの分がMARI・MIKIの希望数だけでは足りず、CHIKAKOに割り当てた場合の通知
+// （手順A：本来はCHIKAKOを担当対象にしないUvAの例外対応であることが分かるように表示する）
+function uvaChikakoHelpNoticeHtml(snap){
+  if(!snap.uvaChikakoHelpNotice) return "";
+  return `<div class="warning-line">ℹ️ UvA分の一部をCHIKAKOに割り当てました</div>`;
 }
 
 function monthlyOnigiriMisassignedWarningHtml(snap){
@@ -3308,6 +3354,7 @@ function summaryHtmlFor(snap){
     ${fillingOverageWarningHtml(snap)}
     ${monthlyOnigiriWarningHtml(snap)}
     ${monthlyOnigiriMisassignedWarningHtml(snap)}
+    ${uvaChikakoHelpNoticeHtml(snap)}
   `;
 }
 
