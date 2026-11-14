@@ -1231,6 +1231,7 @@
 <main>
 
   <div id="fetchFailureBanner" class="fetch-failure-banner" style="display:none;"></div>
+  <p id="storeMismatchRecalcNotice" class="monthly-onigiri-recalc-notice" style="display:none;"></p>
 
   <section>
     <h2>販売予測数・生産割り振り<span class="badge">来週・再来週 月〜金</span></h2>
@@ -2000,6 +2001,10 @@ const STORE_PRIORITY_REVERSE = ["Zuid", "チセ", "Rozengracht", "UvA"];
 // グループに無いメンバー（CHISE等）は最下位グループとして扱う（CHISEはcap=0のため実質対象外）。
 const MEMBER_GROUPS = [["MIKI", "MARI"], ["CHIKAKO"], ["YUMI"]];
 const MAX_FILLING_TYPES_PER_MEMBER = 2;
+// 手動で個数を増やしたが、どの店舗にも本部の空きが無かった分を記録する疑似店舗キー
+// （内訳のポップアップで「割当先なし」として警告付きで表示する。実在の店舗ではないため
+// STORE_PRIORITYには含めない＝storeNeedFor等の必要数計算には一切関与しない）。
+const UNASSIGNED_STORE_KEY = "割当先なし";
 
 function memberGroupRank(name){
   for(let g = 0; g < MEMBER_GROUPS.length; g++){ if(MEMBER_GROUPS[g].includes(name)) return g; }
@@ -2014,6 +2019,27 @@ function memberOrderWithinGroup(name){
     if(idx !== -1) return idx;
   }
   return 0;
+}
+
+// 手動編集でメンバーの個数を増やすとき、どの店舗の本部の空きから優先して割り当てるか。
+// MIKI・MARI・CHIKAKO（第一・第二グループ）：UvA→Rozengracht→チセ→Zuidの順（店舗優先順位と同じ）。
+// YUMI（第三グループ）：Zuid→チセ→Rozengracht→UvAの順（Zuid分を優先）。
+function memberIncreaseOrder(name){
+  return memberGroupRank(name) === MEMBER_GROUPS.length - 1 ? STORE_PRIORITY_REVERSE : STORE_PRIORITY;
+}
+// 個数を減らすときはその逆順（最後に割り当てた店舗分から先に返す）
+function memberDecreaseOrder(name){
+  return memberGroupRank(name) === MEMBER_GROUPS.length - 1 ? STORE_PRIORITY : STORE_PRIORITY_REVERSE;
+}
+
+// 自動割り振りで、ある店舗の必要数を誰に優先して割り振るかを決める「その店舗での優先順位」。
+// 通常はメンバーの優先グループ（①MIKI・MARI→②CHIKAKO→③YUMI）のままだが、Zuidだけは
+// YUMIを最優先にする（YUMIは一番遠いためZuid分を優先担当する、というメンバー側の優先順位を、
+// 店舗側の人選にもそのまま反映させるため）。
+function groupRankForStore(name, store){
+  const baseRank = memberGroupRank(name);
+  if(store !== "Zuid" || baseRank > MEMBER_GROUPS.length - 1) return baseRank;
+  return baseRank === MEMBER_GROUPS.length - 1 ? 0 : baseRank + 1;
 }
 
 // 店舗ごとの、その具材の必要数。neededQtyFor()の内訳版（店舗優先順位の各店舗に対応）。
@@ -2091,14 +2117,36 @@ function rozenFinal(day){ return day.rozenOpen ? sumQtyMap(day.rozenFillingQty) 
 // 画面読み込み時の自動再計算（このチェックの不合格による復元拒否）が
 // どの日付で発生したかを松木さんに報告するために集める。
 let recalculatedOnigiriDates = [];
+// 店舗別の内訳（memberStoreFillingQty/prodStore）が各店舗の必要数と矛盾していたため、
+// 自動的に再計算した日付のISO一覧（renderStoreMismatchRecalcNoticeで画面上部に表示する）。
+let recalculatedStoreMismatchDates = [];
 
-function isProdSnapshotConsistent(day, memberFillingQty){
+// 保存された店舗別内訳(memberStoreFillingQty)が、現在の各店舗の必要数と矛盾していないかを
+// 判定する。店舗ごとに「ニギニギ隊＋CHISEの割り振り合計」がその店舗のその具材の必要数を
+// 超えていれば、古いデータ（必要数が変わった後も残っている、または過去のバグで店舗の必要数を
+// 超えて積み上がってしまった等）とみなす。割当先なし(UNASSIGNED_STORE_KEY)は実在の店舗の
+// 必要数を消費しないため、このチェックの対象外（他の店舗の整合性には影響しない）。
+function isStoreBreakdownConsistent(day, memberStoreFillingQty){
+  if(!memberStoreFillingQty) return true;
+  return FILLINGS.every(f => STORE_PRIORITY.every(store => {
+    const allocated = Object.values(memberStoreFillingQty).reduce((s, byStore) =>
+      s + ((byStore && byStore[store] && byStore[store][f]) || 0), 0);
+    return allocated <= storeNeedFor(day, store, f);
+  }));
+}
+
+function isProdSnapshotConsistent(day, memberFillingQty, memberStoreFillingQty){
   if(!memberFillingQty) return true;
   const fillingOk = FILLINGS.every(f => {
     const savedForFilling = Object.values(memberFillingQty).reduce((s, qtyMap) => s + ((qtyMap && qtyMap[f]) || 0), 0);
     return savedForFilling <= neededQtyFor(day, f);
   });
   if(!fillingOk) return false;
+
+  if(!isStoreBreakdownConsistent(day, memberStoreFillingQty)){
+    if(day.iso && !recalculatedStoreMismatchDates.includes(day.iso)) recalculatedStoreMismatchDates.push(day.iso);
+    return false;
+  }
 
   // 今月のおにぎりの月次担当が設定されている月は、担当者（本部が担当の場合は誰も）以外の
   // メンバーに「今月のおにぎり」が割り振られている保存データを古いデータとみなす
@@ -2543,9 +2591,14 @@ function splitForecastTableHtml(day){
 // メンバー1人分の、ある具材の店舗別内訳（qty>0の店舗のみ）
 function memberStoreBreakdownParts(day, name, filling){
   const byStore = (day.memberStoreFillingQty && day.memberStoreFillingQty[name]) || {};
-  return STORE_PRIORITY
+  const parts = STORE_PRIORITY
     .map(store => ({ store, qty: (byStore[store] && byStore[store][filling]) || 0 }))
     .filter(p => p.qty > 0);
+  // 手動編集で本部の空きが無くなり「割当先なし」になった分（どの店舗の必要数も超えて
+  // 割り振ってはいないが、対応する店舗が決まっていない）は、警告付きで別枠表示する
+  const unassignedQty = (byStore[UNASSIGNED_STORE_KEY] && byStore[UNASSIGNED_STORE_KEY][filling]) || 0;
+  if(unassignedQty > 0) parts.push({ store: UNASSIGNED_STORE_KEY, qty: unassignedQty, warnText: "⚠️割り当て先がありません" });
+  return parts;
 }
 
 // 本部の、ある具材の店舗別内訳。本部＝その店舗の必要数−（ニギニギ隊＋CHISEの、その店舗への割り振り）。
@@ -2555,8 +2608,7 @@ function hqStoreBreakdownParts(day, filling, working){
   return STORE_PRIORITY
     .map(store => {
       const need = storeNeedFor(day, store, filling);
-      const allocated = working.reduce((s, name) => s +
-        ((day.memberStoreFillingQty[name] && day.memberStoreFillingQty[name][store] && day.memberStoreFillingQty[name][store][filling]) || 0), 0);
+      const allocated = allocatedAtStoreAcrossAll(day, working, store, filling);
       const raw = need - allocated;
       return { store, qty: Math.max(0, raw), overQty: Math.max(0, -raw) };
     })
@@ -2564,12 +2616,14 @@ function hqStoreBreakdownParts(day, filling, working){
 }
 
 // 店舗別内訳（<details>の中身）のHTML。メンバー用・本部用で共通利用する
-// （本部の場合のみoverQtyが入り、超過警告バッジが付く）。
+// （overQty：本部の超過警告、warnText：手動編集で割当先が無くなった場合の警告）。
 function storeBreakdownContentHtml(parts){
   if(!parts || parts.length === 0) return "";
-  return `<summary>内訳</summary>${parts.map(p =>
-    `<div>${p.store}×${p.qty}${p.overQty ? `<span class="hq-over-badge">⚠️${p.overQty}個超過</span>` : ""}</div>`
-  ).join("")}`;
+  return `<summary>内訳</summary>${parts.map(p => {
+    const warn = p.overQty ? `<span class="hq-over-badge">⚠️${p.overQty}個超過</span>`
+      : (p.warnText ? `<span class="hq-over-badge">${p.warnText}</span>` : "");
+    return `<div>${p.store}×${p.qty}${warn}</div>`;
+  }).join("")}`;
 }
 
 // メンバー×具材・本部×具材のセルの下に、タップで開ける店舗別内訳を表示する（表の見た目は崩さない）。
@@ -2832,9 +2886,10 @@ function buildProductionPlan(day, working, memberCaps){
   const hqBreakdown = {};
   let monthlyOnigiriWarning = null;
 
-  // iがjより優先されるべきならtrue
-  function isBetterCandidate(i, j, f){
-    const gi = memberGroupRank(working[i]), gj = memberGroupRank(working[j]);
+  // iがjより優先されるべきならtrue。storeごとに人選の優先グループが変わる
+  // （groupRankForStore：Zuidだけは③YUMIが最優先）。
+  function isBetterCandidate(i, j, f, store){
+    const gi = groupRankForStore(working[i], store), gj = groupRankForStore(working[j], store);
     if(gi !== gj) return gi < gj;
 
     // 同じ具材はできるだけ同じ人にまとめる（例：UvAのテリヤキとRozengrachtのテリヤキを同じ人に）。
@@ -2858,7 +2913,7 @@ function buildProductionPlan(day, working, memberCaps){
 
   // 「担当具材は原則2種類まで」を尊重した候補（respectTypeCap=true）で探し、
   // 該当者がいなければ制約を緩めて全候補から探す（供給を無駄にしないため）
-  function pickLeastLoaded(minRoom, f, respectTypeCap){
+  function pickLeastLoaded(minRoom, f, store, respectTypeCap){
     let best = -1;
     for(let i = 0; i < working.length; i++){
       if(remaining[i] < minRoom) continue;
@@ -2866,14 +2921,14 @@ function buildProductionPlan(day, working, memberCaps){
         const hasFilling = !!memberBreakdowns[i][f];
         if(!hasFilling && fillingTypeCount[i] >= MAX_FILLING_TYPES_PER_MEMBER) continue;
       }
-      if(best === -1 || isBetterCandidate(i, best, f)) best = i;
+      if(best === -1 || isBetterCandidate(i, best, f, store)) best = i;
     }
     return best;
   }
 
-  function pickBest(minRoom, f){
-    const idx = pickLeastLoaded(minRoom, f, true);
-    return idx !== -1 ? idx : pickLeastLoaded(minRoom, f, false);
+  function pickBest(minRoom, f, store){
+    const idx = pickLeastLoaded(minRoom, f, store, true);
+    return idx !== -1 ? idx : pickLeastLoaded(minRoom, f, store, false);
   }
 
   function give(mi, store, f, qty){
@@ -2914,6 +2969,11 @@ function buildProductionPlan(day, working, memberCaps){
     }
   }
 
+  // 店舗優先順位(UvA→Rozengracht→チセ→Zuid)の順に、その店舗の具材別の必要数を、
+  // その店舗での優先グループ（groupRankForStore。Zuidだけは③YUMIが最優先）の順に割り振る。
+  // 同じ具材は「既に担当している人を優先する」仕組み（isBetterCandidateのhasFilling判定）に
+  // よって、店舗をまたいでも自然に同じ人に集中する（例：UvAのテリヤキを担当した人が、
+  // 後続のRozengrachtのテリヤキでも優先される）。
   STORE_PRIORITY.forEach(store => {
     const itemsByNeedDesc = ALLOC_FILLINGS
       .filter(f => !(monthlyAssignee && f === MONTHLY_ONIGIRI_FILLING))
@@ -2925,13 +2985,19 @@ function buildProductionPlan(day, working, memberCaps){
       if(left <= 0) return;
 
       while(left > 0){
-        const idx = pickBest(3, f);
+        // 必要数の残り(left)が3個未満ならその分だけで足りる人を探す。3個以上あるときは
+        // 最低3個は渡せる人を探す（1〜2個のような中途半端な量を誰かに割り振らないため）
+        const minRoom = Math.min(3, left);
+        const idx = pickBest(minRoom, f, store);
         if(idx === -1) break;
         const take = Math.min(left, remaining[idx]);
-        const floored = Math.floor(take / 3) * 3;
-        if(floored <= 0) break;
-        give(idx, store, f, floored);
-        left -= floored;
+        // この1人でその店舗の残り必要数をちょうど渡しきれる場合は、端数を気にせずそのまま渡す
+        // （次の人への「受け渡し」が発生しないため、3個単位に揃える必要が無い）。
+        // 1人のcapで足りず複数人に分ける場合だけ、3個単位（パック単位）に切り出す
+        const amount = (take === left) ? take : Math.floor(take / 3) * 3;
+        if(amount <= 0) break;
+        give(idx, store, f, amount);
+        left -= amount;
       }
       if(left > 0) hqBreakdown[f] = (hqBreakdown[f] || 0) + left;
     });
@@ -2945,10 +3011,23 @@ function buildProductionPlan(day, working, memberCaps){
   return { memberBreakdowns, memberStoreBreakdowns, memberQtys: totals, hqBreakdown, monthlyOnigiriWarning };
 }
 
+// 店舗storeの、具材fillingについて、working全員（CHISE含む）が現在割り当てられている合計
+// （＝本部以外が既に持っている分）。本部の空き（まだ誰にも割り当てられていない分）を
+// 計算するための土台として使う。
+function allocatedAtStoreAcrossAll(day, workingNames, store, filling){
+  return (workingNames || []).reduce((s, n) =>
+    s + ((day.memberStoreFillingQty[n] && day.memberStoreFillingQty[n][store] && day.memberStoreFillingQty[n][store][filling]) || 0), 0);
+}
+
 // 手動編集でメンバー×具材の合計個数を変えたとき、その差分をどの店舗分から増減するかを、
-// 店舗優先順位の逆順（Zuid→チセ→Rozengracht→UvA）で自動調整する。増やす場合は各店舗
-// 自体の必要数を上限として積み増し、減らす場合はZuidから順に取り崩す。
-function adjustMemberStoreFillingQty(day, name, filling, delta){
+// そのメンバー自身の優先順序（memberIncreaseOrder/memberDecreaseOrder。MIKI・MARI・CHIKAKOは
+// UvA→Rozengracht→チセ→Zuidの順、YUMIはZuid→チセ→Rozengracht→UvAの順）で自動調整する。
+// 増やす場合：「本部がまだ持っている分」（＝その店舗の必要数－working全員の割り当て合計。
+// 編集対象メンバー自身の現在分も含めて考慮するため、他メンバーの割り当てを侵食しない）から
+// 順に割り当てる。本部にも空きが無ければ、割り当て先なし（UNASSIGNED_STORE_KEY）として記録し、
+// 内訳のポップアップで警告表示する（他の店舗の必要数を超えて割り当てることは絶対にしない）。
+// 減らす場合：その逆順で、自分の割り当て（割り当て先なし分を含めて先に）から減らし、本部に戻す。
+function adjustMemberStoreFillingQty(day, name, filling, delta, workingNames){
   if(!delta) return;
   if(!day.memberStoreFillingQty) day.memberStoreFillingQty = {};
   if(!day.memberStoreFillingQty[name]) day.memberStoreFillingQty[name] = {};
@@ -2956,28 +3035,29 @@ function adjustMemberStoreFillingQty(day, name, filling, delta){
 
   if(delta > 0){
     let left = delta;
-    STORE_PRIORITY_REVERSE.forEach(store => {
+    memberIncreaseOrder(name).forEach(store => {
       if(left <= 0) return;
       const need = storeNeedFor(day, store, filling);
-      const current = (byStore[store] && byStore[store][filling]) || 0;
-      const room = Math.max(0, need - current);
-      const add = Math.min(left, room);
+      const allocatedAll = allocatedAtStoreAcrossAll(day, workingNames, store, filling);
+      const hqRoom = Math.max(0, need - allocatedAll);
+      const add = Math.min(left, hqRoom);
       if(add > 0){
         if(!byStore[store]) byStore[store] = {};
-        byStore[store][filling] = current + add;
+        byStore[store][filling] = ((byStore[store] && byStore[store][filling]) || 0) + add;
         left -= add;
       }
     });
-    // 全店舗の必要数を使い切ってもなお余る場合（手動入力が必要数を大きく超えた場合）は、
-    // 逆順の最初（Zuid）にそのまま積む（内訳の記録先が必要なため）
+    // どの店舗にも本部の空きが残っていない（手動入力が必要数を大きく超えた場合）は、
+    // 「割当先なし」として記録する（他の店舗の必要数を超えて積み増すことはしない）
     if(left > 0){
-      const store = STORE_PRIORITY_REVERSE[0];
-      if(!byStore[store]) byStore[store] = {};
-      byStore[store][filling] = (byStore[store][filling] || 0) + left;
+      if(!byStore[UNASSIGNED_STORE_KEY]) byStore[UNASSIGNED_STORE_KEY] = {};
+      byStore[UNASSIGNED_STORE_KEY][filling] = (byStore[UNASSIGNED_STORE_KEY][filling] || 0) + left;
     }
   } else {
     let left = -delta;
-    STORE_PRIORITY_REVERSE.forEach(store => {
+    // 「割当先なし」分があれば、実際の店舗の割り当てより先にそちらから減らす
+    const decreaseOrder = [UNASSIGNED_STORE_KEY, ...memberDecreaseOrder(name)];
+    decreaseOrder.forEach(store => {
       if(left <= 0) return;
       const current = (byStore[store] && byStore[store][filling]) || 0;
       const remove = Math.min(left, current);
@@ -3280,8 +3360,9 @@ function bindProductionDayEvents(day){
       const oldQty = (day.memberFillingQty[name] && day.memberFillingQty[name][filling]) || 0;
       if(!day.memberFillingQty[name]) day.memberFillingQty[name] = {};
       day.memberFillingQty[name][filling] = newQty;
-      // 変更した個数を、どの店舗分から増減するか（Zuid→チセ→Rozengracht→UvAの順）自動調整する
-      adjustMemberStoreFillingQty(day, name, filling, newQty - oldQty);
+      // 変更した個数を、どの店舗分から増減するか（そのメンバー自身の優先順序）で自動調整する。
+      // 増やす場合は他のメンバーの割り当てを侵食しないよう、working全員の現在の割り当てを見る
+      adjustMemberStoreFillingQty(day, name, filling, newQty - oldQty, Object.keys(day.memberFillingQty));
       if(!day.prodManuallyEdited) day.prodManuallyEdited = {};
       day.prodManuallyEdited[name] = true;
       saveProdAlloc(day);
@@ -3744,16 +3825,17 @@ function applyDraftToDay(day, draft){
   if(fc.zuidOpen !== undefined) day.zuidOpen = fc.zuidOpen;
   if(fc.uvaOpen  !== undefined) day.uvaOpen  = fc.uvaOpen;
   if(draft.prod && Object.keys(draft.prod).length > 0){
-    if(isProdSnapshotConsistent(day, draft.prod)){
+    if(isProdSnapshotConsistent(day, draft.prod, draft.prodStore)){
       day.memberFillingQty = { ...draft.prod };
       day.memberStoreFillingQty = draft.prodStore ? JSON.parse(JSON.stringify(draft.prodStore)) : {};
       if(!day.prodManuallyEdited) day.prodManuallyEdited = {};
       Object.keys(draft.prod).forEach(name => { day.prodManuallyEdited[name] = true; });
     } else {
-      // 必要数が変わった後も「作業中プラン」シートに古い内訳が残っている状態。
+      // 必要数が変わった後も「作業中プラン」シートに古い内訳が残っている状態
+      // （具材合計・店舗別のいずれかが現在の必要数と矛盾している）。
       // 古いデータを復元せず、prodManuallyEditedも立てないことで、通常の
       // 自動計算（buildProductionPlan）に基づく現在の必要数からの再計算に任せる。
-      console.warn(`[admin.html] ${day.iso}: 作業中プランの内訳が古いため自動再計算しました（保存内訳合計が現在の必要数合計を超過）。`);
+      console.warn(`[admin.html] ${day.iso}: 作業中プランの内訳が古いため自動再計算しました（保存内訳合計が現在の必要数合計を超過、または店舗別の内訳が矛盾しています）。`);
     }
   }
 }
@@ -3938,9 +4020,25 @@ function renderMonthlyOnigiriRecalcNotice(){
   el.style.display = "";
 }
 
+// 保存されていた店舗別の内訳が各店舗の必要数と矛盾していたため、自動的に再計算した日付を
+// 画面上部に表示する（isStoreBreakdownConsistentがfalseを返した日がrecalculatedStoreMismatchDatesに
+// 記録される。確定済みの日は元々このチェックの対象外のため、ここにも出てこない）。
+function renderStoreMismatchRecalcNotice(){
+  const el = document.getElementById("storeMismatchRecalcNotice");
+  if(!el) return;
+  if(recalculatedStoreMismatchDates.length === 0){
+    el.style.display = "none";
+    return;
+  }
+  const sorted = [...recalculatedStoreMismatchDates].sort();
+  el.textContent = `⚠️ 保存されていた店舗別の内訳が必要数と合わなくなっていたため、次の作業中プランの日付を自動的に再計算しました：${sorted.join("、")}`;
+  el.style.display = "";
+}
+
 function initMonthlyOnigiriSection(){
   renderMonthlyOnigiriList();
   renderMonthlyOnigiriRecalcNotice();
+  renderStoreMismatchRecalcNotice();
 
   const addBtn = document.getElementById("monthlyOnigiriAddBtn");
   const statusEl = document.getElementById("monthlyOnigiriStatus");
@@ -4263,17 +4361,20 @@ function loadProdAllocData(day){
     const raw = localStorage.getItem(`chabon_prod_${mdLabel(day.dateObj)}`);
     if(!raw) return false;
     const parsed = JSON.parse(raw);
-    if(!isProdSnapshotConsistent(day, parsed)){
-      // 必要数が変わった後もlocalStorageに古い内訳が残っている状態。
+    let parsedStore = {};
+    try{
+      const rawStore = localStorage.getItem(`chabon_prodStore_${mdLabel(day.dateObj)}`);
+      parsedStore = rawStore ? JSON.parse(rawStore) : {};
+    }catch(e){ parsedStore = {}; }
+    if(!isProdSnapshotConsistent(day, parsed, parsedStore)){
+      // 必要数が変わった後もlocalStorageに古い内訳が残っている状態
+      // （具材合計・店舗別のいずれかが現在の必要数と矛盾している）。
       // 古いデータを復元せず、通常の自動計算に基づく現在の必要数からの再計算に任せる。
-      console.warn(`[admin.html] ${day.iso}: localStorageの内訳が古いため自動再計算しました（保存内訳合計が現在の必要数合計を超過）。`);
+      console.warn(`[admin.html] ${day.iso}: localStorageの内訳が古いため自動再計算しました（保存内訳合計が現在の必要数合計を超過、または店舗別の内訳が矛盾しています）。`);
       return false;
     }
     day.memberFillingQty = parsed;
-    try{
-      const rawStore = localStorage.getItem(`chabon_prodStore_${mdLabel(day.dateObj)}`);
-      day.memberStoreFillingQty = rawStore ? JSON.parse(rawStore) : {};
-    }catch(e){ day.memberStoreFillingQty = {}; }
+    day.memberStoreFillingQty = parsedStore;
     if(!day.prodManuallyEdited) day.prodManuallyEdited = {};
     Object.keys(day.memberFillingQty).forEach(name => { day.prodManuallyEdited[name] = true; });
     return true;
@@ -4692,6 +4793,7 @@ async function refreshAllData(){
     state.monthlyOnigiriAssignments = (monthlyOnigiriData && monthlyOnigiriData.assignments) || {};
     state.monthlyOnigiriInvalidRows = (monthlyOnigiriData && monthlyOnigiriData.invalidRows) || [];
     recalculatedOnigiriDates = [];
+    recalculatedStoreMismatchDates = [];
     // buildDays()がUvA学事暦補正を計算できるよう、buildDays()より前に反映しておく
     state.uvaAcademicCalendar = parseUvaAcademicCalendarSheet(uvaCalendarJson);
     state.uvaAcademicCoefficients = parseUvaAcademicCoefficientsSheet(uvaCoefficientsJson);
@@ -4743,6 +4845,7 @@ async function refreshAllData(){
     renderMonthlyOnigiriList();
     renderUvaAcademicCoefficientsList();
     renderMonthlyOnigiriRecalcNotice();
+    renderStoreMismatchRecalcNotice();
 
     if(btn){ btn.textContent = "✓ 更新しました"; }
   }catch(e){
@@ -5033,6 +5136,7 @@ async function init(){
     state.monthlyOnigiriAssignments = (monthlyOnigiriData && monthlyOnigiriData.assignments) || {};
     state.monthlyOnigiriInvalidRows = (monthlyOnigiriData && monthlyOnigiriData.invalidRows) || [];
     recalculatedOnigiriDates = [];
+    recalculatedStoreMismatchDates = [];
     // buildDays()がUvA学事暦補正を計算できるよう、buildDays()より前に反映しておく
     state.uvaAcademicCalendar = parseUvaAcademicCalendarSheet(uvaCalendarJson);
     state.uvaAcademicCoefficients = parseUvaAcademicCoefficientsSheet(uvaCoefficientsJson);
