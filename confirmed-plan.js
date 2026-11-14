@@ -38,6 +38,36 @@ function parseNingiBreakdownToMemberFillingQty(str){
   return result;
 }
 
+// "店舗名 具材×個数 具材×個数｜店舗名2 具材×個数" 形式を {店舗名: {具材名: 個数}} にパースする
+function parseStoreFillingBreakdownString(str){
+  const result = {};
+  if(!str) return result;
+  String(str).split("｜").filter(Boolean).forEach(part => {
+    const spaceIdx = part.indexOf(" ");
+    if(spaceIdx === -1) return;
+    const store = part.slice(0, spaceIdx).trim();
+    if(!store) return;
+    result[store] = parseFillingBreakdownString(part.slice(spaceIdx + 1));
+  });
+  return result;
+}
+
+// "名前:店舗名 具材×個数｜店舗名2 具材×個数；名前:..." 形式の文字列（ニギニギ隊内訳（店舗別）列）を
+// {名前: {店舗名: {具材名: 個数}}} にパースする。生産割り振りで「どの店舗の分を誰が担当したか」を
+// admin.html・production.htmlで表示するために使う（月次支払い等の集計には使わない）。
+function parseNingiBreakdownByStoreToMemberStoreFillingQty(str){
+  const result = {};
+  if(!str) return result;
+  String(str).split("；").filter(Boolean).forEach(part => {
+    const idx = part.indexOf(":");
+    if(idx === -1) return;
+    const name = part.slice(0, idx).trim();
+    if(!name) return;
+    result[name] = parseStoreFillingBreakdownString(part.slice(idx + 1));
+  });
+  return result;
+}
+
 // 「確定プラン」シートのgvizレスポンスを "M/D" -> 確定内容 のマップにパースする。
 // 確定済みかどうか・確定内容は、この結果（スプレッドシートの内容）を正とする。
 function parseConfirmedPlansSheet(json){
@@ -49,6 +79,7 @@ function parseConfirmedPlansSheet(json){
     const key = String((c[0] && (c[0].f || c[0].v)) || "").trim();
     if(!key) return;
     const memberFillingQty = parseNingiBreakdownToMemberFillingQty(c[5] ? c[5].v : "");
+    const memberStoreFillingQty = parseNingiBreakdownByStoreToMemberStoreFillingQty(c[15] ? c[15].v : "");
     const zuidBreakdown = parseFillingBreakdownString(c[9] ? c[9].v : "");
     const uvaBreakdown = parseFillingBreakdownString(c[10] ? c[10].v : "");
     const chiseBreakdown = parseFillingBreakdownString(c[11] ? c[11].v : "");
@@ -60,6 +91,9 @@ function parseConfirmedPlansSheet(json){
       rozen: c[13] && c[13].v !== null && c[13].v !== "" ? Number(c[13].v) : 0,
       memberNames: Object.keys(memberFillingQty),
       memberFillingQty,
+      // ニギニギ隊内訳（店舗別）（16列目）は後から追加した列のため、古い確定行には無い場合がある
+      // （その場合は空オブジェクト＝店舗別内訳データなしとして扱う）
+      memberStoreFillingQty,
       hqQty: c[6] && c[6].v !== null && c[6].v !== "" ? Number(c[6].v) : 0,
       hqBreakdown: parseFillingBreakdownString(c[7] ? c[7].v : ""),
       confirmedAtLabel: c[8] ? String(c[8].f || c[8].v || "") : "",

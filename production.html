@@ -401,6 +401,14 @@
     font-size: 0.8rem;
     color: #666;
   }
+  .modal-store-breakdown{ margin-top: 4px; margin-bottom: 8px; }
+  .modal-store-row{
+    display: flex;
+    justify-content: space-between;
+    padding: 0 0 2px 14px;
+    font-size: 0.74rem;
+    color: #999;
+  }
   .modal-sep{
     border: none;
     border-top: 1px solid var(--line);
@@ -553,6 +561,33 @@ function parseMembers(str){
   });
 }
 
+// "店舗名 具材×個数 具材×個数｜店舗名2 具材×個数" 形式を [{store, items}] にパースする
+function parseStoreFillings(str){
+  if(!str) return [];
+  return str.split("｜").filter(Boolean).map(part => {
+    const spaceIdx = part.indexOf(" ");
+    if(spaceIdx === -1) return null;
+    const store = part.slice(0, spaceIdx).trim();
+    if(!store) return null;
+    return { store, items: parseFillings(part.slice(spaceIdx + 1)) };
+  }).filter(Boolean);
+}
+
+// 「ニギニギ隊内訳（店舗別）」列（例："MIKI:UvA テリヤキチキン×8｜Rozengracht テリヤキチキン×10；MARI:..."）を
+// {名前: [{store, items}]} にパースする。どの店舗の分を誰が担当したかをモーダルで表示するために使う。
+function parseMembersByStore(str){
+  const result = {};
+  if(!str) return result;
+  str.split("；").filter(Boolean).forEach(part => {
+    const idx = part.indexOf(":");
+    if(idx === -1) return;
+    const name = part.slice(0, idx).trim();
+    if(!name) return;
+    result[name] = parseStoreFillings(part.slice(idx + 1));
+  });
+  return result;
+}
+
 // 確定プランの日付セルから実際の日付（年も含む）を判定する。
 // セルが実際のDate型であれば.vは表示形式に関係なく常に"Date(Y,M,D)"形式で
 // シリアライズされているため、これを最優先で使う（年も直接取得できて確実）。
@@ -598,6 +633,10 @@ async function loadData(){
     const uvaQty   = Number(c[3]?.v) || 0;
     const chiseQty = Number(c[4]?.v) || 0;
     const members  = parseMembers(c[5]?.v);
+    // ニギニギ隊内訳（店舗別）（16列目）。古い確定行には無い場合があり、その場合は
+    // 各メンバーのstoreBreakdownが空配列になる（店舗別内訳データなしとして扱う）
+    const membersByStore = parseMembersByStore(c[15]?.v);
+    members.forEach(m => { m.storeBreakdown = membersByStore[m.name] || []; });
     const total    = zuidQty + uvaQty + chiseQty;
     const sortDate = inferDate(c[0]);
     byLabel.set(dateLabel, { dateLabel, members, total, sortDate });
@@ -670,7 +709,7 @@ function memberBlockHtml(m){
   return html;
 }
 
-// モーダル内の詳細表示（名前＋合計＋具材内訳）
+// モーダル内の詳細表示（名前＋合計＋具材内訳＋店舗別内訳）
 function memberModalHtml(m){
   let html = `<div class="modal-member-row">
     <span class="modal-member-name">${m.name}</span>
@@ -682,6 +721,18 @@ function memberModalHtml(m){
       <span>×${it.qty}</span>
     </div>`;
   });
+  if(m.storeBreakdown && m.storeBreakdown.length){
+    html += `<div class="modal-store-breakdown">`;
+    m.storeBreakdown.forEach(sb => {
+      sb.items.forEach(it => {
+        html += `<div class="modal-store-row">
+          <span>${sb.store}分 ${it.filling}</span>
+          <span>×${it.qty}</span>
+        </div>`;
+      });
+    });
+    html += `</div>`;
+  }
   return html;
 }
 
