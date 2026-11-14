@@ -388,6 +388,30 @@ function handleGetDraft(ss) {
     .setMimeType(ContentService.MimeType.JSON);
 }
 
+// 指定した日（yyyy-MM-dd）の「作業中プラン」の現在の更新日時を返す（楽観的ロック用）。
+// gviz経由の読み取り（admin.html側の他の確認用fetch）はGoogleスプレッドシート側のキャッシュにより
+// 書き込み直後だと数秒程度古い値が返ることがあり、保存した直後に自分自身の書き込みを読み直す
+// 用途には使えない（これが原因で、自分の保存を「他の端末の更新」と誤判定するバグがあった）。
+// SpreadsheetAppで直接読むことで、書き込み直後でも常に最新の値を返す。
+// 返す形式はhandleSaveDraftの競合判定(dateToGvizLiteral)と揃える。
+function handleGetDraftUpdatedAt(ss, isoDate) {
+  var sheet = ss.getSheetByName("作業中プラン");
+  var updatedAt = null;
+  if (sheet) {
+    var values = sheet.getDataRange().getValues();
+    var normalizedTarget = String(isoDate);
+    for (var r = 1; r < values.length; r++) {
+      if (normalizeDateCell(values[r][0]) === normalizedTarget) {
+        var cell = values[r][3];
+        updatedAt = cell instanceof Date ? dateToGvizLiteral(cell) : (cell ? String(cell) : null);
+        break;
+      }
+    }
+  }
+  return ContentService.createTextOutput(JSON.stringify({ updatedAt: updatedAt }))
+    .setMimeType(ContentService.MimeType.JSON);
+}
+
 // admin.htmlで設定するシフト入力期間（開始日・終了日・土日を含めるか）を1行だけ保持する。
 // 複数行になる必要がない設定なので、2行目を常に上書きする（無ければ追加）。
 function handleSaveShiftConfig(ss, data) {
@@ -1149,6 +1173,10 @@ function doGetInner(e) {
 
   if (e.parameter && e.parameter.type === "draft") {
     return handleGetDraft(ss);
+  }
+
+  if (e.parameter && e.parameter.type === "draftUpdatedAt") {
+    return handleGetDraftUpdatedAt(ss, e.parameter.date);
   }
 
   if (e.parameter && e.parameter.type === "status") {
