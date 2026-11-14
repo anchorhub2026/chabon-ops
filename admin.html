@@ -470,8 +470,10 @@
   }
   .wish-hint{ display: block; font-weight: normal; color: #888; font-size: 0.66rem; }
   .wish-over-warning{ display: block; font-weight: bold; color: var(--accent); font-size: 0.66rem; }
-  /* YUMIの内訳にZuid以外の店舗が含まれるときの目印（警告ではないため控えめな色にする） */
+  /* YUMIの内訳にRozengracht・UvAが含まれるときの目印（警告ではないため控えめな色にする） */
   .yumi-non-zuid-mark{ display: block; font-size: 0.6rem; color: #888; }
+  /* 本部に枝豆・梅・うなぎ以外のUvA・Rozengracht・チセの分が残っているときの目印（手で振り直す気付き用） */
+  .hq-leftover-notice{ display: block; font-size: 0.62rem; color: var(--accent); font-weight: bold; line-height: 1.3; margin-top: 2px; }
   .prod-add-member-row{
     display: flex;
     align-items: center;
@@ -2682,13 +2684,14 @@ function memberStoreBreakdownParts(day, name, filling){
   return parts;
 }
 
-// YUMI（最後のグループ）の、ある具材の内訳に、Zuid以外の実在の店舗が含まれているか。
-// YUMIはZuidの分を優先担当し、UvA・Rozengracht・チセの分は本来「どうしても足りない場合だけ」
-// のはずなので、それが起きていることをセルに小さく目印表示するために使う（警告ではない）。
+// YUMI（最後のグループ）の、ある具材の内訳に、Rozengracht・UvAが含まれているか。
+// YUMIの内訳はZuid→チセの順が通常の割り当てであり（チセは例外ではない）、
+// Rozengracht・UvAへの割り当てだけが「それでも足りない場合」の例外にあたるため、
+// それが起きていることをセルに小さく目印表示するために使う（警告ではない）。
 function memberHasNonZuidAllocation(day, name, filling){
   if(memberGroupRank(name) !== MEMBER_GROUPS.length - 1) return false;
   const byStore = (day.memberStoreFillingQty && day.memberStoreFillingQty[name]) || {};
-  return Object.keys(byStore).some(store => store !== "Zuid" && store !== UNASSIGNED_STORE_KEY && (byStore[store][filling] || 0) > 0);
+  return ["UvA", "Rozengracht"].some(store => ((byStore[store] && byStore[store][filling]) || 0) > 0);
 }
 
 // 上記の目印（「Zuid以外あり」）のHTML。YUMI以外のメンバーは常に空文字を返す
@@ -2711,6 +2714,20 @@ function hqStoreBreakdownParts(day, filling, working){
       return { store, qty: Math.max(0, raw), overQty: Math.max(0, -raw) };
     })
     .filter(p => p.qty > 0 || p.overQty > 0);
+}
+
+// 本部に、枝豆・梅・うなぎ以外の具材でUvA・Rozengracht・チセの分が残っている場合の、
+// セルに常時表示する目印（タップしないと見えない内訳<details>とは別に、気付きやすくするため）。
+// 「本来はニギニギ隊に割り振るべきだが、どうしても割り振れなかった分」を手で振り直す
+// きっかけにするためのもので、枝豆・梅・うなぎ（常に本部）は対象外。
+const HQ_LEFTOVER_STORE_LABEL = { "UvA": "UvA", "Rozengracht": "Rozen", "チセ": "チセ" };
+function hqStoreLeftoverNoticeHtml(day, filling, working){
+  if(ALWAYS_HQ_FILLINGS.includes(filling)) return "";
+  const parts = hqStoreBreakdownParts(day, filling, working)
+    .filter(p => p.store !== "Zuid" && p.qty > 0);
+  if(parts.length === 0) return "";
+  const text = parts.map(p => `${HQ_LEFTOVER_STORE_LABEL[p.store] || p.store}分が本部に${p.qty}個残っています`).join("、");
+  return `<div class="hq-leftover-notice">${text}</div>`;
 }
 
 // 店舗別内訳（<details>の中身）のHTML。メンバー用・本部用で共通利用する
@@ -2778,11 +2795,13 @@ function splitProdTableHtml(day){
       : `${hqVal}`;
     const hqBreakdownId = `hqBreakdown-${day.dateKey}-${f}`;
     const hqBreakdownHtml = storeBreakdownDetailsHtml(hqBreakdownId, hqStoreBreakdownParts(day, f, working));
+    const hqLeftoverId = `hqLeftover-${day.dateKey}-${f}`;
     return `<tr>
         <td class="f-name">${f}<span class="hq-over-badge filling-cap-warn" id="fillingCapWarn-${day.dateKey}-${f}" style="display:none;"></span></td>
         ${memberCells}
         <td class="cell-readonly" id="prodHq-${day.dateKey}-${f}">
           <span id="prodHqVal-${day.dateKey}-${f}">${hqDisplay}</span>${hqBreakdownHtml}
+          <span id="${hqLeftoverId}">${hqStoreLeftoverNoticeHtml(day, f, working)}</span>
         </td>
         <td class="cell-readonly cell-row-total" id="prodRowTotal-${day.dateKey}-${f}">${prodRowTotal}</td>
       </tr>`;
@@ -3424,6 +3443,11 @@ function refreshProductionCellDerived(day){
       document.getElementById(`hqBreakdown-${day.dateKey}-${f}`),
       hqStoreBreakdownParts(day, f, snap.working)
     );
+    const hqLeftoverEl = document.getElementById(`hqLeftover-${day.dateKey}-${f}`);
+    if(hqLeftoverEl){
+      const newHtml = hqStoreLeftoverNoticeHtml(day, f, snap.working);
+      if(hqLeftoverEl.innerHTML !== newHtml) hqLeftoverEl.innerHTML = newHtml;
+    }
     if(!ALWAYS_HQ_FILLINGS.includes(f)){
       snap.working.forEach(name => {
         updateBreakdownDetails(
