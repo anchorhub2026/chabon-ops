@@ -474,6 +474,20 @@
   .yumi-non-zuid-mark{ display: block; font-size: 0.6rem; color: #888; }
   /* 本部に枝豆・梅・うなぎ以外のUvA・Rozengracht・チセの分が残っているときの目印（手で振り直す気付き用） */
   .hq-leftover-notice{ display: block; font-size: 0.62rem; color: var(--accent); font-weight: bold; line-height: 1.3; margin-top: 2px; }
+  .chise-priority-row{
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-bottom: 6px;
+    font-size: 0.74rem;
+    color: #666;
+  }
+  .chise-priority-row select{
+    font-size: 0.78rem;
+    padding: 2px 5px;
+    border-radius: 6px;
+    border: 1px solid var(--line);
+  }
   .prod-add-member-row{
     display: flex;
     align-items: center;
@@ -1907,6 +1921,7 @@ function buildDays(daily, hourlyByDate){
     day.uvaFillingQty = day.uva ? buildFillingDefaults(day.uva.total) : buildFillingDefaults(0);
     day.rozenOpen = day.rozen !== null;
     day.rozenFillingQty = day.rozen ? buildFillingDefaults(day.rozen.total) : buildFillingDefaults(0);
+    day.chisePriorityAssignee = "自動";
     return day;
   });
 }
@@ -2088,6 +2103,18 @@ function ensureMemberFillingQty(day, working, memberBreakdowns){
 // 超えないことは入力側（prod-cell-inputのハンドラ）で保証されているため、通常は全員分が
 // どこかの店舗に収まるが、保険としてどうしても収まらない分は「割当先なし」
 // (UNASSIGNED_STORE_KEY)として返す（実在の店舗の必要数には一切影響しない）。
+// 店舗別内訳の再構成（手入力かどうかに関わらず、day.memberFillingQtyと店舗の必要数から
+// 毎回ゼロから計算し直す）。松木さんの指示通り、次の6手順の順に割り当てる。
+// 1. チセ優先担当（day.chisePriorityAssignee）が設定されていれば、まずその人の個数を
+//    チセの分に割り当てる。
+// 2. MIKI・MARI・CHIKAKOの個数を、UvA→Rozengracht→チセの順に割り当てる。
+// 3. YUMIの個数を、Zuid→チセ（優先担当がYUMIの日はチセ→Zuid）の順に割り当てる。
+// 4. MIKI・MARI・CHIKAKOの残りの個数を、Zuidに割り当てる（CHIKAKO→MARI・MIKIの順＝
+//    手順Dの「YUMIを優先し、残りをCHIKAKO→MARI→MIKIの順」に揃える）。
+// 5. それでも割り当てられないYUMIの個数があれば、そのときだけRozengrachtに割り当てる
+//    （UvAには絶対に割り当てない）。
+// 6. どのメンバーにも割り当てられなかった店舗の分は、本部の内訳になる（この関数では
+//    メンバー側に割り当てないことで自然に表現される。本部側の計算は別途行う）。
 function computeMemberStoreBreakdown(day, workingNames, memberFillingQty){
   const result = {};
   workingNames.forEach(name => { result[name] = {}; });
@@ -2095,6 +2122,8 @@ function computeMemberStoreBreakdown(day, workingNames, memberFillingQty){
   const yumiGroupRank = MEMBER_GROUPS.length - 1;
   const groupANames = workingNames.filter(n => memberGroupRank(n) !== yumiGroupRank);
   const yumiNames = workingNames.filter(n => memberGroupRank(n) === yumiGroupRank);
+  const chisePriorityAssignee = (day.chisePriorityAssignee && day.chisePriorityAssignee !== "自動" && workingNames.includes(day.chisePriorityAssignee))
+    ? day.chisePriorityAssignee : null;
 
   function sortByRank(names, rankFn){
     return [...names].sort((a, b) => {
@@ -2118,23 +2147,32 @@ function computeMemberStoreBreakdown(day, workingNames, memberFillingQty){
       remaining[name] = (memberFillingQty[name] && memberFillingQty[name][f]) || 0;
     });
 
-    // 今月のおにぎり：Zuidの分はまず担当者に直接割り当てる（他のメンバーとは競合しない）
     let zuidRoom = storeNeedFor(day, "Zuid", f);
+    let uvaRoom = storeNeedFor(day, "UvA", f);
+    let rozenRoom = storeNeedFor(day, "Rozengracht", f);
+    let chiseRoom = storeNeedFor(day, "チセ", f);
+
+    // 今月のおにぎり：Zuidの分はまず担当者に直接割り当てる（他のメンバーとは競合しない）
     if(monthlyAssignee && f === MONTHLY_ONIGIRI_FILLING && workingNames.includes(monthlyAssignee) && zuidRoom > 0){
       const take = Math.min(zuidRoom, remaining[monthlyAssignee] || 0);
       if(take > 0){ give(monthlyAssignee, "Zuid", f, take); remaining[monthlyAssignee] -= take; zuidRoom -= take; }
     }
 
-    // フェーズ1：UvA→Rozengracht→チセ をYUMIグループ以外（MARI・MIKI・CHIKAKO）で埋める。
+    // 手順1：チセ優先担当の先取り
+    if(chisePriorityAssignee && chiseRoom > 0){
+      const take = Math.min(chiseRoom, remaining[chisePriorityAssignee] || 0);
+      if(take > 0){ give(chisePriorityAssignee, "チセ", f, take); remaining[chisePriorityAssignee] -= take; chiseRoom -= take; }
+    }
+
+    // 手順2：UvA→Rozengracht→チセ をYUMIグループ以外（MARI・MIKI・CHIKAKO）で埋める。
     // UvAはMARI・MIKIを優先しCHIKAKOは足りない場合だけの対象（手順Aに合わせ、常に
     // memberGroupRank順＝CHIKAKOを最後に回す）。Rozengracht・チセは手順B・Cで
     // 割合（ratio）優先・3人フラットに割り振られているため、ここでの店舗内訳の再構成も
     // 「その具材を多く持っている人から優先して店舗の枠を埋める」という量ベースの順序にする
     // （MARI・MIKIを常に優先する固定順にすると、実際にはCHIKAKOが多く担当している具材でも
     // 店舗内訳がMARI・MIKI側に偏ってしまい、実際の割り振りと食い違う）。
-    const groupALeftoverByStore = {};
     ["UvA", "Rozengracht", "チセ"].forEach(store => {
-      let room = storeNeedFor(day, store, f);
+      let room = store === "UvA" ? uvaRoom : (store === "Rozengracht" ? rozenRoom : chiseRoom);
       if(room > 0){
         const order = (store === "UvA")
           ? sortByRank(groupANames, n => memberGroupRank(n))
@@ -2151,12 +2189,28 @@ function computeMemberStoreBreakdown(day, workingNames, memberFillingQty){
           if(take > 0){ give(name, store, f, take); remaining[name] -= take; room -= take; }
         });
       }
-      if(room > 0) groupALeftoverByStore[store] = room;
+      if(store === "UvA") uvaRoom = room; else if(store === "Rozengracht") rozenRoom = room; else chiseRoom = room;
     });
 
-    // フェーズ2：Zuidの残り需要を YUMI→CHIKAKO→MIKI・MARI の順で埋める
+    // 手順3：YUMIの個数を、Zuid→チセ（優先担当がYUMIの日はチセ→Zuid）の順に割り当てる
+    const yumiStoreOrder = (chisePriorityAssignee === "YUMI") ? ["チセ", "Zuid"] : ["Zuid", "チセ"];
+    yumiNames.forEach(name => {
+      yumiStoreOrder.forEach(store => {
+        if(store === "Zuid"){
+          if(zuidRoom <= 0) return;
+          const take = Math.min(zuidRoom, remaining[name]);
+          if(take > 0){ give(name, "Zuid", f, take); remaining[name] -= take; zuidRoom -= take; }
+        } else {
+          if(chiseRoom <= 0) return;
+          const take = Math.min(chiseRoom, remaining[name]);
+          if(take > 0){ give(name, "チセ", f, take); remaining[name] -= take; chiseRoom -= take; }
+        }
+      });
+    });
+
+    // 手順4：MIKI・MARI・CHIKAKOの残りの個数を、Zuidに割り当てる（CHIKAKO→MARI・MIKIの順）
     if(zuidRoom > 0){
-      const order = sortByRank(workingNames, n => groupRankForStore(n, "Zuid"));
+      const order = sortByRank(groupANames, n => groupRankForStore(n, "Zuid"));
       order.forEach(name => {
         if(zuidRoom <= 0) return;
         const take = Math.min(zuidRoom, remaining[name]);
@@ -2164,18 +2218,15 @@ function computeMemberStoreBreakdown(day, workingNames, memberFillingQty){
       });
     }
 
-    // フェーズ3：UvA・Rozengracht・チセの残り（フェーズ1で埋まらなかった分）を、
-    // YUMIグループの残り希望数（フェーズ2のZuid後）で、チセ→Rozengracht→UvAの順に埋める
-    ["チセ", "Rozengracht", "UvA"].forEach(store => {
-      let room = groupALeftoverByStore[store] || 0;
-      if(room <= 0) return;
-      const order = sortByRank(yumiNames, () => 0);
-      order.forEach(name => {
-        if(room <= 0) return;
-        const take = Math.min(room, remaining[name]);
-        if(take > 0){ give(name, store, f, take); remaining[name] -= take; room -= take; }
+    // 手順5：それでも割り当てられないYUMIの個数があれば、そのときだけRozengrachtに
+    // 割り当てる（UvAには絶対に割り当てない）
+    if(rozenRoom > 0){
+      yumiNames.forEach(name => {
+        if(rozenRoom <= 0 || remaining[name] <= 0) return;
+        const take = Math.min(rozenRoom, remaining[name]);
+        if(take > 0){ give(name, "Rozengracht", f, take); remaining[name] -= take; rozenRoom -= take; }
       });
-    });
+    }
 
     // それでも割り当てられなかった分（本来は入力時のクランプにより発生しないはずの保険）
     workingNames.forEach(name => {
@@ -2879,6 +2930,23 @@ function confirmedBadgeHtml(confirmedData, snap){
   return `<span class="confirmed-badge">✓ 確定済み${snap.confirmedAtLabel ? `（${snap.confirmedAtLabel}）` : ""}</span>`;
 }
 
+// その日のチセ分を最優先で担当させるメンバーを選ぶ欄（自動／YUMI／MARI／CHIKAKO／MIKI）。
+// 確定済みで修正中でない日は確定時点の値を読み取り専用で表示し、それ以外は
+// day.chisePriorityAssigneeを直接編集できるようにする。
+function chisePriorityAssigneeSelectHtml(day, isConfirmed, isRevising, confirmedData){
+  const value = (isConfirmed && !isRevising)
+    ? ((confirmedData && confirmedData.chisePriorityAssignee) || "自動")
+    : (day.chisePriorityAssignee || "自動");
+  const disabled = (isConfirmed && !isRevising) ? "disabled" : "";
+  const options = ["自動", ...MEMBERS].map(name =>
+    `<option value="${name}"${name === value ? " selected" : ""}>${name}</option>`).join("");
+  return `
+    <div class="chise-priority-row">
+      <label for="chisePriority-${day.dateKey}">チセ分の優先担当</label>
+      <select class="chise-priority-select" id="chisePriority-${day.dateKey}" data-key="${day.dateKey}" ${disabled}>${options}</select>
+    </div>`;
+}
+
 function dayBlockHtml(day){
   const snap = computeDaySnapshot(day);
   const showUva = day.uva !== null || day.isEventDay;
@@ -2950,6 +3018,7 @@ function dayBlockHtml(day){
         </div>
         <div class="day-col-prod-head">
           <div class="col-section-title ut-prod-head">生産割り振り</div>
+          ${chisePriorityAssigneeSelectHtml(day, isConfirmed, isRevising, confirmedData)}
           <div class="prod-summary" id="summaryBlock-${day.dateKey}">${summaryHtmlFor(snap)}</div>
         </div>
       </div>
@@ -3132,10 +3201,16 @@ function buildProductionPlan(day, working, memberCaps){
     if(left > 0) hqBreakdown[f] = (hqBreakdown[f] || 0) + left;
   });
 
-  // 手順C：チセはMARI・MIKI・CHIKAKOで分け、足りない分だけYUMIに割り当てる
+  // 手順C：チセ優先担当（day.chisePriorityAssignee）が設定されていれば、まずその人の
+  // 希望数の範囲で最優先に割り当てる（「自動」の場合は対象なし＝従来通り）。
+  // 残りはMARI・MIKI・CHIKAKOで分け、足りない分だけYUMIに割り当てる
+  const chisePriorityIdx = (day.chisePriorityAssignee && day.chisePriorityAssignee !== "自動")
+    ? working.indexOf(day.chisePriorityAssignee) : -1;
   itemsDesc("チセ").forEach(({ f, need }) => {
     if(need <= 0) return;
-    let left = allocateAtStore("チセ", f, need, rozenChiseIdx);
+    let left = need;
+    if(chisePriorityIdx !== -1) left = allocateAtStore("チセ", f, left, [chisePriorityIdx]);
+    left = allocateAtStore("チセ", f, left, rozenChiseIdx);
     if(left > 0 && yumiIdx !== -1) left = allocateAtStore("チセ", f, left, [yumiIdx]);
     if(left > 0) hqBreakdown[f] = (hqBreakdown[f] || 0) + left;
   });
@@ -3423,6 +3498,17 @@ function showFillingCapWarning(day, filling, needed){
   el.__hideTimer = setTimeout(() => { el.style.display = "none"; }, 4000);
 }
 
+// YUMIの入力がZuid＋チセ＋Rozengrachtの必要数を超えようとしてクランプしたときに、
+// 一時的に「⚠️YUMIにはUvA分を割り当てられません」を表示する（数秒後に自動で消える）
+function showYumiUvaBlockedWarning(day, filling){
+  const el = document.getElementById(`fillingCapWarn-${day.dateKey}-${filling}`);
+  if(!el) return;
+  el.textContent = `⚠️YUMIにはUvA分を割り当てられません`;
+  el.style.display = "";
+  clearTimeout(el.__hideTimer);
+  el.__hideTimer = setTimeout(() => { el.style.display = "none"; }, 4000);
+}
+
 function refreshProductionCellDerived(day){
   const snap = computeDaySnapshot(day);
 
@@ -3493,6 +3579,15 @@ function bindProductionDayEvents(day){
   const container = document.getElementById(`dayblock-${day.dateKey}`);
   if(!container) return;
 
+  const chisePrioritySelect = container.querySelector(".chise-priority-select");
+  if(chisePrioritySelect){
+    chisePrioritySelect.addEventListener("change", () => {
+      day.chisePriorityAssignee = chisePrioritySelect.value;
+      saveForecast(day);
+      renderDayBlock(day);
+    });
+  }
+
   container.querySelectorAll(".prod-cell-input").forEach(input => {
     input.addEventListener("input", () => {
       const name = input.dataset.name;
@@ -3513,6 +3608,18 @@ function bindProductionDayEvents(day){
         newQty = maxAllowed;
         input.value = String(newQty);
         showFillingCapWarning(day, filling, needed);
+      }
+
+      // YUMIはUvAに絶対に割り当てられないため、Zuid・チセ・Rozengrachtの必要数の合計を
+      // 超える入力は（他の必要数クランプとは別に）受け付けない
+      if(name === "YUMI"){
+        const roomNonUva = storeNeedFor(day, "Zuid", filling) + storeNeedFor(day, "チセ", filling) + storeNeedFor(day, "Rozengracht", filling);
+        const yumiMaxAllowed = Math.max(0, Math.min(maxAllowed, roomNonUva - othersSum));
+        if(newQty > yumiMaxAllowed){
+          newQty = yumiMaxAllowed;
+          input.value = String(newQty);
+          showYumiUvaBlockedWarning(day, filling);
+        }
       }
 
       day.memberFillingQty[name][filling] = newQty;
@@ -3635,6 +3742,7 @@ function startRevisingDay(day){
   day.rozenFillingQty = confirmed.hasDetailBreakdown
     ? { ...buildFillingDefaults(0), ...confirmed.rozenBreakdown }
     : buildFillingDefaults(confirmed.rozen || 0);
+  day.chisePriorityAssignee = confirmed.chisePriorityAssignee || "自動";
   // 確定時点で販売実績があった店舗は「営業」扱いにする（土日イベント等でzuidOpen/uvaOpenの
   // 既定値が休みになっている場合への対策。既に営業中であれば変更しない）
   day.zuidOpen = day.zuidOpen || confirmed.zuid > 0;
@@ -3736,6 +3844,7 @@ async function publishDayRevision(day){
     rozenBreakdown: rozenBreakdownStr,
     chiseBreakdown: chiseBreakdownStr,
     ningiBreakdownByStore,
+    chisePriorityAssignee: day.chisePriorityAssignee || "自動",
     expectedConfirmedAt: day.revisingExpectedConfirmedAtRaw || undefined,
   };
 
@@ -3762,6 +3871,7 @@ async function publishDayRevision(day){
       chiseBreakdown: parseFillingBreakdownString(chiseBreakdownStr),
       hasDetailBreakdown: true,
       revisedAtLabel: "たった今",
+      chisePriorityAssignee: day.chisePriorityAssignee || "自動",
     };
     day.isRevising = false;
     day.revisingWorking = null;
@@ -3868,6 +3978,7 @@ async function saveDraftToSheet(day){
     },
     prod: day.memberFillingQty || {},
     prodStore: day.memberStoreFillingQty || {},
+    chisePriorityAssignee: day.chisePriorityAssignee || "自動",
     expectedUpdatedAt: day.draftUpdatedAtRaw || undefined,
   };
   try{
@@ -3941,6 +4052,8 @@ async function fetchBootstrap(){
           // （Code.gs側もDateオブジェクトから同じ形式の文字列を作って比較するため、
           // 　クライアント側で日時を再フォーマットする必要はない）
           updatedAtRaw: (c[3] && c[3].v !== undefined && c[3].v !== null) ? String(c[3].v) : null,
+          // チセ優先担当（6列目）は後から追加した列のため、無ければ既定「自動」として扱う
+          chisePriorityAssignee: String((c[5] && c[5].v) || "") || "自動",
         });
       }catch(e){ /* 壊れたJSON行は無視する */ }
     });
@@ -3999,6 +4112,7 @@ function applyDraftToDay(day, draft){
   if(fc.uvaFillingQty)  day.uvaFillingQty  = { ...buildFillingDefaults(0), ...fc.uvaFillingQty };
   if(fc.zuidOpen !== undefined) day.zuidOpen = fc.zuidOpen;
   if(fc.uvaOpen  !== undefined) day.uvaOpen  = fc.uvaOpen;
+  if(draft.chisePriorityAssignee) day.chisePriorityAssignee = draft.chisePriorityAssignee;
   if(draft.prod && Object.keys(draft.prod).length > 0){
     if(isProdSnapshotConsistent(day, draft.prod)){
       day.memberFillingQty = { ...draft.prod };
@@ -4488,6 +4602,7 @@ function saveForecast(day){
     zuidOpen: day.zuidOpen,
     uvaOpen:  day.uvaOpen,
     rozenOpen: day.rozenOpen,
+    chisePriorityAssignee: day.chisePriorityAssignee || "自動",
   };
   try{ localStorage.setItem(`chabon_forecast_${mdLabel(day.dateObj)}`, JSON.stringify(data)); }catch(e){}
   scheduleDraftSave(day);
@@ -4504,6 +4619,7 @@ function loadForecastData(day){
     if(data.zuidOpen !== undefined) day.zuidOpen = data.zuidOpen;
     if(data.uvaOpen  !== undefined) day.uvaOpen  = data.uvaOpen;
     if(data.rozenOpen !== undefined) day.rozenOpen = data.rozenOpen;
+    if(data.chisePriorityAssignee) day.chisePriorityAssignee = data.chisePriorityAssignee;
     return true;
   }catch(e){ return false; }
 }
@@ -4546,6 +4662,7 @@ function resetDayData(day){
   day.uvaFillingQty = day.uva ? buildFillingDefaults(day.uva.total) : buildFillingDefaults(0);
   day.rozenOpen = day.rozen !== null;
   day.rozenFillingQty = day.rozen ? buildFillingDefaults(day.rozen.total) : buildFillingDefaults(0);
+  day.chisePriorityAssignee = "自動";
   day.memberFillingQty = {};
   day.memberStoreFillingQty = {};
   day.prodManuallyEdited = {};
@@ -4767,6 +4884,7 @@ async function confirmWeek(weekIndex){
       // ニギニギ隊内訳（店舗別）：どの店舗の分を誰が担当したかの記録。末尾の新しい列に保存する。
       // 既存の「ニギニギ隊内訳」列（具材合計）は変えないため、月次支払い集計には影響しない
       ningiBreakdownByStore,
+      chisePriorityAssignee: d.chisePriorityAssignee || "自動",
       // state.confirmedPlansByDateを即時反映するための生データ（送信ペイロードには含めない）
       _local: { snap, zuidBreakdown, uvaBreakdown, rozenBreakdown, chiseBreakdown },
     };
@@ -4810,6 +4928,7 @@ async function confirmWeek(weekIndex){
         hqQty: snap.hqQty, hqBreakdown: { ...snap.hqBreakdown },
         confirmedAtLabel: "確定済み",
         zuidBreakdown, uvaBreakdown, rozenBreakdown, chiseBreakdown, hasDetailBreakdown: true,
+        chisePriorityAssignee: srcDay.chisePriorityAssignee || "自動",
       };
     });
     renderCombined();
