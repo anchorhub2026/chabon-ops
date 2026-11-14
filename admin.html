@@ -784,6 +784,9 @@
   .prod-cell-breakdown{ font-size: 0.66rem; color: #888; margin-top: 2px; }
   .prod-cell-breakdown summary{ cursor: pointer; }
   .prod-cell-breakdown div{ white-space: nowrap; text-align: left; }
+  /* 個数を変えた直後に、数字が変わったことが分かるよう一瞬だけ色を変える（控えめに） */
+  @keyframes cellFlash{ 0%{ background-color: #fff3b0; } 100%{ background-color: transparent; } }
+  .cell-flash{ animation: cellFlash 900ms ease-out; }
   /* 具材テーブルの合計行（実際に確定・入力されている値）は、推奨数カードのヘッダーより
      目立つよう大きめのフォントサイズにする */
   table.day-sub-table tfoot td{
@@ -2537,17 +2540,45 @@ function splitForecastTableHtml(day){
     </table>`;
 }
 
-// メンバー×具材のセルの下に、タップで開ける店舗別内訳を表示する（表の見た目は崩さない）。
-// 内訳が無い（qty=0）場合は何も表示しない。
-function storeBreakdownSummaryHtml(day, name, filling){
+// メンバー1人分の、ある具材の店舗別内訳（qty>0の店舗のみ）
+function memberStoreBreakdownParts(day, name, filling){
   const byStore = (day.memberStoreFillingQty && day.memberStoreFillingQty[name]) || {};
-  const parts = STORE_PRIORITY
+  return STORE_PRIORITY
     .map(store => ({ store, qty: (byStore[store] && byStore[store][filling]) || 0 }))
     .filter(p => p.qty > 0);
-  if(parts.length === 0) return "";
-  return `<details class="prod-cell-breakdown"><summary>内訳</summary>${
-    parts.map(p => `<div>${p.store}×${p.qty}</div>`).join("")
-  }</details>`;
+}
+
+// 本部の、ある具材の店舗別内訳。本部＝その店舗の必要数−（ニギニギ隊＋CHISEの、その店舗への割り振り）。
+// 必要数より多く割り振られている場合（手動入力等による超過）は0とし、超過分をoverQtyに記録する
+// （入力は止めず、内訳のポップアップ内に警告を表示するために使う）。
+function hqStoreBreakdownParts(day, filling, working){
+  return STORE_PRIORITY
+    .map(store => {
+      const need = storeNeedFor(day, store, filling);
+      const allocated = working.reduce((s, name) => s +
+        ((day.memberStoreFillingQty[name] && day.memberStoreFillingQty[name][store] && day.memberStoreFillingQty[name][store][filling]) || 0), 0);
+      const raw = need - allocated;
+      return { store, qty: Math.max(0, raw), overQty: Math.max(0, -raw) };
+    })
+    .filter(p => p.qty > 0 || p.overQty > 0);
+}
+
+// 店舗別内訳（<details>の中身）のHTML。メンバー用・本部用で共通利用する
+// （本部の場合のみoverQtyが入り、超過警告バッジが付く）。
+function storeBreakdownContentHtml(parts){
+  if(!parts || parts.length === 0) return "";
+  return `<summary>内訳</summary>${parts.map(p =>
+    `<div>${p.store}×${p.qty}${p.overQty ? `<span class="hq-over-badge">⚠️${p.overQty}個超過</span>` : ""}</div>`
+  ).join("")}`;
+}
+
+// メンバー×具材・本部×具材のセルの下に、タップで開ける店舗別内訳を表示する（表の見た目は崩さない）。
+// idを付けて常にDOMに存在させることで、個数変更時にrefreshProductionCellDerived側が
+// <details>自体を作り直さずに中身だけ更新でき、開いた状態(open)を保ったまま数字を更新できる。
+// 内訳が無い場合は空のまま非表示にしておく。
+function storeBreakdownDetailsHtml(id, parts){
+  const hidden = !parts || parts.length === 0;
+  return `<details class="prod-cell-breakdown" id="${id}"${hidden ? ' style="display:none;"' : ''}>${storeBreakdownContentHtml(parts)}</details>`;
 }
 
 function splitProdTableHtml(day){
@@ -2580,7 +2611,8 @@ function splitProdTableHtml(day){
     const isFixedHq = ALWAYS_HQ_FILLINGS.includes(f);
     const memberCells = working.map(name => {
       const qty = (day.memberFillingQty[name] && day.memberFillingQty[name][f]) || 0;
-      const breakdownHtml = isFixedHq ? "" : storeBreakdownSummaryHtml(day, name, f);
+      const breakdownId = `cellBreakdown-${day.dateKey}-${name}-${f}`;
+      const breakdownHtml = isFixedHq ? "" : storeBreakdownDetailsHtml(breakdownId, memberStoreBreakdownParts(day, name, f));
       return (isFixedHq || locked)
         ? `<td class="cell-readonly">${qty || "—"}${breakdownHtml}</td>`
         : `<td>${prodCellStepperHtml(day, name, f, qty)}${breakdownHtml}</td>`;
@@ -2591,10 +2623,14 @@ function splitProdTableHtml(day){
     const hqDisplay = overQty
       ? `<span class="hq-negative">${hqVal}<span class="hq-over-badge">⚠️${overQty}個超過</span></span>`
       : `${hqVal}`;
+    const hqBreakdownId = `hqBreakdown-${day.dateKey}-${f}`;
+    const hqBreakdownHtml = storeBreakdownDetailsHtml(hqBreakdownId, hqStoreBreakdownParts(day, f, working));
     return `<tr>
         <td class="f-name">${f}</td>
         ${memberCells}
-        <td class="cell-readonly" id="prodHq-${day.dateKey}-${f}">${hqDisplay}</td>
+        <td class="cell-readonly" id="prodHq-${day.dateKey}-${f}">
+          <span id="prodHqVal-${day.dateKey}-${f}">${hqDisplay}</span>${hqBreakdownHtml}
+        </td>
         <td class="cell-readonly cell-row-total" id="prodRowTotal-${day.dateKey}-${f}">${prodRowTotal}</td>
       </tr>`;
   }).join("");
@@ -3150,6 +3186,29 @@ function prodCellStepperHtml(day, name, filling, qty){
 }
 
 // セル個数の入力中に、テーブル自体は再生成せず、本部列・合計行・合計列・summaryだけを更新する（フォーカスを失わない）
+// 個数を変えた直後に、変わったことが分かるよう一瞬だけ色を変える（控えめに）
+function flashCell(el){
+  if(!el) return;
+  el.classList.remove("cell-flash");
+  void el.offsetWidth; // 直前にflash中だった場合でもアニメーションを再始動させる
+  el.classList.add("cell-flash");
+}
+
+// <details>要素の中身だけを更新する（<details>自体は作り直さないため、開いていれば開いたまま
+// 数字が更新される）。中身が実際に変わった場合のみflash表示し、無駄な点滅を避ける。
+function updateBreakdownDetails(el, parts){
+  if(!el) return;
+  const newContent = storeBreakdownContentHtml(parts);
+  const hasParts = !!(parts && parts.length);
+  if(el.innerHTML !== newContent){
+    el.innerHTML = newContent;
+    el.style.display = hasParts ? "" : "none";
+    flashCell(el);
+  } else {
+    el.style.display = hasParts ? "" : "none";
+  }
+}
+
 function refreshProductionCellDerived(day){
   const snap = computeDaySnapshot(day);
 
@@ -3159,10 +3218,25 @@ function refreshProductionCellDerived(day){
   FILLINGS.forEach(f => {
     const hqVal = snap.hqBreakdown[f] || 0;
     const overQty = snap.fillingOveredBy[f];
-    const hqEl = document.getElementById(`prodHq-${day.dateKey}-${f}`);
-    if(hqEl) hqEl.innerHTML = overQty
-      ? `<span class="hq-negative">${hqVal}<span class="hq-over-badge">⚠️${overQty}個超過</span></span>`
-      : `${hqVal}`;
+    const hqValEl = document.getElementById(`prodHqVal-${day.dateKey}-${f}`);
+    if(hqValEl){
+      const newHtml = overQty
+        ? `<span class="hq-negative">${hqVal}<span class="hq-over-badge">⚠️${overQty}個超過</span></span>`
+        : `${hqVal}`;
+      if(hqValEl.innerHTML !== newHtml){ hqValEl.innerHTML = newHtml; flashCell(hqValEl); }
+    }
+    updateBreakdownDetails(
+      document.getElementById(`hqBreakdown-${day.dateKey}-${f}`),
+      hqStoreBreakdownParts(day, f, snap.working)
+    );
+    if(!ALWAYS_HQ_FILLINGS.includes(f)){
+      snap.working.forEach(name => {
+        updateBreakdownDetails(
+          document.getElementById(`cellBreakdown-${day.dateKey}-${name}-${f}`),
+          memberStoreBreakdownParts(day, name, f)
+        );
+      });
+    }
 
     const rowTotal = snap.working.reduce((s, name) => s + ((day.memberFillingQty[name] && day.memberFillingQty[name][f]) || 0), 0) + hqVal;
     const rowTotalEl = document.getElementById(`prodRowTotal-${day.dateKey}-${f}`);
