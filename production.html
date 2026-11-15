@@ -470,45 +470,59 @@
   }
   .modal-close-btn:active{ background: var(--line); }
 
-  /* ── スマホ：コンパクト表示（768px以下） ── */
+  /* ── スマホ：コンパクト表示（768px以下） ──
+     土日もRozengrachtが営業するため、カレンダーは常に7列（月〜日）で表示する。
+     5列のときより1列あたりの幅が狭くなる分、768px以下では少し強めに詰める。 */
   @media (max-width: 768px){
     header{ padding: 12px 14px; }
     .header-left h1{ font-size: 1.05rem; }
     .header-logo{ height: 80px; }
-    .cal-card{ padding: 6px 3px; }
-    .cal{ min-width: 0; border-spacing: 2px; }
-    .cal thead th{ font-size: 0.65rem; padding: 4px 1px; border-radius: 4px; }
+    .cal-card{ padding: 5px 2px; }
+    .cal{ min-width: 0; border-spacing: 1.5px; }
+    .cal thead th{ font-size: 0.6rem; padding: 3px 0; border-radius: 4px; }
     /* セル：コンパクト化 */
-    .cell{ padding: 4px 3px 3px; min-height: 48px; border-radius: 6px; }
-    .cell-date{ margin-bottom: 3px; padding-bottom: 3px; gap: 2px; }
-    .date-num{ font-size: 0.75rem; }
-    .today-badge{ font-size: 0.42rem; padding: 1px 3px; }
+    .cell{ padding: 3px 2px 2px; min-height: 46px; border-radius: 5px; }
+    .cell-date{ margin-bottom: 2px; padding-bottom: 2px; gap: 1px; }
+    .date-num{ font-size: 0.68rem; }
+    .today-badge{ font-size: 0.38rem; padding: 1px 2px; }
     /* メンバー：コンパクト */
     .member{ margin-bottom: 0; }
-    .member-header{ line-height: 1.2; gap: 2px; }
-    .member-name{ font-size: 0.72rem; letter-spacing: 0; line-height: 1.2; }
-    .member-subtotal{ font-size: 0.78rem; line-height: 1.2; }
+    .member-header{ line-height: 1.15; gap: 1px; }
+    .member-name{ font-size: 0.64rem; letter-spacing: 0; line-height: 1.15; }
+    .member-subtotal{ font-size: 0.7rem; line-height: 1.15; }
     /* 具材行・区切り・個：スマホでは非表示 */
     .filling-row{ display: none; }
     .member-sep{ display: none; }
     .unit{ display: none; }
     /* TOTAL バー：コンパクト */
-    .cell-total{ padding: 2px 4px; border-radius: 4px; margin-top: 3px; }
+    .cell-total{ padding: 2px 3px; border-radius: 4px; margin-top: 2px; }
     /* 「TOTAL」のままだと3桁の個数（100個以上）と並べたときに幅が足りず、
        セルのoverflow:hiddenで数字が見切れてしまうため、スマホでは「計」に短縮する
        （テキストはJS側で変更せず、CSSのみでTOTALを非表示にして::beforeで差し替える） */
     .total-label{ font-size: 0; }
-    .total-label::before{ content: "計"; font-size: 0.56rem; }
-    .total-num{ font-size: 0.78rem; }
+    .total-label::before{ content: "計"; font-size: 0.52rem; }
+    .total-num{ font-size: 0.7rem; }
     /* タップヒント：スマホのみ表示 */
-    .tap-hint{ display: block; font-size: 0.4rem; color: #ccc; text-align: right; margin-top: 2px; }
+    .tap-hint{ display: block; font-size: 0.38rem; color: #ccc; text-align: right; margin-top: 2px; }
     /* タップ操作フィードバック */
     .cell.has-plan{ cursor: pointer; }
     .cell.has-plan:active{ opacity: 0.8; }
     /* その他 */
     .month-title{ font-size: 0.95rem; min-width: 100px; }
     .month-nav button{ padding: 5px 13px; font-size: 0.75rem; }
-    .no-plan{ font-size: 0.5rem; margin-top: 6px; }
+    .no-plan{ font-size: 0.46rem; margin-top: 6px; }
+  }
+
+  /* ── さらに狭い画面（390px前後のスマホ本体幅）向けの追加調整 ── */
+  @media (max-width: 420px){
+    .main-wrap{ padding: 12px 6px 60px; }
+    .cal-card{ padding: 4px 1px; }
+    .cal{ border-spacing: 1px; }
+    .cal thead th{ font-size: 0.56rem; }
+    .cell{ padding: 2px 1px 1px; min-height: 42px; }
+    .date-num{ font-size: 0.62rem; }
+    .member-name{ font-size: 0.58rem; }
+    .member-subtotal{ font-size: 0.64rem; }
   }
 </style>
 </head>
@@ -553,7 +567,7 @@
 
 <script>
 const SPREADSHEET_ID = "1PHf1o3smqIQdeFkhBHjBZUEub7VtRcynQLllmSR7w-s";
-const COL_LABELS = ["月","火","水","木","金"];
+const COL_LABELS = ["月","火","水","木","金","土","日"];
 
 let dispYear, dispMonth;
 let allPlans = {};
@@ -679,36 +693,24 @@ async function loadData(){
 }
 
 /* ── Calendar render ── */
-// 週ごとに、月〜金の日付配列に加えて、その週の土曜日・日曜日の実日付（Dateオブジェクト）を
-// それぞれ返す。土曜日・日曜日は月をまたぐ場合もあるため、月内の日付配列とは別にDateで
-// 持っておき、確定プランの有無判定・表示どちらもこのDateから計算する。
+// 週ごとに、月〜日の7日分の日付（月内の日なら日付の数値、月外ならnull）を返す。
+// Rozengrachtが土日も営業するため、土日も平日と同じ1つの配列の中で扱う
+// （以前は土日だけ別枠のDateフィールドで管理していたが、常に表示するため不要になった）。
 function buildWeeks(yr, mo){
   const lastDay = new Date(yr, mo + 1, 0).getDate();
   const weeks = [];
-  let week = new Array(5).fill(null);
+  let week = new Array(7).fill(null);
 
   function finalizeWeek(){
-    let saturday = null, sunday = null;
-    for(let col = 0; col < 5; col++){
-      if(week[col] !== null){
-        const monday = new Date(yr, mo, week[col]);
-        monday.setDate(monday.getDate() - col);
-        saturday = new Date(monday);
-        saturday.setDate(saturday.getDate() + 5);
-        sunday = new Date(monday);
-        sunday.setDate(sunday.getDate() + 6);
-        break;
-      }
-    }
-    weeks.push({ days: week, saturday, sunday });
-    week = new Array(5).fill(null);
+    weeks.push({ days: week });
+    week = new Array(7).fill(null);
   }
 
   for(let d = 1; d <= lastDay; d++){
     const dow = new Date(yr, mo, d).getDay();
-    if(dow === 0 || dow === 6) continue; // 土日はday配列に含めず、saturday/sundayで別枠管理
-    week[dow - 1] = d; // dow: 1(月)→0 ... 5(金)→4
-    if(dow === 5) finalizeWeek();
+    const col = dow === 0 ? 6 : dow - 1; // dow: 1(月)→0 ... 6(土)→5, 0(日)→6
+    week[col] = d;
+    if(dow === 0) finalizeWeek();
   }
   if(week.some(v => v !== null)) finalizeWeek();
   return weeks;
@@ -817,40 +819,24 @@ function renderCalendar(){
 
   const weeks = buildWeeks(yr, mo);
 
-  // 確定プランに土曜日・日曜日のデータが存在する週が1つでもあれば、その月のカレンダーには
-  // それぞれ土曜列・日曜列を追加する（admin.htmlの「土日イベントを追加」機能で設定した
-  // データを表示するため）。土曜・日曜は互いに独立して判定する。
-  // データがない通常の月は、これまで通り月〜金の5列のまま。
-  const showSat = weeks.some(wk => wk.saturday && allPlans[planKeyForDate(wk.saturday)]);
-  const showSun = weeks.some(wk => wk.sunday && allPlans[planKeyForDate(wk.sunday)]);
-  const colLabels = [...COL_LABELS, ...(showSat ? ["土"] : []), ...(showSun ? ["日"] : [])];
-
+  // Rozengrachtが土日も営業するため、土曜・日曜の列は常に表示する
+  // （データが無い週でも空セルとして表示し、月によって列数が変わらないようにする）。
   let html = `<table class="cal"><thead><tr>`;
-  colLabels.forEach(lbl => {
-    const cls = lbl === "日" ? "col-sun" : (lbl === "土" ? "col-sat" : "");
+  COL_LABELS.forEach((lbl, ci) => {
+    const cls = ci === 6 ? "col-sun" : (ci === 5 ? "col-sat" : "");
     html += `<th class="${cls}">${lbl}</th>`;
   });
   html += `</tr></thead><tbody>`;
 
   for(const wk of weeks){
     html += `<tr>`;
-    for(let ci = 0; ci < 5; ci++){
+    for(let ci = 0; ci < 7; ci++){
       const day = wk.days[ci];
       if(day === null){
         html += `<td class="empty-cell"></td>`;
         continue;
       }
-      html += dayCellHtml(new Date(yr, mo, day), today, false, false);
-    }
-    if(showSat){
-      html += wk.saturday
-        ? dayCellHtml(wk.saturday, today, false, true)
-        : `<td class="empty-cell"></td>`;
-    }
-    if(showSun){
-      html += wk.sunday
-        ? dayCellHtml(wk.sunday, today, true, false)
-        : `<td class="empty-cell"></td>`;
+      html += dayCellHtml(new Date(yr, mo, day), today, ci === 6, ci === 5);
     }
     html += `</tr>`;
   }
