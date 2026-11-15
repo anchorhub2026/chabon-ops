@@ -437,12 +437,13 @@ async function fetchShiftConfig(){
   }
 }
 
-// 設定が読み込めない場合のフォールバック：次の月曜から2週間分（月〜金）
+// 設定が読み込めない場合のフォールバック：次の月曜から2週間分（土日を含む）。
+// Rozengrachtが土日も営業するため、土日を含めるのが既定とする
 function getFallbackConfig(){
   const start = getNextMonday(new Date());
   const end = new Date(start);
-  end.setDate(start.getDate() + 13); // 2週間分（土日を含む14日の範囲。表示時に平日だけに絞る）
-  return { startDate: isoDateStr(start), endDate: isoDateStr(end), includeWeekends: false };
+  end.setDate(start.getDate() + 13); // 2週間分（土日を含む14日の範囲）
+  return { startDate: isoDateStr(start), endDate: isoDateStr(end), includeWeekends: true };
 }
 
 // 設定期間内の日付のうち、土日を含めるかどうかでフィルタした一覧を返す
