@@ -3280,6 +3280,9 @@ function computeConfirmedDaySnapshot(day, confirmed){
   const chiseQty = confirmed.chise;
   const total = confirmed.zuid + confirmed.uva + confirmed.chise + (confirmed.rozen || 0);
 
+  // 「確定後に予測が変わっています」の差分は、確定時点の内訳(before)と、画面上部の
+  // 販売予測の表に今まさに表示されている最新のライブ予測(after)を比較する必要があるため、
+  // day.zuidFillingQty等を確定済みの値で上書きする前に（＝まだライブの値のままの時点で）計算する。
   const confirmedForecastDiff = [];
   if(confirmed.hasDetailBreakdown){
     FILLINGS.forEach(f => {
@@ -3291,6 +3294,25 @@ function computeConfirmedDaySnapshot(day, confirmed){
     const currentTotal = (day.zuidOpen ? sumQtyMap(day.zuidFillingQty) : 0) + (day.uvaOpen ? sumQtyMap(day.uvaFillingQty) : 0) + (day.rozenOpen ? sumQtyMap(day.rozenFillingQty) : 0) + (state.chiseByDate[mdLabel(day.dateObj)] ? state.chiseByDate[mdLabel(day.dateObj)].subtotal : 0);
     if(total !== currentTotal) confirmedForecastDiff.push({ filling: "合計", before: total, after: currentTotal });
   }
+
+  // 店舗別の内訳・本部の警告・整合性チェック（storeNeedFor/neededQtyFor経由）は、必ず
+  // 確定プランの値を使う（画面上部の販売予測の表と同じデータを参照する）。これをしないと、
+  // day.zuidFillingQty等が、確定後に再計算されたライブの推奨値や古い作業中プランの
+  // 復元値のまま残ってしまい、確定済みの予測（例：UvAが0）と、生産割り振り表の店舗別内訳・
+  // 本部の「○○分が本部に残っています」通知が別のデータを参照する不整合になる
+  // （例：UvAの予測を0にした後も、古いUvA内訳が本部の残りとして表示され続ける不具合）。
+  day.zuidOpen = true;
+  day.uvaOpen = true;
+  day.rozenOpen = true;
+  day.zuidFillingQty = confirmed.hasDetailBreakdown
+    ? { ...buildFillingDefaults(0), ...confirmed.zuidBreakdown }
+    : buildFillingDefaults(confirmed.zuid);
+  day.uvaFillingQty = confirmed.hasDetailBreakdown
+    ? { ...buildFillingDefaults(0), ...confirmed.uvaBreakdown }
+    : buildFillingDefaults(confirmed.uva);
+  day.rozenFillingQty = confirmed.hasDetailBreakdown
+    ? { ...buildFillingDefaults(0), ...confirmed.rozenBreakdown }
+    : buildFillingDefaults(confirmed.rozen || 0);
 
   return {
     chiseQty, total, working, memberCaps: memberTotals, capTotal: ningiTotal, allocationTarget: total,
