@@ -470,10 +470,8 @@
   }
   .wish-hint{ display: block; font-weight: normal; color: #888; font-size: 0.66rem; }
   .wish-over-warning{ display: block; font-weight: bold; color: var(--accent); font-size: 0.66rem; }
-  /* YUMIの内訳にRozengracht・UvAが含まれるときの目印（警告ではないため控えめな色にする） */
+  /* YUMI・CHIKAKOの内訳にZuid以外が含まれるときの目印（警告ではないため控えめな色にする） */
   .yumi-non-zuid-mark{ display: block; font-size: 0.6rem; color: #888; }
-  /* 本部に枝豆・梅・うなぎ以外のUvA・Rozengracht・チセの分が残っているときの目印（手で振り直す気付き用） */
-  .hq-leftover-notice{ display: block; font-size: 0.62rem; color: var(--accent); font-weight: bold; line-height: 1.3; margin-top: 2px; }
   .chise-priority-row{
     display: flex;
     align-items: center;
@@ -2664,19 +2662,27 @@ function memberStoreBreakdownParts(day, name, filling){
   return parts;
 }
 
-// YUMI（最後のグループ）の、ある具材の内訳に、Rozengracht・UvAが含まれているか。
+// 「Zuid以外あり」の目印を付ける対象メンバーごとの、対象とする店舗。
 // YUMIの内訳はZuid→チセの順が通常の割り当てであり（チセは例外ではない）、
 // Rozengracht・UvAへの割り当てだけが「それでも足りない場合」の例外にあたるため、
-// それが起きていることをセルに小さく目印表示するために使う（警告ではない）。
+// YUMIはUvA・Rozengrachtのみを対象にする。
+// CHIKAKOはUvA・Rozengracht・チセを担当することがある（自動割り振りのルール自体は
+// 変えない）ため、Zuid以外（UvA・Rozengracht・チセ）すべてを対象にする。
+// MARI・MIKI・本部・CHISEには付けない。
+const NON_ZUID_MARK_TARGET_STORES = {
+  YUMI: ["UvA", "Rozengracht"],
+  CHIKAKO: ["UvA", "Rozengracht", "チセ"],
+};
 function memberHasNonZuidAllocation(day, name, filling){
-  if(memberGroupRank(name) !== MEMBER_GROUPS.length - 1) return false;
+  const stores = NON_ZUID_MARK_TARGET_STORES[name];
+  if(!stores) return false;
   const byStore = (day.memberStoreFillingQty && day.memberStoreFillingQty[name]) || {};
-  return ["UvA", "Rozengracht"].some(store => ((byStore[store] && byStore[store][filling]) || 0) > 0);
+  return stores.some(store => ((byStore[store] && byStore[store][filling]) || 0) > 0);
 }
 
-// 上記の目印（「Zuid以外あり」）のHTML。YUMI以外のメンバーは常に空文字を返す
+// 上記の目印（「Zuid以外あり」）のHTML。対象外のメンバーは常に空文字を返す
 function nonZuidMarkHtml(day, name, filling){
-  if(memberGroupRank(name) !== MEMBER_GROUPS.length - 1) return "";
+  if(!NON_ZUID_MARK_TARGET_STORES[name]) return "";
   const id = `yumiNonZuid-${day.dateKey}-${name}-${filling}`;
   const show = memberHasNonZuidAllocation(day, name, filling);
   return `<span class="yumi-non-zuid-mark" id="${id}" style="${show ? "" : "display:none;"}">Zuid以外あり</span>`;
@@ -2694,20 +2700,6 @@ function hqStoreBreakdownParts(day, filling, working){
       return { store, qty: Math.max(0, raw), overQty: Math.max(0, -raw) };
     })
     .filter(p => p.qty > 0 || p.overQty > 0);
-}
-
-// 本部に、枝豆・梅・うなぎ以外の具材でUvA・Rozengracht・チセの分が残っている場合の、
-// セルに常時表示する目印（タップしないと見えない内訳<details>とは別に、気付きやすくするため）。
-// 「本来はニギニギ隊に割り振るべきだが、どうしても割り振れなかった分」を手で振り直す
-// きっかけにするためのもので、枝豆・梅・うなぎ（常に本部）は対象外。
-const HQ_LEFTOVER_STORE_LABEL = { "UvA": "UvA", "Rozengracht": "Rozen", "チセ": "チセ" };
-function hqStoreLeftoverNoticeHtml(day, filling, working){
-  if(ALWAYS_HQ_FILLINGS.includes(filling)) return "";
-  const parts = hqStoreBreakdownParts(day, filling, working)
-    .filter(p => p.store !== "Zuid" && p.qty > 0);
-  if(parts.length === 0) return "";
-  const text = parts.map(p => `${HQ_LEFTOVER_STORE_LABEL[p.store] || p.store}分が本部に${p.qty}個残っています`).join("、");
-  return `<div class="hq-leftover-notice">${text}</div>`;
 }
 
 // 店舗別内訳（<details>の中身）のHTML。メンバー用・本部用で共通利用する
@@ -2775,13 +2767,11 @@ function splitProdTableHtml(day){
       : `${hqVal}`;
     const hqBreakdownId = `hqBreakdown-${day.dateKey}-${f}`;
     const hqBreakdownHtml = storeBreakdownDetailsHtml(hqBreakdownId, hqStoreBreakdownParts(day, f, working));
-    const hqLeftoverId = `hqLeftover-${day.dateKey}-${f}`;
     return `<tr>
         <td class="f-name">${f}<span class="hq-over-badge filling-cap-warn" id="fillingCapWarn-${day.dateKey}-${f}" style="display:none;"></span></td>
         ${memberCells}
         <td class="cell-readonly" id="prodHq-${day.dateKey}-${f}">
           <span id="prodHqVal-${day.dateKey}-${f}">${hqDisplay}</span>${hqBreakdownHtml}
-          <span id="${hqLeftoverId}">${hqStoreLeftoverNoticeHtml(day, f, working)}</span>
         </td>
         <td class="cell-readonly cell-row-total" id="prodRowTotal-${day.dateKey}-${f}">${prodRowTotal}</td>
       </tr>`;
@@ -2938,7 +2928,6 @@ function dayBlockHtml(day){
             <div class="day-weather"><span class="weather-icon">${day.weatherIcon}</span><span class="weather-temp">${day.tempLabel}</span></div>
           </div>
           ${(day.holidayName || (day.nsDisruptions && day.nsDisruptions.length) || isConfirmed || isRevising) ? `<div class="day-badges">${day.holidayName ? `<span class="holiday-badge">🎉 祝日：${day.holidayName}</span>` : ""}${day.nsDisruptions && day.nsDisruptions.length ? `<span class="ns-badge">🚆 NSストライキ/運休</span>` : ""}${isConfirmed ? confirmedBadgeHtml(confirmedData, snap) : ""}${isRevising ? `<span class="revising-badge">✏️ 修正中（未公開）</span>` : ""}</div>` : ""}
-          ${confirmedForecastDiffHtml(snap)}
           <div class="store-stack-with-toggle">
             ${storeBoxWithToggleHtml(day, "zuid", "Zuid", day.zuid, isConfirmed, isConfirmed ? confirmedData.zuid : null)}
             ${showUva ? storeBoxWithToggleHtml(day, "uva", day.uvaVenueLabel, day.uva, isConfirmed, isConfirmed ? confirmedData.uva : null) : ""}
@@ -3209,27 +3198,11 @@ function computeConfirmedDaySnapshot(day, confirmed){
   const chiseQty = confirmed.chise;
   const total = confirmed.zuid + confirmed.uva + confirmed.chise + (confirmed.rozen || 0);
 
-  // 「確定後に予測が変わっています」の差分は、確定時点の内訳(before)と、画面上部の
-  // 販売予測の表に今まさに表示されている最新のライブ予測(after)を比較する必要があるため、
-  // day.zuidFillingQty等を確定済みの値で上書きする前に（＝まだライブの値のままの時点で）計算する。
-  const confirmedForecastDiff = [];
-  if(confirmed.hasDetailBreakdown){
-    FILLINGS.forEach(f => {
-      const before = (confirmed.zuidBreakdown[f] || 0) + (confirmed.uvaBreakdown[f] || 0) + (confirmed.chiseBreakdown[f] || 0) + ((confirmed.rozenBreakdown && confirmed.rozenBreakdown[f]) || 0);
-      const after = neededQtyFor(day, f);
-      if(before !== after) confirmedForecastDiff.push({ filling: f, before, after });
-    });
-  } else {
-    const currentTotal = (day.zuidOpen ? sumQtyMap(day.zuidFillingQty) : 0) + (day.uvaOpen ? sumQtyMap(day.uvaFillingQty) : 0) + (day.rozenOpen ? sumQtyMap(day.rozenFillingQty) : 0) + (state.chiseByDate[mdLabel(day.dateObj)] ? state.chiseByDate[mdLabel(day.dateObj)].subtotal : 0);
-    if(total !== currentTotal) confirmedForecastDiff.push({ filling: "合計", before: total, after: currentTotal });
-  }
-
-  // 店舗別の内訳・本部の警告・整合性チェック（storeNeedFor/neededQtyFor経由）は、必ず
-  // 確定プランの値を使う（画面上部の販売予測の表と同じデータを参照する）。これをしないと、
-  // day.zuidFillingQty等が、確定後に再計算されたライブの推奨値や古い作業中プランの
-  // 復元値のまま残ってしまい、確定済みの予測（例：UvAが0）と、生産割り振り表の店舗別内訳・
-  // 本部の「○○分が本部に残っています」通知が別のデータを参照する不整合になる
-  // （例：UvAの予測を0にした後も、古いUvA内訳が本部の残りとして表示され続ける不具合）。
+  // 店舗別の内訳・整合性チェック（storeNeedFor/neededQtyFor経由）は、必ず確定プランの値を
+  // 使う（画面上部の販売予測の表と同じデータを参照する）。これをしないと、day.zuidFillingQty
+  // 等が、確定後に再計算されたライブの推奨値や古い作業中プランの復元値のまま残ってしまい、
+  // 確定済みの予測（例：UvAが0）と生産割り振り表の店舗別内訳が別のデータを参照する
+  // 不整合になる（例：UvAの予測を0にした後も、古いUvA内訳が残り続けるような不具合）。
   day.zuidOpen = true;
   day.uvaOpen = true;
   day.rozenOpen = true;
@@ -3247,7 +3220,7 @@ function computeConfirmedDaySnapshot(day, confirmed){
     chiseQty, total, working, memberCaps: memberTotals, capTotal: ningiTotal, allocationTarget: total,
     isOverCap: false, hqBreakdown, hqQty, memberTotals, ningiTotal, chiseManualQty, fillingOveredBy: {}, hasFillingOverage: false,
     monthlyOnigiriWarning: null, uvaChikakoHelpNotice: false, monthlyOnigiriMisassignedWarning: null, isConfirmedPlan: true, isRevising: false,
-    confirmedForecastDiff, confirmedAtLabel: confirmed.confirmedAtLabel,
+    confirmedAtLabel: confirmed.confirmedAtLabel,
   };
 }
 
@@ -3353,7 +3326,7 @@ function computeDaySnapshot(day){
     monthlyOnigiriWarning: isRevising ? null : monthlyOnigiriWarning,
     uvaChikakoHelpNotice: isRevising ? false : uvaChikakoHelpNotice,
     monthlyOnigiriMisassignedWarning,
-    isConfirmedPlan: false, isRevising, confirmedForecastDiff: [], confirmedAtLabel: "",
+    isConfirmedPlan: false, isRevising, confirmedAtLabel: "",
   };
 }
 
@@ -3378,14 +3351,6 @@ function uvaChikakoHelpNoticeHtml(snap){
 function monthlyOnigiriMisassignedWarningHtml(snap){
   if(!snap.monthlyOnigiriMisassignedWarning) return "";
   return `<div class="warning-line">⚠️ ${snap.monthlyOnigiriMisassignedWarning}</div>`;
-}
-
-// 確定済みの日で、確定後に予測数（具材別の必要数）が変わっている場合に差分だけ表示する。
-// 確定プランの内容を上書き・再計算することは絶対にしない（表示のみ）。
-function confirmedForecastDiffHtml(snap){
-  if(!snap.isConfirmedPlan || !snap.confirmedForecastDiff || snap.confirmedForecastDiff.length === 0) return "";
-  const lines = snap.confirmedForecastDiff.map(d => `${d.filling} ${d.before}→${d.after}`).join("、");
-  return `<div class="warning-line">⚠️ 確定後に予測が変わっています（${lines}）</div>`;
 }
 
 function summaryHtmlFor(snap){
@@ -3480,11 +3445,6 @@ function refreshProductionCellDerived(day){
       document.getElementById(`hqBreakdown-${day.dateKey}-${f}`),
       hqStoreBreakdownParts(day, f, snap.working)
     );
-    const hqLeftoverEl = document.getElementById(`hqLeftover-${day.dateKey}-${f}`);
-    if(hqLeftoverEl){
-      const newHtml = hqStoreLeftoverNoticeHtml(day, f, snap.working);
-      if(hqLeftoverEl.innerHTML !== newHtml) hqLeftoverEl.innerHTML = newHtml;
-    }
     if(!ALWAYS_HQ_FILLINGS.includes(f)){
       snap.working.forEach(name => {
         updateBreakdownDetails(
