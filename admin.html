@@ -634,6 +634,28 @@
     color: var(--main-dark);
     cursor: pointer;
   }
+
+  /* 内訳の一括開閉ボタン（日ごと・画面上部の全体用） */
+  .breakdown-toggle-btn{
+    font-size: 0.78rem;
+    padding: 6px 14px;
+    border: 1px solid var(--main);
+    border-radius: 100px;
+    background: #fff;
+    color: var(--main-dark);
+    cursor: pointer;
+    white-space: nowrap;
+  }
+  .breakdown-toggle-btn:active{ background: var(--main); color: #fff; }
+  .breakdown-toggle-all-row{
+    margin: 4px 0 12px;
+  }
+  .breakdown-toggle-all-global-btn{
+    font-weight: bold;
+  }
+  .prod-day-toggle-row{
+    margin: 0 0 8px;
+  }
   .week-collapsed .day-cards,
   .week-collapsed .prod-cards-wrap,
   .week-collapsed .day-pairs-wrap{ display: none; }
@@ -970,6 +992,7 @@
     .week-heading{ flex-direction: column; align-items: flex-start; }
     .week-heading > div{ display: flex; flex-wrap: wrap; gap: 6px; }
     .confirm-week-btn{ font-size: 0.8rem; padding: 7px 14px; }
+    .breakdown-toggle-btn{ font-size: 0.82rem; padding: 8px 14px; }
   }
 
   /* ── 月次支払い計算 ── */
@@ -1241,6 +1264,9 @@
 
   <section>
     <h2>販売予測数・生産割り振り<span class="badge">来週・再来週 月〜日</span></h2>
+    <div class="breakdown-toggle-all-row">
+      <button type="button" class="breakdown-toggle-btn breakdown-toggle-all-global-btn" id="breakdownToggleAllGlobalBtn">内訳をすべて開く</button>
+    </div>
     <div id="combinedArea"><p class="loading">データを読み込み中...</p></div>
   </section>
 
@@ -2358,6 +2384,8 @@ function renderCombined(){
   area.querySelectorAll(".toggle-week-btn").forEach(btn => {
     btn.addEventListener("click", () => toggleWeek(+btn.dataset.weekIndex));
   });
+
+  updateGlobalBreakdownToggleBtnLabel();
 }
 
 // 後方互換のエイリアス（旧呼び出し元から参照される可能性のある箇所）
@@ -2722,6 +2750,49 @@ function storeBreakdownDetailsHtml(id, parts){
   return `<details class="prod-cell-breakdown" id="${id}"${hidden ? ' style="display:none;"' : ''}>${storeBreakdownContentHtml(parts)}</details>`;
 }
 
+/* ---------- 内訳<details>の一括開閉（表示の便利機能。localStorageに最後の状態を記憶） ---------- */
+
+const BREAKDOWN_ALL_OPEN_KEY = "chabon_admin_breakdown_allOpen";
+
+function getBreakdownAllOpenPref(){
+  try{ return localStorage.getItem(BREAKDOWN_ALL_OPEN_KEY) === "1"; }catch(e){ return false; }
+}
+function setBreakdownAllOpenPref(open){
+  try{ localStorage.setItem(BREAKDOWN_ALL_OPEN_KEY, open ? "1" : "0"); }catch(e){}
+}
+
+// 指定した範囲内の内訳<details>すべてに開閉状態を適用する。
+// 個数0で非表示(display:none)のセルにも.openは設定しておく（後で個数が増えて
+// 表示されたときに、適用済みの開閉状態がそのまま反映されるようにするため）。
+function applyBreakdownOpenState(root, open){
+  if(!root) return;
+  root.querySelectorAll(".prod-cell-breakdown").forEach(el => { el.open = open; });
+}
+
+// 範囲内に表示されている（display:noneでない）内訳<details>が1つ以上あり、
+// それらすべてが開いていれば true。表示中の内訳が無い場合はfalse（「開く」表示のまま）。
+function areAllVisibleBreakdownsOpen(root){
+  if(!root) return false;
+  const visible = [...root.querySelectorAll(".prod-cell-breakdown")].filter(el => el.style.display !== "none");
+  return visible.length > 0 && visible.every(el => el.open);
+}
+
+function updateDayBreakdownToggleBtnLabel(day){
+  const container = document.getElementById(`dayblock-${day.dateKey}`);
+  if(!container) return;
+  const btn = container.querySelector(".breakdown-toggle-day-btn");
+  if(!btn) return;
+  btn.textContent = areAllVisibleBreakdownsOpen(container) ? "内訳をすべて閉じる" : "内訳をすべて開く";
+}
+
+function updateGlobalBreakdownToggleBtnLabel(){
+  const btn = document.getElementById("breakdownToggleAllGlobalBtn");
+  if(!btn) return;
+  const areas = state.days.map(day => document.getElementById(`dayblock-${day.dateKey}`)).filter(Boolean);
+  const allOpen = areas.length > 0 && areas.every(area => areAllVisibleBreakdownsOpen(area));
+  btn.textContent = allOpen ? "表示中の内訳をすべて閉じる" : "表示中の内訳をすべて開く";
+}
+
 function splitProdTableHtml(day){
   const snap = computeDaySnapshot(day);
   const { working, memberCaps, hqBreakdown, hqQty, memberTotals, ningiTotal, chiseManualQty, fillingOveredBy } = snap;
@@ -2945,6 +3016,7 @@ function dayBlockHtml(day){
           ${splitForecastTableHtml(day)}
         </div>
         <div class="day-table-prod">
+          ${snap.working.length ? `<div class="prod-day-toggle-row"><button type="button" class="breakdown-toggle-btn breakdown-toggle-day-btn" data-key="${day.dateKey}">内訳をすべて開く</button></div>` : ""}
           ${addMemberHtml}
           ${snap.working.length ? splitProdTableHtml(day) : `<p class="off-note">出勤予定のメンバーがいません。</p>`}
         </div>
@@ -2967,6 +3039,7 @@ function renderDayBlock(day){
   container.innerHTML = dayBlockHtml(day);
   bindForecastTableEvents(day);
   bindProductionDayEvents(day);
+  updateGlobalBreakdownToggleBtnLabel();
 }
 
 // 松木さんが実際に手で調整するときの考え方をそのまま手順にする。
@@ -3489,6 +3562,21 @@ function refreshProductionDay(day){ renderDayBlock(day); }
 function bindProductionDayEvents(day){
   const container = document.getElementById(`dayblock-${day.dateKey}`);
   if(!container) return;
+
+  // 表示直後は、最後に選んだ「すべて開く・閉じる」の状態（localStorage）をそのまま適用する
+  applyBreakdownOpenState(container, getBreakdownAllOpenPref());
+  updateDayBreakdownToggleBtnLabel(day);
+
+  const breakdownToggleDayBtn = container.querySelector(".breakdown-toggle-day-btn");
+  if(breakdownToggleDayBtn){
+    breakdownToggleDayBtn.addEventListener("click", () => {
+      const open = !areAllVisibleBreakdownsOpen(container);
+      applyBreakdownOpenState(container, open);
+      setBreakdownAllOpenPref(open);
+      updateDayBreakdownToggleBtnLabel(day);
+      updateGlobalBreakdownToggleBtnLabel();
+    });
+  }
 
   const chisePrioritySelect = container.querySelector(".chise-priority-select");
   if(chisePrioritySelect){
@@ -5371,6 +5459,20 @@ async function init(){
     document.getElementById("combinedArea").innerHTML = "<p class='off-note'>データの取得に失敗しました。</p>";
     document.getElementById("shiftTableArea").innerHTML = "<p class='off-note'>データの取得に失敗しました。</p>";
   }
+}
+
+// データ取得の成否に関わらず、画面上部の一括開閉ボタンは常に使えるようにしておく
+// （init()のfetchが途中で失敗しても、それまでに表示されている分には操作できる）
+const breakdownToggleAllGlobalBtn = document.getElementById("breakdownToggleAllGlobalBtn");
+if(breakdownToggleAllGlobalBtn){
+  breakdownToggleAllGlobalBtn.addEventListener("click", () => {
+    const areas = state.days.map(day => document.getElementById(`dayblock-${day.dateKey}`)).filter(Boolean);
+    const open = !(areas.length > 0 && areas.every(area => areAllVisibleBreakdownsOpen(area)));
+    areas.forEach(area => applyBreakdownOpenState(area, open));
+    setBreakdownAllOpenPref(open);
+    state.days.forEach(day => updateDayBreakdownToggleBtnLabel(day));
+    updateGlobalBreakdownToggleBtnLabel();
+  });
 }
 
 init();
