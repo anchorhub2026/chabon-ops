@@ -2002,6 +2002,8 @@ function memberOrderWithinGroup(name){
 // 優先担当し、UvA・Rozengracht・チセの分はMIKI・MARI・CHIKAKOの希望数を使い切った場合にだけ
 // 担当する、というメンバー側の考え方を、店舗側の人選にもそのまま反映させるため。
 // グループに属さないメンバー（CHISE等）は常に最下位のまま変わらない。
+// 2026-11-16時点ではcomputeMemberStoreBreakdown内では使われていないが、過去の回帰テストが
+// 参照しているため、ユーティリティとして残しておく。
 function groupRankForStore(name, store){
   const baseRank = memberGroupRank(name);
   if(store !== "Zuid" || baseRank >= MEMBER_GROUPS.length) return baseRank;
@@ -2052,45 +2054,39 @@ function ensureMemberFillingQty(day, working, memberBreakdowns){
 // 店舗別の内訳を毎回ゼロから計算し直す純関数。memberFillingQtyだけが唯一の正とし、
 // 店舗別の内訳はそこから必ず導出される値にすることで、個数と内訳が構造的にずれなくする
 // （個数を保存するときに内訳を別途インクリメンタルに調整する、という仕組み自体を廃止した）。
-// buildProductionPlanと同じ考え方（フェーズ1：UvA・Rozengracht・チセをMIKI・MARI→CHIKAKOの順、
-// フェーズ2：ZuidをYUMI→CHIKAKO→MIKI・MARIの順、フェーズ3：フェーズ1の残りをYUMIがチセ→
-// Rozengracht→UvAの順で吸収）で、各メンバーの確定した合計個数を店舗に割り当てる。
-// これにより、YUMIの合計がZuidの必要数を超える場合（手動入力等）も、Zuid優先→超えた分は
-// チセ→Rozengracht→UvAの順、という仕様通りの内訳になる。手動入力がどの店舗の必要数も
-// 超えないことは入力側（prod-cell-inputのハンドラ）で保証されているため、通常は全員分が
-// どこかの店舗に収まるが、保険としてどうしても収まらない分は「割当先なし」
-// (UNASSIGNED_STORE_KEY)として返す（実在の店舗の必要数には一切影響しない）。
-// 店舗別内訳の再構成（手入力かどうかに関わらず、day.memberFillingQtyと店舗の必要数から
-// 毎回ゼロから計算し直す）。松木さんの指示通り、次の6手順の順に割り当てる。
+// 手動入力がどの店舗の必要数も超えないことは入力側（prod-cell-inputのハンドラ）で
+// 保証されているため、通常は全員分がどこかの店舗に収まるが、保険としてどうしても
+// 収まらない分は「割当先なし」(UNASSIGNED_STORE_KEY)として返す（実在の店舗の必要数には
+// 一切影響しない）。
+//
+// 松木さんの指示通り、具材ごとに（メンバーごとではなく）次の7手順の順で、店舗の空きを
+// メンバーから埋めていく。自動割り振りのあと・手入力のあと・修正中・確定プランの復元の
+// あとのすべてで、この関数（と呼び出し元のensureMemberStoreFillingQty）だけを使う。
 // 1. チセ優先担当（day.chisePriorityAssignee）が設定されていれば、まずその人の個数を
 //    チセの分に割り当てる。
-// 2. MIKI・MARI・CHIKAKOの個数を、UvA→Rozengracht→チセの順に割り当てる。
-// 3. YUMIの個数を、Zuid→チセ（優先担当がYUMIの日はチセ→Zuid）の順に割り当てる。
-// 4. MIKI・MARI・CHIKAKOの残りの個数を、Zuidに割り当てる（CHIKAKO→MARI・MIKIの順＝
-//    手順Dの「YUMIを優先し、残りをCHIKAKO→MARI→MIKIの順」に揃える）。
-// 5. それでも割り当てられないYUMIの個数があれば、そのときだけRozengrachtに割り当てる
+// 2. UvAの分を、MARI・MIKIの個数から割り当てる（2人の間は残りの個数が多い方から）。
+//    足りない分だけCHIKAKOから割り当てる（YUMIには割り当てない）。
+// 3. Rozengrachtの分を、MARI・MIKIの残りの個数から割り当てる。足りない分だけCHIKAKOから。
+// 4. チセの分（手順1の残り）を、MARI・MIKIの残り → CHIKAKOの残りで割り当てる
+//    （YUMI自身の分はここでは割り当てず、手順5のZuidを先に試す＝YUMIはZuid優先のため）。
+// 5. Zuidの分を、YUMI → CHIKAKOの残り → MARI・MIKIの残り の順に割り当てる
+//    （優先担当がYUMIの日は、手順1で先にチセ分を取っているため自然にチセ優先になる）。
+// 4'. Zuidでも埋まらなかったYUMIの残りを、チセの残り枠に割り当てる（手順4の続き）。
+// 6. それでも割り当てられないYUMIの個数があれば、そのときだけRozengrachtに割り当てる
 //    （UvAには絶対に割り当てない）。
-// 6. どのメンバーにも割り当てられなかった店舗の分は、本部の内訳になる（この関数では
+// 7. どのメンバーにも割り当てられなかった店舗の分は、本部の内訳になる（この関数では
 //    メンバー側に割り当てないことで自然に表現される。本部側の計算は別途行う）。
 function computeMemberStoreBreakdown(day, workingNames, memberFillingQty){
   const result = {};
   workingNames.forEach(name => { result[name] = {}; });
   const monthlyAssignee = getMonthlyOnigiriAssignee(day);
-  const yumiGroupRank = MEMBER_GROUPS.length - 1;
-  const groupANames = workingNames.filter(n => memberGroupRank(n) !== yumiGroupRank);
-  const yumiNames = workingNames.filter(n => memberGroupRank(n) === yumiGroupRank);
+  const hasChikako = workingNames.includes("CHIKAKO");
+  const hasYumi = workingNames.includes("YUMI");
+  // MARI・MIKI・CHIKAKO・YUMI以外の名前（CHISE等）は、どの店舗でも常に最下位の優先度として
+  // 扱う。通常の運用では発生しないはずの想定外ケースへの保険で、実際の割り振りには影響しない。
+  const otherNames = workingNames.filter(n => !["MARI", "MIKI", "CHIKAKO", "YUMI"].includes(n));
   const chisePriorityAssignee = (day.chisePriorityAssignee && day.chisePriorityAssignee !== "自動" && workingNames.includes(day.chisePriorityAssignee))
     ? day.chisePriorityAssignee : null;
-
-  function sortByRank(names, rankFn){
-    return [...names].sort((a, b) => {
-      const ra = rankFn(a), rb = rankFn(b);
-      if(ra !== rb) return ra - rb;
-      const oa = memberOrderWithinGroup(a), ob = memberOrderWithinGroup(b);
-      if(oa !== ob) return oa - ob;
-      return workingNames.indexOf(a) - workingNames.indexOf(b);
-    });
-  }
 
   function give(name, store, f, qty){
     if(qty <= 0) return;
@@ -2109,6 +2105,24 @@ function computeMemberStoreBreakdown(day, workingNames, memberFillingQty){
     let rozenRoom = storeNeedFor(day, "Rozengracht", f);
     let chiseRoom = storeNeedFor(day, "チセ", f);
 
+    // MARI・MIKIの間の順序：残りの個数が多い方から。同点なら指示の記載順（MIKI→MARI）。
+    function marikiOrder(){
+      return ["MARI", "MIKI"].filter(n => workingNames.includes(n)).sort((a, b) => {
+        const diff = remaining[b] - remaining[a];
+        if(diff !== 0) return diff;
+        return memberOrderWithinGroup(a) - memberOrderWithinGroup(b);
+      });
+    }
+
+    // namesの順に、roomRef.valueが残っている分だけ各人のremainingから店舗storeへ割り当てる
+    function allocateInOrder(names, store, roomRef){
+      names.forEach(name => {
+        if(roomRef.value <= 0) return;
+        const take = Math.min(roomRef.value, remaining[name] || 0);
+        if(take > 0){ give(name, store, f, take); remaining[name] -= take; roomRef.value -= take; }
+      });
+    }
+
     // 今月のおにぎり：Zuidの分はまず担当者に直接割り当てる（他のメンバーとは競合しない）
     if(monthlyAssignee && f === MONTHLY_ONIGIRI_FILLING && workingNames.includes(monthlyAssignee) && zuidRoom > 0){
       const take = Math.min(zuidRoom, remaining[monthlyAssignee] || 0);
@@ -2121,67 +2135,66 @@ function computeMemberStoreBreakdown(day, workingNames, memberFillingQty){
       if(take > 0){ give(chisePriorityAssignee, "チセ", f, take); remaining[chisePriorityAssignee] -= take; chiseRoom -= take; }
     }
 
-    // 手順2：UvA→Rozengracht→チセ をYUMIグループ以外（MARI・MIKI・CHIKAKO）で埋める。
-    // UvAはMARI・MIKIを優先しCHIKAKOは足りない場合だけの対象（手順Aに合わせ、常に
-    // memberGroupRank順＝CHIKAKOを最後に回す）。Rozengracht・チセは手順B・Cで
-    // 割合（ratio）優先・3人フラットに割り振られているため、ここでの店舗内訳の再構成も
-    // 「その具材を多く持っている人から優先して店舗の枠を埋める」という量ベースの順序にする
-    // （MARI・MIKIを常に優先する固定順にすると、実際にはCHIKAKOが多く担当している具材でも
-    // 店舗内訳がMARI・MIKI側に偏ってしまい、実際の割り振りと食い違う）。
-    ["UvA", "Rozengracht", "チセ"].forEach(store => {
-      let room = store === "UvA" ? uvaRoom : (store === "Rozengracht" ? rozenRoom : chiseRoom);
-      if(room > 0){
-        const order = (store === "UvA")
-          ? sortByRank(groupANames, n => memberGroupRank(n))
-          : [...groupANames].sort((a, b) => {
-              const diff = remaining[b] - remaining[a];
-              if(diff !== 0) return diff;
-              const oa = memberOrderWithinGroup(a), ob = memberOrderWithinGroup(b);
-              if(oa !== ob) return oa - ob;
-              return workingNames.indexOf(a) - workingNames.indexOf(b);
-            });
-        order.forEach(name => {
-          if(room <= 0) return;
-          const take = Math.min(room, remaining[name]);
-          if(take > 0){ give(name, store, f, take); remaining[name] -= take; room -= take; }
-        });
-      }
-      if(store === "UvA") uvaRoom = room; else if(store === "Rozengracht") rozenRoom = room; else chiseRoom = room;
-    });
-
-    // 手順3：YUMIの個数を、Zuid→チセ（優先担当がYUMIの日はチセ→Zuid）の順に割り当てる
-    const yumiStoreOrder = (chisePriorityAssignee === "YUMI") ? ["チセ", "Zuid"] : ["Zuid", "チセ"];
-    yumiNames.forEach(name => {
-      yumiStoreOrder.forEach(store => {
-        if(store === "Zuid"){
-          if(zuidRoom <= 0) return;
-          const take = Math.min(zuidRoom, remaining[name]);
-          if(take > 0){ give(name, "Zuid", f, take); remaining[name] -= take; zuidRoom -= take; }
-        } else {
-          if(chiseRoom <= 0) return;
-          const take = Math.min(chiseRoom, remaining[name]);
-          if(take > 0){ give(name, "チセ", f, take); remaining[name] -= take; chiseRoom -= take; }
-        }
-      });
-    });
-
-    // 手順4：MIKI・MARI・CHIKAKOの残りの個数を、Zuidに割り当てる（CHIKAKO→MARI・MIKIの順）
-    if(zuidRoom > 0){
-      const order = sortByRank(groupANames, n => groupRankForStore(n, "Zuid"));
-      order.forEach(name => {
-        if(zuidRoom <= 0) return;
-        const take = Math.min(zuidRoom, remaining[name]);
-        if(take > 0){ give(name, "Zuid", f, take); remaining[name] -= take; zuidRoom -= take; }
-      });
+    // 手順2：UvA。MARI・MIKI（残りの多い方から）→ 足りない分だけCHIKAKO
+    {
+      const roomRef = { value: uvaRoom };
+      allocateInOrder(marikiOrder(), "UvA", roomRef);
+      if(roomRef.value > 0 && hasChikako) allocateInOrder(["CHIKAKO"], "UvA", roomRef);
+      uvaRoom = roomRef.value;
     }
 
-    // 手順5：それでも割り当てられないYUMIの個数があれば、そのときだけRozengrachtに
+    // 手順3：Rozengracht。MARI・MIKI（残りの多い方から）→ 足りない分だけCHIKAKO
+    {
+      const roomRef = { value: rozenRoom };
+      allocateInOrder(marikiOrder(), "Rozengracht", roomRef);
+      if(roomRef.value > 0 && hasChikako) allocateInOrder(["CHIKAKO"], "Rozengracht", roomRef);
+      rozenRoom = roomRef.value;
+    }
+
+    // 手順4：チセ（手順1の残り）。まずMARI・MIKIの残り → CHIKAKOの残りで埋める。
+    // YUMI自身の分は、ここではまだ割り当てない（YUMIはZuidを優先するため。手順1で
+    // チセ優先担当になっている場合は、既にそちらで優先的に割り当てられている）。
+    {
+      const roomRef = { value: chiseRoom };
+      allocateInOrder(marikiOrder(), "チセ", roomRef);
+      if(roomRef.value > 0 && hasChikako) allocateInOrder(["CHIKAKO"], "チセ", roomRef);
+      chiseRoom = roomRef.value;
+    }
+
+    // 手順5：Zuid。YUMI → CHIKAKOの残り → MARI・MIKIの残り（残りの多い方から）
+    {
+      const roomRef = { value: zuidRoom };
+      if(hasYumi) allocateInOrder(["YUMI"], "Zuid", roomRef);
+      if(roomRef.value > 0 && hasChikako) allocateInOrder(["CHIKAKO"], "Zuid", roomRef);
+      allocateInOrder(marikiOrder(), "Zuid", roomRef);
+      zuidRoom = roomRef.value;
+    }
+
+    // 手順4の続き：Zuidでも埋まらなかったYUMIの残りを、チセの残り枠に割り当てる
+    // （チセ優先担当でない通常の日は、YUMIはZuidを優先し、チセはその次という順にするため）
+    if(hasYumi && chiseRoom > 0 && remaining["YUMI"] > 0){
+      const take = Math.min(chiseRoom, remaining["YUMI"]);
+      if(take > 0){ give("YUMI", "チセ", f, take); remaining["YUMI"] -= take; chiseRoom -= take; }
+    }
+
+    // 手順6：それでも割り当てられないYUMIの個数があれば、そのときだけRozengrachtに
     // 割り当てる（UvAには絶対に割り当てない）
-    if(rozenRoom > 0){
-      yumiNames.forEach(name => {
-        if(rozenRoom <= 0 || remaining[name] <= 0) return;
-        const take = Math.min(rozenRoom, remaining[name]);
-        if(take > 0){ give(name, "Rozengracht", f, take); remaining[name] -= take; rozenRoom -= take; }
+    if(hasYumi && rozenRoom > 0 && remaining["YUMI"] > 0){
+      const take = Math.min(rozenRoom, remaining["YUMI"]);
+      if(take > 0){ give("YUMI", "Rozengracht", f, take); remaining["YUMI"] -= take; rozenRoom -= take; }
+    }
+
+    // 想定外のメンバー（CHISE等）向けの保険：どの店舗にも常に最下位の優先度で、
+    // まだ空きがあれば割り当てる（通常の運用では発生しない）
+    if(otherNames.length){
+      [["UvA", uvaRoom], ["Rozengracht", rozenRoom], ["チセ", chiseRoom], ["Zuid", zuidRoom]].forEach(([store, room]) => {
+        if(room <= 0) return;
+        const roomRef = { value: room };
+        allocateInOrder(otherNames, store, roomRef);
+        if(store === "UvA") uvaRoom = roomRef.value;
+        else if(store === "Rozengracht") rozenRoom = roomRef.value;
+        else if(store === "チセ") chiseRoom = roomRef.value;
+        else zuidRoom = roomRef.value;
       });
     }
 
