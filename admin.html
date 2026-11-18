@@ -3348,6 +3348,13 @@ function allocatedAtStoreAcrossAll(day, workingNames, store, filling){
     s + ((day.memberStoreFillingQty[n] && day.memberStoreFillingQty[n][store] && day.memberStoreFillingQty[n][store][filling]) || 0), 0);
 }
 
+// 本部が「まだ誰にも割り当てていない」店舗storeの空き（具材filling）。
+// 必要数(storeNeedFor)から、ニギニギ隊・CHISEが既にその店舗に割り振っている分を引いた残り
+// （マイナスにはしない。超過している場合はhqStoreBreakdownPartsのoverQty側で別途扱う）。
+function hqRoomFor(day, store, filling, workingNames){
+  return Math.max(0, storeNeedFor(day, store, filling) - allocatedAtStoreAcrossAll(day, workingNames, store, filling));
+}
+
 // その日の最終生産割り振りの確定版データを1ヶ所で計算する（描画・確定保存の両方で共用）
 // 確定プランがある日は、その内容をそのまま表示する（ライブ再計算で上書きしない）。
 // 具材別内訳のある確定データであれば、現在の予測（neededQtyFor）との差分も合わせて返す。
@@ -3588,12 +3595,13 @@ function showFillingCapWarning(day, filling, needed){
   el.__hideTimer = setTimeout(() => { el.style.display = "none"; }, 4000);
 }
 
-// YUMIの入力がZuid＋チセ＋Rozengrachtの必要数を超えようとしてクランプしたときに、
-// 一時的に「⚠️YUMIにはUvA分を割り当てられません」を表示する（数秒後に自動で消える）
-function showYumiUvaBlockedWarning(day, filling){
+// YUMIの入力が「今の個数＋本部のZuid・チセ・Rozengrachtの空き」を超えようとして
+// クランプしたときに、一時的に「⚠️YUMIにはUvA分を割り当てられません（あと○個まで）」を
+// 表示する（数秒後に自動で消える）。maxAllowedは実際に入力できる上限の個数。
+function showYumiUvaBlockedWarning(day, filling, maxAllowed){
   const el = document.getElementById(`fillingCapWarn-${day.dateKey}-${filling}`);
   if(!el) return;
-  el.textContent = `⚠️YUMIにはUvA分を割り当てられません`;
+  el.textContent = `⚠️YUMIにはUvA分を割り当てられません（あと${maxAllowed}個まで）`;
   el.style.display = "";
   clearTimeout(el.__hideTimer);
   el.__hideTimer = setTimeout(() => { el.style.display = "none"; }, 4000);
@@ -3710,15 +3718,24 @@ function bindProductionDayEvents(day){
         showFillingCapWarning(day, filling, needed);
       }
 
-      // YUMIはUvAに絶対に割り当てられないため、Zuid・チセ・Rozengrachtの必要数の合計を
-      // 超える入力は（他の必要数クランプとは別に）受け付けない
+      // YUMIはUvAに絶対に割り当てられないため、入力できる上限は
+      // 「YUMIの今の個数」＋「本部がまだ割り当てていないZuid・チセ・Rozengrachtの空き」とする
+      // （UvAの空きは含めない）。
+      // 以前は「Zuid・チセ・Rozengrachtの必要数の合計」から「他メンバー全員の合計（全店舗分）」を
+      // 引いていたが、これだと他メンバーがUvAに生産している分まで誤って差し引かれてしまい、
+      // 実際には本部にZuid・チセの空きが残っているのに入力できなくなる不具合があったため、
+      // 本部の店舗別の空き（hqRoomFor）を直接使う方式に修正した。
       if(name === "YUMI"){
-        const roomNonUva = storeNeedFor(day, "Zuid", filling) + storeNeedFor(day, "チセ", filling) + storeNeedFor(day, "Rozengracht", filling);
-        const yumiMaxAllowed = Math.max(0, Math.min(maxAllowed, roomNonUva - othersSum));
+        const workingNames = Object.keys(day.memberFillingQty);
+        const currentYumiQty = (day.memberFillingQty["YUMI"] && day.memberFillingQty["YUMI"][filling]) || 0;
+        const hqRoomNonUva = hqRoomFor(day, "Zuid", filling, workingNames)
+          + hqRoomFor(day, "チセ", filling, workingNames)
+          + hqRoomFor(day, "Rozengracht", filling, workingNames);
+        const yumiMaxAllowed = Math.max(0, Math.min(maxAllowed, currentYumiQty + hqRoomNonUva));
         if(newQty > yumiMaxAllowed){
           newQty = yumiMaxAllowed;
           input.value = String(newQty);
-          showYumiUvaBlockedWarning(day, filling);
+          showYumiUvaBlockedWarning(day, filling, yumiMaxAllowed);
         }
       }
 
