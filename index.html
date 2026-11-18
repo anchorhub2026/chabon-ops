@@ -471,7 +471,7 @@
   #actualSalesArea .slot-extra-row{ gap: 2px; margin-top: 2px; }
   #actualSalesArea .given-input{ width: 32px !important; min-height: 0 !important; font-size: 0.68rem !important; padding: 2px 1px !important; }
   #actualSalesArea .received-input{ width: 32px !important; min-height: 0 !important; font-size: 0.68rem !important; padding: 2px 1px !important; }
-  #actualSalesArea .moved-input, #actualSalesArea .moved-rozen-input{ width: 56px !important; }
+  #actualSalesArea .moved-input, #actualSalesArea .moved-uva-input, #actualSalesArea .moved-rozen-input{ width: 56px !important; }
   #actualSalesArea .total-row td{ font-size: 0.8rem; }
   #actualSalesArea .total-cell{ min-width: 52px; }
   /* 2列目（作った数）の固定位置(left)は、1列目「具材名」の実際の表示幅に合わせている。
@@ -1446,7 +1446,7 @@ function renderActualSales(){
     </div>
   `;
 
-  area.querySelectorAll(".hourly-input, .made-input, .given-input, .received-input, .moved-input, .moved-rozen-input").forEach(inp =>
+  area.querySelectorAll(".hourly-input, .made-input, .given-input, .received-input, .moved-input, .moved-uva-input, .moved-rozen-input").forEach(inp =>
     inp.addEventListener("input", () => updateSoldDisplay(["Zuid", "UvA", "Rozengracht"], fillings))
   );
   ["Zuid", "UvA", "Rozengracht"].forEach(wireNoteLengthWarning);

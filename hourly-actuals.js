@@ -108,21 +108,24 @@ function calcHourlySoldAndCumulative(made, remains, givens, receiveds){
 }
 
 // 1店舗分の実績入力テーブルのHTML（具材×時間帯の入力欄）を組み立てる。
-// Zuid・Rozengrachtは、他店舗からの合流分「受け取った数」を時間帯ごとに入力できる
-// （Zuidへの受け取りはUvAから、Rozengrachtへの受け取りはZuid・UvAから）。
-// UvAのみ、営業終了時に残った分をZuidへ運ぶ「Zuidへ移動した数」を1日1回（具材ごと）入力できる。
-// Zuid・UvAは、営業終了時に残った分をRozengrachtへ運ぶ「Rozengrachtへ移動した数」を
-// 同じく1日1回（具材ごと）入力できる。
+// Zuid・UvA・Rozengrachtは、他店舗からの合流分「受け取った数」を時間帯ごとに入力できる。
+// UvA・Rozengrachtは、営業終了時に残った分をZuidへ運ぶ「Zuidへ移動した数」を1日1回
+// （具材ごと）入力できる。Zuid・UvAは、営業終了時に残った分をRozengrachtへ運ぶ
+// 「Rozengrachtへ移動した数」を同じく1日1回入力できる。Rozengrachtは、営業終了時に
+// 残った分をUvAへ運ぶ「UvAへ移動した数」も同じく1日1回入力できる。
+// 「Zuidへ移動」「Rozengrachtへ移動」の列は、どの店舗からの移動かに関わらず同じ列
+// （シート上は行ごと＝どの店舗の行かで区別する）を使い回す。「UvAへ移動」は今回新設した列。
 // slotsを省略した場合はHOURLY_SLOTS（既定の時間帯）を使う。
 // madeReadonly=trueを指定すると「作った数」欄を読み取り専用にする（uva.html/rozen.html用。
 // 確定プランの数を表示するだけで、スタッフが変更できないようにするため）。
 // index.htmlは従来通りfalse（編集可能）のまま、動作を変えない。
 function buildStoreTable(storeKey, fillings, totals, slots, madeReadonly){
   const hourlySlots = slots || HOURLY_SLOTS;
-  const showReceived = storeKey === "Zuid" || storeKey === "Rozengracht";
-  const showMovedToZuid = storeKey === "UvA";
+  const showReceived = storeKey === "Zuid" || storeKey === "UvA" || storeKey === "Rozengracht";
+  const showMovedToZuid = storeKey === "UvA" || storeKey === "Rozengracht";
+  const showMovedToUva = storeKey === "Rozengracht";
   const showMovedToRozengracht = storeKey === "Zuid" || storeKey === "UvA";
-  const receivedTitle = storeKey === "Zuid" ? "受け取った数（UvAから）" : "受け取った数（他店舗から）";
+  const receivedTitle = "受け取った数（他店舗から）";
   const slotSubhead = showReceived ? "残り／あげ／受取" : "残り／あげ";
   const slotHeaders = hourlySlots.map(h => `<th>${h}時<br><span class="slot-subhead">${slotSubhead}</span></th>`).join("");
   const rows = fillings.map((f, fi) => {
@@ -145,6 +148,9 @@ function buildStoreTable(storeKey, fillings, totals, slots, madeReadonly){
     const movedZuidCell = showMovedToZuid ? `<td><input type="number" inputmode="numeric" class="moved-input" title="Zuidへ移動した数"
                  data-store="${storeKey}" data-filling="${f}"
                  min="0" placeholder="0" value="0"></td>` : "";
+    const movedUvaCell = showMovedToUva ? `<td><input type="number" inputmode="numeric" class="moved-uva-input" title="UvAへ移動した数"
+                 data-store="${storeKey}" data-filling="${f}"
+                 min="0" placeholder="0" value="0"></td>` : "";
     const movedRozenCell = showMovedToRozengracht ? `<td><input type="number" inputmode="numeric" class="moved-rozen-input" title="Rozengrachtへ移動した数"
                  data-store="${storeKey}" data-filling="${f}"
                  min="0" placeholder="0" value="0"></td>` : "";
@@ -154,6 +160,7 @@ function buildStoreTable(storeKey, fillings, totals, slots, madeReadonly){
                  data-store="${storeKey}" data-filling="${f}"
                  value="${totals[f]}" min="0"${madeReadonly ? " readonly" : ""}></td>
       ${movedZuidCell}
+      ${movedUvaCell}
       ${movedRozenCell}
       ${slotCells}
     </tr>`;
@@ -165,15 +172,17 @@ function buildStoreTable(storeKey, fillings, totals, slots, madeReadonly){
   const cumCells = hourlySlots.map((h, si) =>
     `<td class="total-cell"><span id="total-cum-${storeKey}-${si}"></span></td>`).join("");
   const movedZuidHeader = showMovedToZuid ? `<th>Zuidへ<br>移動</th>` : "";
+  const movedUvaHeader = showMovedToUva ? `<th>UvAへ<br>移動</th>` : "";
   const movedRozenHeader = showMovedToRozengracht ? `<th>Rozengrachtへ<br>移動</th>` : "";
   const movedZuidTotalCell = showMovedToZuid ? `<td class="total-cell"><span id="total-moved-${storeKey}"></span></td>` : "";
+  const movedUvaTotalCell = showMovedToUva ? `<td class="total-cell"><span id="total-movedUva-${storeKey}"></span></td>` : "";
   const movedRozenTotalCell = showMovedToRozengracht ? `<td class="total-cell"><span id="total-movedRozen-${storeKey}"></span></td>` : "";
-  const movedPlaceholderCells = `${showMovedToZuid ? "<td>—</td>" : ""}${showMovedToRozengracht ? "<td>—</td>" : ""}`;
+  const movedPlaceholderCells = `${showMovedToZuid ? "<td>—</td>" : ""}${showMovedToUva ? "<td>—</td>" : ""}${showMovedToRozengracht ? "<td>—</td>" : ""}`;
   return `<table class="hourly-table">
-    <thead><tr><th class="col-name">具材</th><th>作った数</th>${movedZuidHeader}${movedRozenHeader}${slotHeaders}</tr></thead>
+    <thead><tr><th class="col-name">具材</th><th>作った数</th>${movedZuidHeader}${movedUvaHeader}${movedRozenHeader}${slotHeaders}</tr></thead>
     <tbody>
       ${rows}
-      <tr class="total-row"><td class="col-name">残り合計</td><td class="total-cell"><span id="total-made-${storeKey}"></span></td>${movedZuidTotalCell}${movedRozenTotalCell}${remainCells}</tr>
+      <tr class="total-row"><td class="col-name">残り合計</td><td class="total-cell"><span id="total-made-${storeKey}"></span></td>${movedZuidTotalCell}${movedUvaTotalCell}${movedRozenTotalCell}${remainCells}</tr>
       <tr class="total-row"><td class="col-name">売った合計</td><td class="total-cell"><span id="total-sold-grand-${storeKey}"></span></td>${movedPlaceholderCells}${soldCells}</tr>
       <tr class="total-row"><td class="col-name">全具材累計売上</td><td>—</td>${movedPlaceholderCells}${cumCells}</tr>
     </tbody>
@@ -193,6 +202,7 @@ function updateStoreSoldDisplay(storeKey, fillings, slots){
   const cumCount = new Array(nSlots).fill(0);
   let madeTotal = 0;
   let movedTotal = 0;
+  let movedUvaTotal = 0;
   let movedRozenTotal = 0;
 
   fillings.forEach((f, fi) => {
@@ -202,6 +212,9 @@ function updateStoreSoldDisplay(storeKey, fillings, slots){
 
     const movedEl = document.querySelector(`.moved-input[data-store="${storeKey}"][data-filling="${f}"]`);
     if(movedEl) movedTotal += (parseInt(movedEl.value, 10) || 0);
+
+    const movedUvaEl = document.querySelector(`.moved-uva-input[data-store="${storeKey}"][data-filling="${f}"]`);
+    if(movedUvaEl) movedUvaTotal += (parseInt(movedUvaEl.value, 10) || 0);
 
     const movedRozenEl = document.querySelector(`.moved-rozen-input[data-store="${storeKey}"][data-filling="${f}"]`);
     if(movedRozenEl) movedRozenTotal += (parseInt(movedRozenEl.value, 10) || 0);
@@ -275,6 +288,8 @@ function updateStoreSoldDisplay(storeKey, fillings, slots){
   if(mEl) mEl.textContent = String(madeTotal);
   const movedEl = document.getElementById(`total-moved-${storeKey}`);
   if(movedEl) movedEl.textContent = String(movedTotal);
+  const movedUvaEl = document.getElementById(`total-movedUva-${storeKey}`);
+  if(movedUvaEl) movedUvaEl.textContent = String(movedUvaTotal);
   const movedRozenEl = document.getElementById(`total-movedRozen-${storeKey}`);
   if(movedRozenEl) movedRozenEl.textContent = String(movedRozenTotal);
   let soldGrandTotal = 0;
@@ -343,10 +358,15 @@ function restoreHourlyInputs(rows, todayIso, slots){
     const madeEl = document.querySelector(`.made-input[data-store="${sk}"][data-filling="${f}"]`);
     if(madeEl && row.total !== "" && row.total !== null && row.total !== undefined)
       madeEl.value = row.total;
-    // Zuidへ移動した数を復元（UvAのみ）
+    // Zuidへ移動した数を復元（UvA・Rozengracht）
     if(row.movedToZuid !== "" && row.movedToZuid !== null && row.movedToZuid !== undefined){
       const movedEl = document.querySelector(`.moved-input[data-store="${sk}"][data-filling="${f}"]`);
       if(movedEl) movedEl.value = String(row.movedToZuid);
+    }
+    // UvAへ移動した数を復元（Rozengrachtのみ）
+    if(row.movedToUva !== "" && row.movedToUva !== null && row.movedToUva !== undefined){
+      const movedUvaEl = document.querySelector(`.moved-uva-input[data-store="${sk}"][data-filling="${f}"]`);
+      if(movedUvaEl) movedUvaEl.value = String(row.movedToUva);
     }
     // Rozengrachtへ移動した数を復元（Zuid・UvAのみ）
     if(row.movedToRozengracht !== "" && row.movedToRozengracht !== null && row.movedToRozengracht !== undefined){
@@ -433,6 +453,8 @@ async function saveStoreActual(ctx){
     const made = madeEl ? (parseInt(madeEl.value, 10) || 0) : 0;
     const movedEl = document.querySelector(`.moved-input[data-store="${storeKey}"][data-filling="${f}"]`);
     const moved = movedEl ? (parseInt(movedEl.value, 10) || 0) : 0;
+    const movedUvaEl = document.querySelector(`.moved-uva-input[data-store="${storeKey}"][data-filling="${f}"]`);
+    const movedUva = movedUvaEl ? (parseInt(movedUvaEl.value, 10) || 0) : 0;
     const movedRozenEl = document.querySelector(`.moved-rozen-input[data-store="${storeKey}"][data-filling="${f}"]`);
     const movedRozen = movedRozenEl ? (parseInt(movedRozenEl.value, 10) || 0) : 0;
     const sv = hourlySlots.map((h, si) => {
@@ -447,7 +469,7 @@ async function saveStoreActual(ctx){
       const el = document.querySelector(`.received-input[data-store="${storeKey}"][data-filling="${f}"][data-slot="${si}"]`);
       return el ? (parseInt(el.value, 10) || 0) : 0;
     });
-    const item = { filling: f, total: made, movedToZuid: moved, movedToRozengracht: movedRozen };
+    const item = { filling: f, total: made, movedToZuid: moved, movedToUva: movedUva, movedToRozengracht: movedRozen };
     hourlySlots.forEach((h, si) => {
       item[`r${h}`] = sv[si];
       item[`given${h}`] = gv[si];
