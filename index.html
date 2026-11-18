@@ -934,22 +934,6 @@ function computeSalesWeather(hourlyByDate, dateStr){
   };
 }
 
-// Zuid（ステーションザウド）：月火水木のみ営業。季節×曜日ベース。
-const ZUID_SEASON_BASE = {
-  winter: { 1: 90, 2: 110, 3: 100, 4: 110, 5: 90 },  // 12〜2月（金は月と同値）
-  spring: { 1: 100, 2: 125, 3: 115, 4: 125, 5: 100 }, // 3〜5月（金は月と同値）
-  summer: { 1: 95, 2: 115, 3: 105, 4: 110, 5: 95 },  // 6〜8月（初夏）（金は月と同値）
-  autumn: { 1: 95, 2: 120, 3: 110, 4: 120, 5: 95 },  // 9〜11月（金は月と同値）
-};
-const SEASON_LABELS = { winter: "冬", spring: "春", summer: "初夏", autumn: "秋" };
-
-function getSeason(month){
-  if(month === 12 || month <= 2) return "winter";
-  if(month <= 5) return "spring";
-  if(month <= 8) return "summer";
-  return "autumn";
-}
-
 function tempAdjustment(temp){
   if(temp <= 15) return { adj: -15, label: "15℃以下" };
   if(temp <= 17) return { adj: -5, label: "16〜17℃" };
@@ -958,13 +942,11 @@ function tempAdjustment(temp){
   return { adj: -10, label: "29℃以上" };
 }
 
-function calcZuid(dow, month, salesWeather){
-  const season = getSeason(month);
-  const base = ZUID_SEASON_BASE[season][dow];
-  if(base === undefined) return null;
+function calcZuid(dow, salesWeather, baseOverride){
+  if(baseOverride === null || baseOverride === undefined || baseOverride === "") return null;
 
-  let total = base;
-  const reasons = [`${SEASON_LABELS[season]}・${DAY_NAMES[dow]}曜ベース ${total}個`];
+  let total = Number(baseOverride);
+  const reasons = [`${DAY_NAMES[dow]}曜ベース ${total}個`];
 
   if(!salesWeather){
     reasons.push("予報範囲外のため気温・天気補正なし");
@@ -998,10 +980,10 @@ function calcZuid(dow, month, salesWeather){
   return { total, reasons };
 }
 
-function calcUvA(dow, salesWeather){
-  if(![1, 2, 4].includes(dow)) return null;
-  let total = 35;
-  const reasons = ["基本 35個"];
+function calcUvA(dow, salesWeather, baseOverride){
+  if(baseOverride === null || baseOverride === undefined || baseOverride === "") return null;
+  let total = Number(baseOverride);
+  const reasons = [`${DAY_NAMES[dow]}曜ベース ${total}個`];
 
   if(salesWeather && salesWeather.avgTemp >= 18 && salesWeather.avgTemp <= 24){
     total += 5;
@@ -1048,12 +1030,18 @@ function parseStoreSettingsSheet(json){
       weekdays[wd.key] = !(cell && cell.v === false);
     });
     const qtyOrNull = cell => (cell && cell.v !== null && cell.v !== undefined && cell.v !== "") ? Number(cell.v) : null;
+    // 曜日ごとの基準値（Zuid・UvA用。「平日基本数」「土日基本数」の2列の後に月〜日の7列で並ぶ）
+    const weekdayBase = {};
+    STORE_SETTINGS_WEEKDAYS.forEach((wd, i) => {
+      weekdayBase[wd.key] = qtyOrNull(c[12 + i]);
+    });
     result[store] = {
       startDate: parseGvizDateCell(c[1]) || "",
       endDate: parseGvizDateCell(c[2]) || "",
       weekdays,
       weekdayQty: qtyOrNull(c[10]),
       weekendQty: qtyOrNull(c[11]),
+      weekdayBase,
     };
   });
   return result;
@@ -1061,7 +1049,16 @@ function parseStoreSettingsSheet(json){
 
 // Rozengracht店のオープン時点の初期値（admin.htmlのDEFAULT_STORE_SETTINGSと同じ値）。
 // 管理画面から一度でも保存すれば、以降はスプレッドシート側の値が優先される。
+// Zuid・UvAのweekdayBaseは、これまでコード中に埋め込まれていた曜日ごとの基準値
+// （Zuidは旧ZUID_SEASON_BASE.autumnの値、UvAは旧固定35個）をそのまま初期値として与える
+// （admin.htmlのDEFAULT_STORE_SETTINGSと同じ値）
 const DEFAULT_STORE_SETTINGS = {
+  Zuid: {
+    weekdayBase: { mon: 95, tue: 120, wed: 110, thu: 120, fri: 95, sat: null, sun: null },
+  },
+  UvA: {
+    weekdayBase: { mon: 35, tue: 35, wed: null, thu: 35, fri: null, sat: null, sun: null },
+  },
   Rozengracht: {
     startDate: "2026-11-09",
     endDate: "2027-04-30",
@@ -1081,6 +1078,16 @@ function isStoreOperatingOn(config, iso, dow){
   const wdEntry = STORE_SETTINGS_WEEKDAYS.find(wd => wd.dow === dow);
   if(wdEntry && config.weekdays && config.weekdays[wdEntry.key] === false) return false;
   return true;
+}
+
+// 天気等で自動計算する店舗（Zuid・UvA）の、指定した曜日の基準値（admin.htmlの
+// 「店舗の営業設定」で設定した値）を返す。未設定（null）ならその曜日は休業扱い
+function getStoreWeekdayBase(store, dow){
+  const config = getStoreConfig(store);
+  const wdEntry = STORE_SETTINGS_WEEKDAYS.find(wd => wd.dow === dow);
+  if(!config || !config.weekdayBase || !wdEntry) return null;
+  const v = config.weekdayBase[wdEntry.key];
+  return (v === null || v === undefined || v === "") ? null : Number(v);
 }
 
 // Rozengracht：天気等による自動計算は行わず、「店舗の営業設定」の平日・土日基本数をそのまま使う
@@ -1215,11 +1222,10 @@ function buildDailyResults(daily, hourlyByDate, holidaysByIso, nsDisruptionsByDa
     const minTemp = daily.temperature_2m_min[i];
     const code = daily.weathercode[i];
     const salesWeather = computeSalesWeather(hourlyByDate, dateStr);
-    const month = d.getMonth() + 1;
     const holidayName = (holidaysByIso && holidaysByIso[dateStr]) || null;
     const nsDisruptions = (nsDisruptionsByDate && nsDisruptionsByDate[dateStr]) || null;
-    const zuid = calcZuid(dow, month, salesWeather);
-    const uva = calcUvA(dow, salesWeather);
+    const zuid = calcZuid(dow, salesWeather, getStoreWeekdayBase("Zuid", dow));
+    const uva = calcUvA(dow, salesWeather, getStoreWeekdayBase("UvA", dow));
     const rozen = calcRozen(dateStr, dow);
     if(holidayName){
       applyHolidayPenalty(zuid, ZUID_MIN_GUARANTEE);
