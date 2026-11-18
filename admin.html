@@ -2389,6 +2389,7 @@ function renderCombined(){
   state.days.forEach(day => {
     bindForecastTableEvents(day);
     bindProductionDayEvents(day);
+    bindForecastProdRowHeightSync(day);
   });
 
   area.querySelectorAll(".confirm-week-btn").forEach(btn => {
@@ -2597,7 +2598,7 @@ function confirmedForecastTableHtml(day, confirmed){
     const chiseQty = hasDetail ? (confirmed.chiseBreakdown[f] || 0) : null;
     const rozenQty = hasDetail ? ((confirmed.rozenBreakdown && confirmed.rozenBreakdown[f]) || 0) : null;
     const rowTotal = hasDetail ? (zuidQty + uvaQty + chiseQty + rozenQty) : null;
-    return `<tr>
+    return `<tr data-sync-row="${f}">
         <td class="f-name">${f}</td>
         <td class="cell-readonly">${hasDetail ? zuidQty : "—"}</td>
         <td class="cell-readonly">${hasDetail ? uvaQty : "—"}</td>
@@ -2609,7 +2610,7 @@ function confirmedForecastTableHtml(day, confirmed){
   const rozenConfirmed = confirmed.rozen || 0;
   return `<table class="day-sub-table">
       <thead>
-        <tr>
+        <tr data-sync-row="head">
           <th class="f-name">具材</th>
           <th class="sub-forecast-head">Zuid</th>
           <th class="sub-forecast-head">${day.uvaVenueLabel}</th>
@@ -2620,7 +2621,7 @@ function confirmedForecastTableHtml(day, confirmed){
       </thead>
       <tbody>${rows}</tbody>
       <tfoot>
-        <tr>
+        <tr data-sync-row="foot">
           <td>合計</td>
           <td>${confirmed.zuid}</td>
           <td>${confirmed.uva}</td>
@@ -2650,7 +2651,7 @@ function splitForecastTableHtml(day){
     const chiseQtyForFilling = chiseBreakdown[f] || 0;
     // 販売計は「営業中」の店舗のみ合算する（休みにした店舗の入力値が残っていても計算には含めない）
     const forecastRowTotal = (day.zuidOpen ? zuidQty : 0) + (day.uvaOpen ? uvaQty : 0) + (day.rozenOpen ? rozenQty : 0) + chiseQtyForFilling;
-    return `<tr>
+    return `<tr data-sync-row="${f}">
         <td class="f-name">${f}</td>
         <td>${qtyStepperHtml(day, "zuid", f, zuidQty, day.zuidOpen && editable)}</td>
         <td>${showUva ? qtyStepperHtml(day, "uva", f, uvaQty, day.uvaOpen && editable) : "—"}</td>
@@ -2667,7 +2668,7 @@ function splitForecastTableHtml(day){
 
   return `<table class="day-sub-table">
       <thead>
-        <tr>
+        <tr data-sync-row="head">
           <th class="f-name">具材</th>
           <th class="sub-forecast-head">Zuid</th>
           <th class="sub-forecast-head">${day.uvaVenueLabel}</th>
@@ -2678,7 +2679,7 @@ function splitForecastTableHtml(day){
       </thead>
       <tbody>${rows}</tbody>
       <tfoot>
-        <tr>
+        <tr data-sync-row="foot">
           <td>合計</td>
           <td id="storeTotal-zuid-${day.dateKey}">${zuidTotal}</td>
           <td id="storeTotal-uva-${day.dateKey}">${uvaTotal}</td>
@@ -2806,6 +2807,92 @@ function updateGlobalBreakdownToggleBtnLabel(){
   btn.textContent = allOpen ? "表示中の内訳をすべて閉じる" : "表示中の内訳をすべて開く";
 }
 
+/* ---------- 左（販売予測）・右（生産割り振り）の表の行の高さ揃え ---------- */
+// 同じ具材の行が横一直線に並ぶよう、.day-table-forecast/.day-table-prod内の
+// 対応する<tr data-sync-row="...">（見出し・具材ごとの行・合計行）の高さを、
+// 常に高い方に合わせる。内訳<details>の開閉・個数変更・メンバー追加・画面幅変更など、
+// どの理由で行の高さが変わってもResizeObserverで検知し、自動的に再計算する。
+// スマホ幅（.day-2col-gridが縦並みになる768px以下）では、2つの表が横に並ばないため
+// 揃える必要が無く、高さの指定も解除する。
+
+const FORECAST_PROD_STACK_BREAKPOINT = 768; // .day-2col-gridの@media (max-width: 768px)と同じ基準
+const dayRowHeightSyncObservers = new Map(); // dateKey -> ResizeObserver（再描画時に必ず張り直すため）
+let rowHeightSyncScheduled = new Set();
+let rowHeightSyncRaf = null;
+
+function isForecastProdStacked(){
+  return window.matchMedia(`(max-width: ${FORECAST_PROD_STACK_BREAKPOINT}px)`).matches;
+}
+
+function forecastProdSyncRowMap(table){
+  const map = {};
+  if(!table) return map;
+  table.querySelectorAll("tr[data-sync-row]").forEach(tr => { map[tr.dataset.syncRow] = tr; });
+  return map;
+}
+
+function syncForecastProdRowHeights(day){
+  const container = document.getElementById(`dayblock-${day.dateKey}`);
+  if(!container) return;
+  const leftTable = container.querySelector(".day-table-forecast table.day-sub-table");
+  const rightTable = container.querySelector(".day-table-prod table.day-sub-table");
+  const leftRows = forecastProdSyncRowMap(leftTable);
+  const rightRows = forecastProdSyncRowMap(rightTable);
+
+  // まず両方とも高さの指定を解除し、内容本来の高さが測れる状態に戻す
+  // （前回合わせた高さが残っていると、それを基準に測ってしまい正しく揃わない）
+  Object.values(leftRows).forEach(tr => { tr.style.height = ""; });
+  Object.values(rightRows).forEach(tr => { tr.style.height = ""; });
+
+  if(isForecastProdStacked() || !leftTable || !rightTable) return;
+
+  Object.keys(leftRows).forEach(key => {
+    const l = leftRows[key], r = rightRows[key];
+    if(!l || !r) return;
+    const h = Math.max(l.getBoundingClientRect().height, r.getBoundingClientRect().height);
+    l.style.height = `${h}px`;
+    r.style.height = `${h}px`;
+  });
+}
+
+// 複数行・複数日の変化が同時に起きても、1フレームにまとめて再計算する
+function scheduleRowHeightSync(day){
+  rowHeightSyncScheduled.add(day);
+  if(rowHeightSyncRaf) return;
+  rowHeightSyncRaf = requestAnimationFrame(() => {
+    rowHeightSyncRaf = null;
+    const days = [...rowHeightSyncScheduled];
+    rowHeightSyncScheduled.clear();
+    days.forEach(d => syncForecastProdRowHeights(d));
+  });
+}
+
+// その日の左右の表の行（data-sync-row付きの<tr>）を監視し、内訳の開閉・個数の変更・
+// メンバー追加など、行の高さに影響する変化が起きたら自動的に揃え直す。
+// dayBlockHtmlの再描画のたびに呼び直されるため、古い監視は必ず解除してから張り直す。
+function bindForecastProdRowHeightSync(day){
+  const prev = dayRowHeightSyncObservers.get(day.dateKey);
+  if(prev) prev.disconnect();
+
+  const container = document.getElementById(`dayblock-${day.dateKey}`);
+  if(!container) return;
+
+  const observer = new ResizeObserver(() => scheduleRowHeightSync(day));
+  container.querySelectorAll("tr[data-sync-row]").forEach(tr => observer.observe(tr));
+  dayRowHeightSyncObservers.set(day.dateKey, observer);
+
+  syncForecastProdRowHeights(day);
+}
+
+// 画面幅の変更（768px基準をまたぐ場合も含む）があれば、表示中のすべての日を再計算する
+let forecastProdResizeTimer = null;
+window.addEventListener("resize", () => {
+  clearTimeout(forecastProdResizeTimer);
+  forecastProdResizeTimer = setTimeout(() => {
+    state.days.forEach(day => syncForecastProdRowHeights(day));
+  }, 120);
+});
+
 function splitProdTableHtml(day){
   const snap = computeDaySnapshot(day);
   const { working, memberCaps, hqBreakdown, hqQty, memberTotals, ningiTotal, chiseManualQty, fillingOveredBy } = snap;
@@ -2851,7 +2938,7 @@ function splitProdTableHtml(day){
       : `${hqVal}`;
     const hqBreakdownId = `hqBreakdown-${day.dateKey}-${f}`;
     const hqBreakdownHtml = storeBreakdownDetailsHtml(hqBreakdownId, hqStoreBreakdownParts(day, f, working));
-    return `<tr>
+    return `<tr data-sync-row="${f}">
         <td class="f-name">${f}<span class="hq-over-badge filling-cap-warn" id="fillingCapWarn-${day.dateKey}-${f}" style="display:none;"></span></td>
         ${memberCells}
         <td class="cell-readonly" id="prodHq-${day.dateKey}-${f}">
@@ -2868,7 +2955,7 @@ function splitProdTableHtml(day){
 
   return `<table class="day-sub-table">
       <thead>
-        <tr>
+        <tr data-sync-row="head">
           <th class="f-name">具材</th>
           ${memberHeaderCells}
           <th class="sub-prod-head">本部</th>
@@ -2877,7 +2964,7 @@ function splitProdTableHtml(day){
       </thead>
       <tbody>${rows}</tbody>
       <tfoot>
-        <tr>
+        <tr data-sync-row="foot">
           <td>合計</td>
           ${colTotalCells}
           <td class="cell-readonly" id="prodHqTotal-${day.dateKey}">${snap.hasFillingOverage ? `<span class="hq-negative">${hqQty}<span class="hq-over-badge">⚠️超過あり</span></span>` : hqQty}</td>
@@ -3022,6 +3109,8 @@ function dayBlockHtml(day){
           <div class="col-section-title ut-prod-head">生産割り振り</div>
           ${chisePriorityAssigneeSelectHtml(day, isConfirmed, isRevising, confirmedData)}
           <div class="prod-summary" id="summaryBlock-${day.dateKey}">${summaryHtmlFor(snap)}</div>
+          ${snap.working.length ? `<div class="prod-day-toggle-row"><button type="button" class="breakdown-toggle-btn breakdown-toggle-day-btn" data-key="${day.dateKey}">内訳をすべて開く</button></div>` : ""}
+          ${addMemberHtml}
         </div>
       </div>
       <div class="day-2col-grid">
@@ -3029,8 +3118,6 @@ function dayBlockHtml(day){
           ${splitForecastTableHtml(day)}
         </div>
         <div class="day-table-prod">
-          ${snap.working.length ? `<div class="prod-day-toggle-row"><button type="button" class="breakdown-toggle-btn breakdown-toggle-day-btn" data-key="${day.dateKey}">内訳をすべて開く</button></div>` : ""}
-          ${addMemberHtml}
           ${snap.working.length ? splitProdTableHtml(day) : `<p class="off-note">出勤予定のメンバーがいません。</p>`}
         </div>
       </div>
@@ -3052,6 +3139,7 @@ function renderDayBlock(day){
   container.innerHTML = dayBlockHtml(day);
   bindForecastTableEvents(day);
   bindProductionDayEvents(day);
+  bindForecastProdRowHeightSync(day);
   updateGlobalBreakdownToggleBtnLabel();
 }
 
