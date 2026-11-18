@@ -190,7 +190,7 @@ async function loadForSelectedDate(){
     <div class="status-msg" id="statusMsg"></div>
   `);
 
-  area.querySelectorAll(".hourly-input, .given-input, .received-input, .moved-input, .moved-rozen-input").forEach(inp =>
+  area.querySelectorAll(".hourly-input, .given-input, .received-input, .moved-input, .moved-uva-input, .moved-rozen-input").forEach(inp =>
     inp.addEventListener("input", () => updateStoreSoldDisplay(STORE_KEY, fillings))
   );
   wireNoteLengthWarning(STORE_KEY);

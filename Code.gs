@@ -807,16 +807,22 @@ var HOURLY_SHEET_HEADER = ["日付", "曜日", "天気", "気温", "店舗", "�
   "18時ランチ", "18時スタンプ",
   "12時あげた数", "13時あげた数", "14時あげた数", "15時あげた数", "16時あげた数", "17時あげた数", "18時あげた数",
   "12時受取", "13時受取", "14時受取", "15時受取", "16時受取", "17時受取", "18時受取",
-  "Zuidへ移動", "Rozengrachtへ移動", "更新日時"];
+  "Zuidへ移動", "Rozengrachtへ移動", "更新日時", "UvAへ移動"];
+// 「更新日時」（列63、1始まり）は楽観的ロックの基準として列番号を固定で参照している
+// （HOURLY_UPDATED_AT_COL）。この列より後に新しい列を追加しても「更新日時」の位置は
+// 変わらないようにするため、新しい列は必ず「更新日時」より後ろに追加すること。
+var HOURLY_UPDATED_AT_COL = 63;
 // 「あげた数」列（単一）・「〇時ランチ」「〇時スタンプ」列は、時間帯ごとの
 // 「〇時あげた数」列（ランチ・スタンプ統合）に置き換えられたため以後は書き込まない
 // （既存行の後方互換のため列自体は残す。過去データの読み取り時はgetHourlySheetRowsで
 // 　新列が空なら旧ランチ・スタンプ列の合計にフォールバックする）
-// 「〇時受取」（他店舗からの合流分。現在はZuid・Rozengrachtが使用）・「Zuidへ移動」
-// （UvAのみ・1日1回）・「Rozengrachtへ移動」（Zuid・UvAのみ・1日1回）・「更新日時」は
-// 末尾に追加した列。過去の行はこれらの列を持たないため、読み込み時は空欄=0（更新日時は
-// 空文字）として扱う（getHourlySheetRowsのv()が""を返し、calcHourlySoldAndCumulative/
-// analytics.html側でNumber("")=0相当に扱われる）。
+// 「〇時受取」（他店舗からの合流分。現在はZuid・UvA・Rozengrachtが使用）・「Zuidへ移動」
+// （UvA・Rozengracht。1日1回）・「Rozengrachtへ移動」（Zuid・UvA。1日1回）・「更新日時」・
+// 「UvAへ移動」（Rozengrachtのみ・1日1回）は末尾に追加した列。過去の行はこれらの列を
+// 持たないため、読み込み時は空欄=0（更新日時は空文字）として扱う（getHourlySheetRowsの
+// v()が""を返し、calcHourlySoldAndCumulative/analytics.html側でNumber("")=0相当に扱われる）。
+// 「Zuidへ移動」「Rozengrachtへ移動」は、どの店舗からの移動かに関わらず同じ列を使い回す
+// （行＝店舗ごとに値を持つため、列の意味は「その行の店舗から見た移動先」で一意に決まる）。
 // 「更新日時」は、uva.html/rozen.html（スタッフ用の店舗別入力ページ）とindex.htmlが
 // 同じ日・同じ店舗を同時に編集した場合の楽観的ロックに使う（handleSaveHourly参照）。
 
@@ -864,9 +870,10 @@ function handleSaveHourly(ss, data) {
   // 3列（A・E・G列）だけを読み取って該当行を特定し、既存値の保持が必要な行だけを
   // 全列読み取る（getHourlySheetRowsの読み取り範囲限定と同じ方針）。
   var keyCols = lastRow >= 2 ? sheet.getRange(2, 1, lastRow - 1, 7).getValues() : [];
-  // 楽観的ロックの比較用に、最終列（更新日時）だけを別途まとめて読む
-  // （keyColsと同じ開始行・件数で読むため、同じインデックスrで対応する行を指す）。
-  var updatedAtCol = lastRow >= 2 ? sheet.getRange(2, HOURLY_SHEET_HEADER.length, lastRow - 1, 1).getValues() : [];
+  // 楽観的ロックの比較用に、「更新日時」列（HOURLY_UPDATED_AT_COLで固定）だけを別途まとめて読む
+  // （keyColsと同じ開始行・件数で読むため、同じインデックスrで対応する行を指す。
+  // 　「更新日時」より後ろに列を追加しても位置が変わらないよう、列番号は固定で参照する）。
+  var updatedAtCol = lastRow >= 2 ? sheet.getRange(2, HOURLY_UPDATED_AT_COL, lastRow - 1, 1).getValues() : [];
 
   // 曜日・天気・気温は本来「その日」単位の情報で、本来はどの店舗の行も同じ値を持つ。
   // index.htmlは毎回これらを送ってくるが、uva.html/rozen.html（スタッフ用の店舗別入力
@@ -971,6 +978,15 @@ function handleSaveHourly(ss, data) {
         movedRozen = Number(item.movedToRozengracht) || 0;
       }
 
+      // UvAへ移動した数（Rozengrachtのみ・1日1回）。保護ロジックは上記と同じ。
+      // 列はHOURLY_SHEET_HEADERの末尾（「更新日時」より後ろ）にあるため、既存値はindex 63。
+      var movedUva;
+      if (item.movedToUva === "" || item.movedToUva === null || item.movedToUva === undefined) {
+        movedUva = existing ? (Number(existing[63]) || 0) : 0;
+      } else {
+        movedUva = Number(item.movedToUva) || 0;
+      }
+
       // 販売終了時間・備考：uva.html/rozen.html（スタッフ用の店舗別入力ページ）はこれらの
       // 入力欄を持たないため、キー自体を送ってこない（undefined）。その場合は空文字で
       // 上書きしてしまわず、既存の値をそのまま保持する。storeData.soldOutTime/noteが
@@ -998,7 +1014,8 @@ function handleSaveHourly(ss, data) {
         givens[0], givens[1], givens[2], givens[3], givens[4], givens[5], givens[6],
         receiveds[0], receiveds[1], receiveds[2], receiveds[3], receiveds[4], receiveds[5], receiveds[6],
         moved, movedRozen,
-        new Date()
+        new Date(), // 更新日時（列63固定。この位置は変えない）
+        movedUva    // UvAへ移動（今回追加した列。末尾＝列64）
       ];
       if (foundRow > 0) {
         sheet.getRange(foundRow, 1, 1, row.length).setValues([row]);
@@ -1104,7 +1121,7 @@ function getHourlySheetRows(ss, dateFilter) {
       given16: givenOrLegacySum(v(50), r[40], r[41]),
       given17: givenOrLegacySum(v(51), r[42], r[43]),
       given18: givenOrLegacySum(v(52), r[44], r[45]),
-      // 「〇時受取」（Zuidのみ・UvAからの合流分）・「Zuidへ移動」（UvAのみ）は後から追加した
+      // 「〇時受取」「Zuidへ移動」「Rozengrachtへ移動」「UvAへ移動」は後から追加した
       // 列のため、それより前に保存された行では空文字になる（0として扱われる）
       received12: v(53), received13: v(54), received14: v(55), received15: v(56),
       received16: v(57), received17: v(58), received18: v(59),
@@ -1113,6 +1130,8 @@ function getHourlySheetRows(ss, dateFilter) {
       // 楽観的ロック用。epochミリ秒の数値（文字列化して比較する）で返す。
       // タイムゾーンや表示形式の差異を気にせず単純比較できるようにするため。
       updatedAt: r[62] instanceof Date ? r[62].getTime() : "",
+      // 「更新日時」より後ろ（末尾）に追加した列。位置を固定するため、更新日時の後に置いている
+      movedToUva: v(63),
     });
   }
   return result;
