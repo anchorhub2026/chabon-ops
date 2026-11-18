@@ -547,13 +547,15 @@ function handleGetMonthlyOnigiri(ss) {
 }
 
 // 店舗（Zuid・UvA・Rozengracht等）ごとの営業期間・営業曜日・基本販売数（天気等による自動計算を
-// 使わない店舗向け）を「店舗名」で1店舗1行（店舗名キーでupsert）保存する。
+// 使わない店舗向け）・曜日ごとの基準値（天気等による自動計算を使う店舗向け）を「店舗名」で
+// 1店舗1行（店舗名キーでupsert）保存する。
 // 設定行が無い店舗は、admin.html側で「期間制限なし・曜日すべて営業」として扱う＝既存店舗
 // （Zuid・UvA）は設定するまでこれまでの動きと完全に同じになる（この関数は保存のみ行い、
 // 未設定時の既定値の解釈はクライアント側の責務）。
 // 読み取りは他の低頻度シートと同様gviz経由で行う（admin.html側でtype=取得エンドポイントは
 // 用意しない）。
-var STORE_SETTINGS_HEADER = ["店舗名", "開始日", "終了日", "月", "火", "水", "木", "金", "土", "日", "平日基本数", "土日基本数", "更新日時"];
+var STORE_SETTINGS_HEADER = ["店舗名", "開始日", "終了日", "月", "火", "水", "木", "金", "土", "日", "平日基本数", "土日基本数",
+  "月曜基準値", "火曜基準値", "水曜基準値", "木曜基準値", "金曜基準値", "土曜基準値", "日曜基準値", "更新日時"];
 function handleSaveStoreSettings(ss, data) {
   var sheet = ss.getSheetByName("店舗設定");
   if (!sheet) {
@@ -567,6 +569,10 @@ function handleSaveStoreSettings(ss, data) {
   if (!store) return;
   var weekdays = data.weekdays || {};
   var flag = function(key) { return weekdays[key] === false ? false : true; };
+  var weekdayBase = data.weekdayBase || {};
+  var baseVal = function(key) {
+    return (weekdayBase[key] !== undefined && weekdayBase[key] !== null && weekdayBase[key] !== "") ? Number(weekdayBase[key]) : "";
+  };
 
   var row = [
     store,
@@ -575,6 +581,7 @@ function handleSaveStoreSettings(ss, data) {
     flag("mon"), flag("tue"), flag("wed"), flag("thu"), flag("fri"), flag("sat"), flag("sun"),
     (data.weekdayQty !== undefined && data.weekdayQty !== "") ? Number(data.weekdayQty) : "",
     (data.weekendQty !== undefined && data.weekendQty !== "") ? Number(data.weekendQty) : "",
+    baseVal("mon"), baseVal("tue"), baseVal("wed"), baseVal("thu"), baseVal("fri"), baseVal("sat"), baseVal("sun"),
     new Date()
   ];
 
