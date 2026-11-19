@@ -453,44 +453,25 @@
   }
   .confirm-btn.yes{ background: var(--main); color: #fff; }
   .confirm-btn.no{ background: #e2ddd0; color: #555; }
-  /* 時間帯別実績（テーブル本体・固定列・メモ欄の構造はhourly-table.cssで共通化。
-     ただしindex.htmlは一覧性を優先するため、サイズ（幅・高さ・余白・文字サイズ）だけは
-     共通化前の元のサイズに戻す。固定列・固定見出し行の動き自体はhourly-table.css側の
-     position:sticky指定をそのまま使う（ここでは上書きしない）。
+  /* 時間帯別実績：入力は入力モード（hourly-table.cssの.hourly-input-row等）で行う。
+     「一覧」（確認用・読み取り専用）の表本体・固定列のサイズだけは、共通化前の元の
+     サイズに戻す。固定列・固定見出し行の動き自体はhourly-table.css側のposition:sticky
+     指定をそのまま使う（ここでは上書きしない）。
      #actualSalesAreaで囲むことで、hourly-table.cssの同名クラスより確実に優先させる。 */
   #actualSalesArea .hourly-table{ font-size: 0.82rem; min-width: 580px; }
   #actualSalesArea .hourly-table th, #actualSalesArea .hourly-table td{ padding: 5px 6px; }
-  #actualSalesArea .hourly-table input[type="number"]{
-    width: 52px; min-height: 0; border-radius: 4px; padding: 3px 4px; font-size: 0.82rem;
-  }
-  #actualSalesArea .sold-display{ font-size: 0.7rem; margin-top: 2px; min-height: 14px; }
-  #actualSalesArea .sold-neg{ font-weight: normal; }
-  #actualSalesArea .cum-display{ font-size: 0.7rem; margin-top: 1px; min-height: 14px; }
-  #actualSalesArea .made-input{ width: 52px !important; }
-  #actualSalesArea .slot-subhead{ font-size: 0.6rem; opacity: 0.75; }
-  #actualSalesArea .slot-extra-row{ gap: 2px; margin-top: 2px; }
-  #actualSalesArea .given-input{ width: 32px !important; min-height: 0 !important; font-size: 0.68rem !important; padding: 2px 1px !important; }
-  #actualSalesArea .received-input{ width: 32px !important; min-height: 0 !important; font-size: 0.68rem !important; padding: 2px 1px !important; }
-  #actualSalesArea .moved-input, #actualSalesArea .moved-uva-input, #actualSalesArea .moved-rozen-input{ width: 56px !important; }
-  #actualSalesArea .total-row td{ font-size: 0.8rem; }
-  #actualSalesArea .total-cell{ min-width: 52px; }
+  #actualSalesArea .hourly-list-cell .sold-display{ font-size: 0.7rem; margin-top: 2px; min-height: 14px; }
+  #actualSalesArea .hourly-list-cell .sold-neg{ font-weight: normal; }
   /* 2列目（作った数）の固定位置(left)は、1列目「具材名」の実際の表示幅に合わせている。
      サイズを元に戻した分、具材名列の幅も変わるため、hourly-table.cssの76px固定値のままだと
      横スクロール時に2列目が1列目（具材名の文字）に重なって隠れてしまう。
      最長の具材名「スパイシーツナマヨ」を表示した状態で実測した幅（約116px）に
      余裕を持たせた118pxに上書きする。 */
   #actualSalesArea .hourly-table th:nth-child(2), #actualSalesArea .hourly-table td:nth-child(2){ left: 118px; }
-  .store-section{ margin-bottom: 20px; }
-  .store-heading{ font-size: 1rem; font-weight: bold; color: var(--main-dark); margin: 12px 0 6px; }
   .location-input-row{ margin-bottom: 6px; font-size: 0.88rem; }
   .location-input-row input{ border: 1px solid #ccc; border-radius: 4px; padding: 3px 6px; font-size: 0.88rem; width: 140px; margin-left: 4px; }
   .soldout-time-row{ margin-bottom: 6px; font-size: 0.88rem; }
   .soldout-time-row input{ border: 1px solid #ccc; border-radius: 4px; padding: 3px 6px; font-size: 0.88rem; margin-left: 4px; }
-  .record-btn{
-    margin-top: 12px; padding: 10px 28px; background: var(--main); color: #fff;
-    border: none; border-radius: 6px; font-size: 1rem; font-weight: bold; cursor: pointer;
-  }
-  .record-btn:disabled{ background: #aaa; cursor: default; }
 </style>
 </head>
 <body>
@@ -805,6 +786,9 @@ const state = {
   openWeekKey: null, // 週間ビューで展開中の日付キー "M/D" | null
   storeSettings: {}, // 店舗名 -> {startDate,endDate,weekdays,weekdayQty,weekendQty}（admin.htmlで設定）
   hourlyUpdatedAtByStore: {}, // 店舗名 -> 時間帯別実績の最新更新日時(epochミリ秒)。保存前の楽観的ロック基準
+  activeStoreKey: null, // 時間帯別実績の入力モードで選択中の店舗（null=初期値。初回描画時にZuidにする）
+  activeSlotIndex: null, // 入力モードで選択中の時間帯インデックス（null=初期値。初回描画時に現在時刻に近い時間帯にする）
+  inputModeController: null,
 };
 
 // 今月のおにぎり追加分(5%)は、枝豆・梅・うなぎの比率は変えず、変動具材5種の合計(0.89→0.84)を按分縮小して確保
@@ -1399,12 +1383,10 @@ function renderWeekDetail(){
   `;
 }
 
-// getTodayFillingTotals()・getStoreTotals()はhourly-actuals.jsに共通化
-// （index.html/uva.html/rozen.htmlで共通利用）
+// getTodayFillingTotals()・getStoreTotals()・buildHourlyInputModeHtml()・
+// bindHourlyInputMode()はhourly-actuals.jsに共通化（index.html/uva.html/rozen.htmlで共通利用）
 
-// buildStoreTable()はhourly-actuals.jsに共通化（index.html/uva.html/rozen.htmlで共通利用）
-
-function renderActualSales(){
+async function renderActualSales(){
   const area = document.getElementById("actualSalesArea");
   if(!state.dailyResults.length){ area.innerHTML = `<p class="off-note">読み込み中...</p>`; return; }
 
@@ -1416,67 +1398,61 @@ function renderActualSales(){
   const fillings = FILLINGS.filter(f => (zuidTotals[f] || 0) > 0 || (uvaTotals[f] || 0) > 0 || (rozenTotals[f] || 0) > 0);
   if(fillings.length === 0){ area.innerHTML = `<p class="off-note">具材の割り振りがありません。</p>`; return; }
 
-  area.innerHTML = `
-    <div class="store-section">
-      <div class="store-heading">🏪 Zuid</div>
-      <div class="table-scroll table-scroll--bounded">${buildStoreTable("Zuid", fillings, zuidTotals)}</div>
-      <div class="soldout-time-row">
-        販売終了時間：<input type="time" id="soldoutTime-Zuid">
-        <span class="notes-label">（完売した場合はその時刻、完売しなかった場合は営業終了時刻）</span>
-      </div>
-      ${buildNotesAreaHtml("Zuid")}
-      <button class="record-btn" id="saveZuidBtn">Zuidの実績を記録する</button>
-    </div>
-    <div class="store-section">
-      <div class="store-heading">🏪 UvA</div>
-      <div class="location-input-row">
-        販売場所：<input type="text" id="uvaLocationInput" value="UvA" placeholder="UvA" maxlength="20">
-      </div>
-      <div class="table-scroll table-scroll--bounded">${buildStoreTable("UvA", fillings, uvaTotals)}</div>
-      <div class="soldout-time-row">
-        販売終了時間：<input type="time" id="soldoutTime-UvA">
-        <span class="notes-label">（完売した場合はその時刻、完売しなかった場合は営業終了時刻）</span>
-      </div>
-      ${buildNotesAreaHtml("UvA")}
-      <button class="record-btn" id="saveUvABtn">UvAの実績を記録する</button>
-    </div>
-    <div class="store-section">
-      <div class="store-heading">🏪 Rozengracht</div>
-      <div class="table-scroll table-scroll--bounded">${buildStoreTable("Rozengracht", fillings, rozenTotals)}</div>
-      <div class="soldout-time-row">
-        販売終了時間：<input type="time" id="soldoutTime-Rozengracht">
-        <span class="notes-label">（完売した場合はその時刻、完売しなかった場合は営業終了時刻）</span>
-      </div>
-      ${buildNotesAreaHtml("Rozengracht")}
-      <button class="record-btn" id="saveRozenBtn">Rozengrachtの実績を記録する</button>
-    </div>
-  `;
+  const hourlySlots = HOURLY_SLOTS;
+  const activeSlotIndex = state.activeSlotIndex !== null ? state.activeSlotIndex : nearestHourlySlotIndex(hourlySlots);
+  const activeStoreKey = state.activeStoreKey || "Zuid";
 
-  area.querySelectorAll(".hourly-input, .made-input, .given-input, .received-input, .moved-input, .moved-uva-input, .moved-rozen-input").forEach(inp =>
-    inp.addEventListener("input", () => updateSoldDisplay(["Zuid", "UvA", "Rozengracht"], fillings))
-  );
+  // 販売終了時間・（UvAのみ）販売場所・メモは時間帯に関係ない店舗ごとの日次欄のため、
+  // 入力モードの店舗ごとの行の末尾（footerHtml）に含め、店舗タブの表示/非表示と連動させる
+  const zuidFooter = `
+    <div class="soldout-time-row">
+      販売終了時間：<input type="time" id="soldoutTime-Zuid">
+      <span class="notes-label">（完売した場合はその時刻、完売しなかった場合は営業終了時刻）</span>
+    </div>
+    ${buildNotesAreaHtml("Zuid")}`;
+  const uvaFooter = `
+    <div class="location-input-row">
+      販売場所：<input type="text" id="uvaLocationInput" value="UvA" placeholder="UvA" maxlength="20">
+    </div>
+    <div class="soldout-time-row">
+      販売終了時間：<input type="time" id="soldoutTime-UvA">
+      <span class="notes-label">（完売した場合はその時刻、完売しなかった場合は営業終了時刻）</span>
+    </div>
+    ${buildNotesAreaHtml("UvA")}`;
+  const rozenFooter = `
+    <div class="soldout-time-row">
+      販売終了時間：<input type="time" id="soldoutTime-Rozengracht">
+      <span class="notes-label">（完売した場合はその時刻、完売しなかった場合は営業終了時刻）</span>
+    </div>
+    ${buildNotesAreaHtml("Rozengracht")}`;
+
+  const storeDefs = [
+    { key: "Zuid", label: "Zuid", totals: zuidTotals, madeReadonly: false,
+      showReceived: true, showMovedToZuid: false, showMovedToUva: false, showMovedToRozengracht: true,
+      footerHtml: zuidFooter },
+    { key: "UvA", label: "UvA", totals: uvaTotals, madeReadonly: false,
+      showReceived: true, showMovedToZuid: true, showMovedToUva: false, showMovedToRozengracht: true,
+      footerHtml: uvaFooter },
+    { key: "Rozengracht", label: "Rozengracht", totals: rozenTotals, madeReadonly: false,
+      showReceived: true, showMovedToZuid: true, showMovedToUva: true, showMovedToRozengracht: false,
+      footerHtml: rozenFooter },
+  ];
+
+  area.innerHTML = buildHourlyInputModeHtml(storeDefs, fillings, hourlySlots, activeStoreKey, activeSlotIndex, true);
   ["Zuid", "UvA", "Rozengracht"].forEach(wireNoteLengthWarning);
-  const saveBtns = {
-    Zuid: document.getElementById("saveZuidBtn"),
-    UvA: document.getElementById("saveUvABtn"),
-    Rozengracht: document.getElementById("saveRozenBtn"),
-  };
-  Object.entries(saveBtns).forEach(([storeKey, btn]) => btn.addEventListener("click", () => handleSaveStoreClick(storeKey)));
 
-  // 保存済みデータを読み込んで入力欄を復元する。復元が完了する前に保存ボタンが押されると、
-  // まだ空のままの入力欄の値（空欄）が送信され、既に保存済みの実績を上書きして消してしまう
-  // 事故につながるため、復元が完了するまで保存ボタンを一時的に無効化する。
-  const originalLabels = {};
-  Object.entries(saveBtns).forEach(([storeKey, btn]) => {
-    originalLabels[storeKey] = btn.textContent;
-    btn.disabled = true;
-    btn.textContent = "読み込み中...";
-  });
-  refreshHourlyRecords().finally(() => {
-    Object.entries(saveBtns).forEach(([storeKey, btn]) => {
-      btn.disabled = false;
-      btn.textContent = originalLabels[storeKey];
-    });
+  // 保存済みデータを、入力モードのイベント結線（＝自動保存が働き始めるタイミング）より
+  // 先に復元することで、復元が終わる前に空欄のまま自動保存されて既存データが
+  // 消えてしまう事故を防ぐ（イベントはまだ結線されていないため、復元中は何も保存されない）
+  await refreshHourlyRecords();
+
+  state.inputModeController = bindHourlyInputMode({
+    storeDefs, fillings, hourlySlots, showStoreTabs: true,
+    getActiveStoreKey: () => state.activeStoreKey || "Zuid",
+    setActiveStoreKey: key => { state.activeStoreKey = key; },
+    getActiveSlotIndex: () => state.activeSlotIndex !== null ? state.activeSlotIndex : activeSlotIndex,
+    setActiveSlotIndex: i => { state.activeSlotIndex = i; },
+    save: saveStoreNow,
   });
 }
 
@@ -1493,7 +1469,7 @@ async function refreshHourlyRecords(){
 
   const rows = await fetchHourlyData(SCRIPT_URL, today.dateStr);
   restoreHourlyInputs(rows, today.dateStr);
-  updateSoldDisplay(["Zuid", "UvA", "Rozengracht"], fillings);
+  if(state.inputModeController) state.inputModeController.refreshAll();
 
   // 楽観的ロックの基準値（保存前チェック用）を、店舗ごとに最新の更新日時で更新しておく
   if(!state.hourlyUpdatedAtByStore) state.hourlyUpdatedAtByStore = {};
@@ -1506,22 +1482,25 @@ async function handleRefreshHourlyClick(){
   const btn = document.getElementById("refreshHourlyBtn");
   if(btn){ btn.disabled = true; btn.textContent = "更新中..."; }
   try{
+    // 更新前に、保留中（デバウンス待ち）の保存があれば確定させておく
+    // （再読み込みで古い値が入力欄に上書きされ、未保存の入力が消える事故を防ぐ）
+    ["Zuid", "UvA", "Rozengracht"].forEach(storeKey => flushHourlySave(storeKey));
     await refreshHourlyRecords();
   }finally{
     if(btn){ btn.disabled = false; btn.textContent = "🔄 更新"; }
   }
 }
 
-// updateSoldDisplay()・fetchHourlyData()・restoreHourlyInputs()はhourly-actuals.jsに共通化
+// fetchHourlyData()・restoreHourlyInputs()はhourly-actuals.jsに共通化
 // （index.html/uva.html/rozen.htmlで共通利用）。fetchHourlyDataの呼び出しはfetchHourlyData(SCRIPT_URL, dateIso)。
 
-// 保存ボタンのクリックハンドラ。実際の計算・送信・楽観的ロックのチェックは
-// hourly-actuals.jsのsaveStoreActual()（index.html/uva.html/rozen.html共通）に委譲し、
-// ここではボタンの表示（送信中→結果）だけを担当する。
-async function handleSaveStoreClick(storeKey){
+// 入力モードから自動保存（スロット・店舗切替時・デバウンス経過時）・手動保存の両方から
+// 呼ばれる。実際の計算・送信・楽観的ロックのチェックはhourly-actuals.jsのsaveStoreActual()
+// （index.html/uva.html/rozen.html共通）に委譲し、変更していない。
+async function saveStoreNow(storeKey){
   const today = state.dailyResults[0];
   const plan = state.confirmedPlanByDate[mdLabel(today.dateStr)];
-  if(!plan) return;
+  if(!plan) return false;
 
   const { zuidTotals, uvaTotals, rozenTotals } = getStoreTotals(plan, state.todayDraft);
   const fillings = FILLINGS.filter(f => (zuidTotals[f] || 0) > 0 || (uvaTotals[f] || 0) > 0 || (rozenTotals[f] || 0) > 0);
@@ -1532,11 +1511,7 @@ async function handleSaveStoreClick(storeKey){
   const note = (document.getElementById(`notes-${storeKey}`) || {value:""}).value.trim();
   const soldOutTime = (document.getElementById(`soldoutTime-${storeKey}`) || {value:""}).value.trim();
 
-  const btnId = storeKey === "Zuid" ? "saveZuidBtn" : storeKey === "UvA" ? "saveUvABtn" : "saveRozenBtn";
-  const btn = document.getElementById(btnId);
-  if(btn){ btn.disabled = true; btn.textContent = "送信中..."; }
   const t0 = Date.now();
-
   const result = await saveStoreActual({
     scriptUrl: SCRIPT_URL, storeKey, dateIso: today.dateStr, fillings,
     weekday: DAY_NAMES[today.dow] + "曜", weather: w.text, temp: Math.round(today.maxTemp),
@@ -1548,19 +1523,13 @@ async function handleSaveStoreClick(storeKey){
     console.log(`[index.html] saveStoreActual(${storeKey}) 保存: ${Date.now() - t0}ms`);
     if(!state.hourlyUpdatedAtByStore) state.hourlyUpdatedAtByStore = {};
     state.hourlyUpdatedAtByStore[storeKey] = result.expectedUpdatedAt;
-    if(btn){ btn.textContent = "✓ 記録しました"; }
-    setTimeout(() => {
-      if(btn){ btn.textContent = `${storeKey}の実績を記録する`; btn.disabled = false; }
-    }, 3000);
+    return true;
   } else if(result.reason === "conflict"){
     console.warn(`[index.html] saveStoreActual(${storeKey}) 他の端末で更新されていたため保存を中止しました`);
-    if(btn){ btn.textContent = "⚠️ 他の端末で更新されています。再読み込みしてください"; }
-    setTimeout(() => {
-      if(btn){ btn.textContent = `${storeKey}の実績を記録する`; btn.disabled = false; }
-    }, 5000);
+    return false;
   } else {
     console.error(`実績記録失敗（${Date.now() - t0}ms経過後にエラー）:`, result.error);
-    if(btn){ btn.textContent = `${storeKey}の実績を記録する`; btn.disabled = false; }
+    return false;
   }
 }
 
