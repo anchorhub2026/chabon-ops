@@ -806,6 +806,9 @@
   table.day-sub-table th.f-name{ text-align: left; padding-left: 10px; }
   table.day-sub-table th.sub-forecast-head{ background: #ddeee4; color: var(--main-dark); }
   table.day-sub-table th.sub-prod-head{ background: #dde6ee; color: #2c5272; }
+  /* 修正中、確定プランの数があるために営業設定上は休業のまま強制的に営業扱いにした
+     店舗の列に出す小さな注記（値は変えない・表示のみ） */
+  .settings-closed-note{ display: inline-block; font-size: 0.62rem; font-weight: normal; color: #a3362a; white-space: normal; }
   table.day-sub-table td.cell-readonly{ color: #666; }
   table.day-sub-table td.cell-row-total{ font-weight: bold; color: var(--main-dark); }
   /* メンバー×具材セルの店舗別内訳（タップで開く）。普段は「内訳」の1行だけで表を圧迫しない */
@@ -2652,7 +2655,9 @@ function splitForecastTableHtml(day){
   const confirmed = getConfirmedPlanForDay(day);
   if(confirmed && !day.isRevising) return confirmedForecastTableHtml(day, confirmed);
 
-  const showUva = day.uva !== null || isWeekendDow(day.dow);
+  // 修正中、確定プランにUvAの数があるために強制的に営業扱いにした日（day.uvaOpen）も
+  // UvAの列を表示する（day.uvaが休業(null)のままでも隠さない）
+  const showUva = day.uva !== null || isWeekendDow(day.dow) || day.uvaOpen;
   const chise = state.chiseByDate[mdLabel(day.dateObj)];
   const chiseBreakdown = chise ? chise.breakdown : {};
   const chiseQty = chise ? chise.subtotal : 0;
@@ -2680,13 +2685,20 @@ function splitForecastTableHtml(day){
   const rozenTotal = day.rozenOpen ? sumQtyMap(day.rozenFillingQty) : 0;
   const forecastGrandTotal = zuidTotal + uvaTotal + rozenTotal + chiseQty;
 
+  // 修正中、確定プランの数があるために「店舗の営業設定」上は休業のまま強制的に営業扱いに
+  // した店舗の列の上に、小さく注記する（値は0にせず、入力もブロックしない。表示のみ）
+  const settingsClosedNoteHtml = `<br><span class="settings-closed-note">⚠️営業設定では休業日です</span>`;
+  const zuidHeadNote = day.zuidSettingsClosedNotice ? settingsClosedNoteHtml : "";
+  const uvaHeadNote = day.uvaSettingsClosedNotice ? settingsClosedNoteHtml : "";
+  const rozenHeadNote = day.rozenSettingsClosedNotice ? settingsClosedNoteHtml : "";
+
   return `<table class="day-sub-table">
       <thead>
         <tr data-sync-row="head">
           <th class="f-name">具材</th>
-          <th class="sub-forecast-head">Zuid</th>
-          <th class="sub-forecast-head">${day.uvaVenueLabel}</th>
-          <th class="sub-forecast-head">Rozen</th>
+          <th class="sub-forecast-head">Zuid${zuidHeadNote}</th>
+          <th class="sub-forecast-head">${day.uvaVenueLabel}${uvaHeadNote}</th>
+          <th class="sub-forecast-head">Rozen${rozenHeadNote}</th>
           <th class="sub-forecast-head">チセ</th>
           <th class="sub-forecast-head">販売計</th>
         </tr>
@@ -3008,6 +3020,11 @@ function storeBoxWithToggleHtml(day, store, label, result, isConfirmed, confirme
   const toggleBtn = `<button class="store-toggle-btn ${isOpen ? "on" : "off"}" data-key="${day.dateKey}" data-store="${store}">${isOpen ? "営業" : "休み"}</button>`;
   const resetBtn = result
     ? `<button type="button" class="reset-recommend-btn" data-key="${day.dateKey}" data-store="${store}" title="推奨に戻す">↺</button>` : "";
+  // result（天気等による推奨計算）が無い（＝休業扱い）でも、修正中に確定プランの数があるため
+  // isOpenだけ強制的にtrueになっている場合（day.isRevising）は、「—」ではなく実際の値
+  // （day.XFillingQtyの合計、確定プランの内訳からそのまま複製した値）を表示する。
+  // 修正中でない通常の日（手動の営業/休みトグルのみでresultが無い場合）は、これまでどおり
+  // 「—」のまま表示する（今回の修正範囲外の挙動を変えないため）
   const itemHtml = result
     ? `<div class="store-item">
         <div class="store-item-header">
@@ -3016,7 +3033,15 @@ function storeBoxWithToggleHtml(day, store, label, result, isConfirmed, confirme
         </div>
         ${result.reasons.map(r => compactReason(r)).join(" / ") ? `<div class="store-item-reasons">${result.reasons.map(r => compactReason(r)).join(" / ")}</div>` : ""}
       </div>`
-    : `<div class="store-item closed">
+    : (isOpen && day.isRevising)
+      ? `<div class="store-item">
+          <div class="store-item-header">
+            <span class="store-item-name">${label}</span>
+            <span class="store-item-num">${sumQtyMap(day[`${store}FillingQty`])}個</span>
+          </div>
+          <div class="store-item-reasons">修正中（確定プランの数）</div>
+        </div>`
+      : `<div class="store-item closed">
         <div class="store-item-header">
           <span class="store-item-name">${label}</span>
           <span class="store-item-num">—</span>
@@ -3053,7 +3078,9 @@ function chisePriorityAssigneeSelectHtml(day, isConfirmed, isRevising, confirmed
 
 function dayBlockHtml(day){
   const snap = computeDaySnapshot(day);
-  const showUva = day.uva !== null || isWeekendDow(day.dow);
+  // 修正中、確定プランにUvAの数があるために強制的に営業扱いにした日（day.uvaOpen）も
+  // UvAの列・箱を表示する（day.uvaが休業(null)のままでも隠さない）
+  const showUva = day.uva !== null || isWeekendDow(day.dow) || day.uvaOpen;
   const isConfirmed = snap.isConfirmedPlan;
   const confirmedData = getConfirmedPlanForDay(day);
   const hasConfirmedPlan = !!confirmedData;
@@ -3874,11 +3901,22 @@ function startRevisingDay(day){
     ? { ...buildFillingDefaults(0), ...confirmed.rozenBreakdown }
     : buildFillingDefaults(confirmed.rozen || 0);
   day.chisePriorityAssignee = confirmed.chisePriorityAssignee || "自動";
-  // 確定時点で販売実績があった店舗は「営業」扱いにする（土日イベント等でzuidOpen/uvaOpenの
-  // 既定値が休みになっている場合への対策。既に営業中であれば変更しない）
-  day.zuidOpen = day.zuidOpen || confirmed.zuid > 0;
-  day.uvaOpen = day.uvaOpen || confirmed.uva > 0;
-  day.rozenOpen = day.rozenOpen || (confirmed.rozen || 0) > 0;
+  // 確定プランにその店舗の数が入っている（具材別内訳の合計が1個以上ある）場合は、
+  // 「店舗の営業設定」や現在の天気予報による休業判定（day.zuidOpen等の既定値）を無視して
+  // 必ず「営業」扱いにする。確定数の判定には、上で確定プランの内訳からそのまま複製した
+  // day.zuidFillingQty等の実際の値（sumQtyMap）を使う（confirmed.zuid等のスカラー列は、
+  // 古い確定データで内訳列と食い違っている場合があり、それだけに頼ると営業設定で休業の
+  // 店舗の確定数が正しく複製されない不具合になるため使わない）。
+  // 確定プランの数が0の場合だけ、既存のday.zuidOpen（営業設定・天気予報由来の既定値）に従う
+  day.zuidOpen = day.zuidOpen || sumQtyMap(day.zuidFillingQty) > 0;
+  day.uvaOpen = day.uvaOpen || sumQtyMap(day.uvaFillingQty) > 0;
+  day.rozenOpen = day.rozenOpen || sumQtyMap(day.rozenFillingQty) > 0;
+  // 営業設定・天気予報では休業（day.zuid/day.uva/day.rozenがnull）なのに、確定プランの数が
+  // あるために上で強制的に営業扱いにした店舗を記録する（画面に小さく注記を出すためだけに使う。
+  // 値を0にする・入力をブロックする等の用途には使わない）
+  day.zuidSettingsClosedNotice = day.zuid === null && day.zuidOpen;
+  day.uvaSettingsClosedNotice = day.uva === null && day.uvaOpen;
+  day.rozenSettingsClosedNotice = day.rozen === null && day.rozenOpen;
   day.memberFillingQty = memberFillingQty;
   // memberStoreFillingQtyはrenderDayBlock→computeDaySnapshotの中で、上のmemberFillingQtyと
   // 直前に設定した店舗の必要数(zuidFillingQty等)から毎回計算し直されるため、ここでは設定しない
