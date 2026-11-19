@@ -107,6 +107,88 @@ function calcHourlySoldAndCumulative(made, remains, givens, receiveds){
   return { sold, cumulative };
 }
 
+// 1店舗分の実績入力テーブルのHTML（具材×時間帯の入力欄）を組み立てる。
+// Zuid・UvA・Rozengrachtは、他店舗からの合流分「受け取った数」を時間帯ごとに入力できる。
+// UvA・Rozengrachtは、営業終了時に残った分をZuidへ運ぶ「Zuidへ移動した数」を1日1回
+// （具材ごと）入力できる。Zuid・UvAは、営業終了時に残った分をRozengrachtへ運ぶ
+// 「Rozengrachtへ移動した数」を同じく1日1回入力できる。Rozengrachtは、営業終了時に
+// 残った分をUvAへ運ぶ「UvAへ移動した数」も同じく1日1回入力できる。
+// 「Zuidへ移動」「Rozengrachtへ移動」の列は、どの店舗からの移動かに関わらず同じ列
+// （シート上は行ごと＝どの店舗の行かで区別する）を使い回す。「UvAへ移動」は今回新設した列。
+// slotsを省略した場合はHOURLY_SLOTS（既定の時間帯）を使う。
+// madeReadonly=trueを指定すると「作った数」欄を読み取り専用にする（uva.html/rozen.html用。
+// 確定プランの数を表示するだけで、スタッフが変更できないようにするため）。
+// index.htmlは従来通りfalse（編集可能）のまま、動作を変えない。
+function buildStoreTable(storeKey, fillings, totals, slots, madeReadonly){
+  const hourlySlots = slots || HOURLY_SLOTS;
+  const showReceived = storeKey === "Zuid" || storeKey === "UvA" || storeKey === "Rozengracht";
+  const showMovedToZuid = storeKey === "UvA" || storeKey === "Rozengracht";
+  const showMovedToUva = storeKey === "Rozengracht";
+  const showMovedToRozengracht = storeKey === "Zuid" || storeKey === "UvA";
+  const receivedTitle = "受け取った数（他店舗から）";
+  const slotSubhead = showReceived ? "残り／あげ／受取" : "残り／あげ";
+  const slotHeaders = hourlySlots.map(h => `<th>${h}時<br><span class="slot-subhead">${slotSubhead}</span></th>`).join("");
+  const rows = fillings.map((f, fi) => {
+    const slotCells = hourlySlots.map((h, si) => `
+      <td data-slot="${si}">
+        <input type="number" inputmode="numeric" class="hourly-input"
+               data-store="${storeKey}" data-filling="${f}" data-slot="${si}"
+               min="0" placeholder="—">
+        <div class="slot-extra-row">
+          <input type="number" inputmode="numeric" class="given-input" title="あげた数"
+                 data-store="${storeKey}" data-filling="${f}" data-slot="${si}"
+                 min="0" placeholder="あげ" value="0">
+          ${showReceived ? `<input type="number" inputmode="numeric" class="received-input" title="${receivedTitle}"
+                 data-store="${storeKey}" data-filling="${f}" data-slot="${si}"
+                 min="0" placeholder="受取" value="0">` : ""}
+        </div>
+        <div class="sold-display" id="sold-${storeKey}-${fi}-${si}"></div>
+        <div class="cum-display" id="cum-${storeKey}-${fi}-${si}"></div>
+      </td>`).join("");
+    const movedZuidCell = showMovedToZuid ? `<td><input type="number" inputmode="numeric" class="moved-input" title="Zuidへ移動した数"
+                 data-store="${storeKey}" data-filling="${f}"
+                 min="0" placeholder="0" value="0"></td>` : "";
+    const movedUvaCell = showMovedToUva ? `<td><input type="number" inputmode="numeric" class="moved-uva-input" title="UvAへ移動した数"
+                 data-store="${storeKey}" data-filling="${f}"
+                 min="0" placeholder="0" value="0"></td>` : "";
+    const movedRozenCell = showMovedToRozengracht ? `<td><input type="number" inputmode="numeric" class="moved-rozen-input" title="Rozengrachtへ移動した数"
+                 data-store="${storeKey}" data-filling="${f}"
+                 min="0" placeholder="0" value="0"></td>` : "";
+    return `<tr>
+      <td class="col-name">${f}</td>
+      <td><input type="number" inputmode="numeric" class="made-input"
+                 data-store="${storeKey}" data-filling="${f}"
+                 value="${totals[f]}" min="0"${madeReadonly ? " readonly" : ""}></td>
+      ${movedZuidCell}
+      ${movedUvaCell}
+      ${movedRozenCell}
+      ${slotCells}
+    </tr>`;
+  }).join("");
+  const remainCells = hourlySlots.map((h, si) =>
+    `<td class="total-cell"><span id="total-remain-${storeKey}-${si}"></span></td>`).join("");
+  const soldCells = hourlySlots.map((h, si) =>
+    `<td class="total-cell"><span id="total-sold-${storeKey}-${si}"></span></td>`).join("");
+  const cumCells = hourlySlots.map((h, si) =>
+    `<td class="total-cell"><span id="total-cum-${storeKey}-${si}"></span></td>`).join("");
+  const movedZuidHeader = showMovedToZuid ? `<th>Zuidへ<br>移動</th>` : "";
+  const movedUvaHeader = showMovedToUva ? `<th>UvAへ<br>移動</th>` : "";
+  const movedRozenHeader = showMovedToRozengracht ? `<th>Rozengrachtへ<br>移動</th>` : "";
+  const movedZuidTotalCell = showMovedToZuid ? `<td class="total-cell"><span id="total-moved-${storeKey}"></span></td>` : "";
+  const movedUvaTotalCell = showMovedToUva ? `<td class="total-cell"><span id="total-movedUva-${storeKey}"></span></td>` : "";
+  const movedRozenTotalCell = showMovedToRozengracht ? `<td class="total-cell"><span id="total-movedRozen-${storeKey}"></span></td>` : "";
+  const movedPlaceholderCells = `${showMovedToZuid ? "<td>—</td>" : ""}${showMovedToUva ? "<td>—</td>" : ""}${showMovedToRozengracht ? "<td>—</td>" : ""}`;
+  return `<table class="hourly-table">
+    <thead><tr><th class="col-name">具材</th><th>作った数</th>${movedZuidHeader}${movedUvaHeader}${movedRozenHeader}${slotHeaders}</tr></thead>
+    <tbody>
+      ${rows}
+      <tr class="total-row"><td class="col-name">残り合計</td><td class="total-cell"><span id="total-made-${storeKey}"></span></td>${movedZuidTotalCell}${movedUvaTotalCell}${movedRozenTotalCell}${remainCells}</tr>
+      <tr class="total-row"><td class="col-name">売った合計</td><td class="total-cell"><span id="total-sold-grand-${storeKey}"></span></td>${movedPlaceholderCells}${soldCells}</tr>
+      <tr class="total-row"><td class="col-name">全具材累計売上</td><td>—</td>${movedPlaceholderCells}${cumCells}</tr>
+    </tbody>
+  </table>`;
+}
+
 // 1店舗分の「売れた数・累計・合計」表示をDOMに反映する（入力中のリアルタイム更新、
 // および読み込み直後の初期表示の両方で使う）。slotsを省略した場合はHOURLY_SLOTSを使う。
 function updateStoreSoldDisplay(storeKey, fillings, slots){
@@ -224,6 +306,11 @@ function updateStoreSoldDisplay(storeKey, fillings, slots){
   // 「作った数」列の位置に、全時間帯・全具材を通した売った合計数を表示する
   const sgEl = document.getElementById(`total-sold-grand-${storeKey}`);
   if(sgEl) sgEl.textContent = soldGrandCount > 0 ? String(soldGrandTotal) : "";
+}
+
+// 複数店舗分まとめて更新したい呼び出し元（index.html）向けの薄いラッパー。
+function updateSoldDisplay(storeKeys, fillings, slotsByStore){
+  storeKeys.forEach(storeKey => updateStoreSoldDisplay(storeKey, fillings, slotsByStore && slotsByStore[storeKey]));
 }
 
 // dateIso（yyyy-MM-dd）を指定すると、Apps Script側でその日付の行だけに絞って
@@ -421,457 +508,6 @@ async function saveStoreActual(ctx){
   }
 }
 
-// ========== 時間帯別実績：入力モード（共通部品） ==========
-// 1マスに「残り／あげた数／受け取った数」が密集した表（buildStoreTable）は、どこに
-// 入力しているか分かりにくく誤タップしやすいため、1時間帯ずつ・具材を縦に並べて
-// 大きな入力欄で入力する「入力モード」を既定の入力画面にする。元の表は「一覧」
-// （確認用・読み取り専用）として残す。index.html（複数店舗）・uva.html/rozen.html
-// （単一店舗）のいずれからも同じ部品で呼び出せるようにする。
-// 入力欄のclass名・data属性（.hourly-input/.given-input/.received-input/.made-input/
-// .moved-input等、data-store/data-filling/data-slot）は元の表と完全に同じものを使う。
-// そのため、売れた数・累計の計算（calcHourlySoldAndCumulative）・保存（saveStoreActual）・
-// 復元（restoreHourlyInputs）は一切変更せずそのまま動く。
-
-// 今の時刻に一番近い時間帯のインデックスを返す（差が同じ場合は早い方を優先）
-function nearestHourlySlotIndex(hourlySlots, now){
-  const n = now || new Date();
-  const nowHour = n.getHours() + n.getMinutes() / 60;
-  let bestIdx = 0, bestDiff = Infinity;
-  hourlySlots.forEach((h, i) => {
-    const diff = Math.abs(h - nowHour);
-    if(diff < bestDiff){ bestDiff = diff; bestIdx = i; }
-  });
-  return bestIdx;
-}
-
-// 「前の時間帯の残り」の参考表示を更新する（入力モード専用の表示。売れた数・累計は
-// updateStoreSoldDisplay（元のまま）が書き込むsold-*/cum-*をそのまま使う）
-function updateHourlyPrevRefDisplays(storeKey, fillings, hourlySlots){
-  fillings.forEach((f, fi) => {
-    const madeEl = document.querySelector(`.made-input[data-store="${storeKey}"][data-filling="${f}"]`);
-    let prev = madeEl ? madeEl.value : "";
-    hourlySlots.forEach((h, si) => {
-      const refEl = document.getElementById(`ref-prev-${storeKey}-${fi}-${si}`);
-      if(refEl) refEl.textContent = (prev !== "" && prev !== null && prev !== undefined) ? `前の残り:${prev}` : "";
-      const el = document.querySelector(`.hourly-input[data-store="${storeKey}"][data-filling="${f}"][data-slot="${si}"]`);
-      prev = el ? el.value : "";
-    });
-  });
-}
-
-// 1店舗・全時間帯分の、具材ごとの入力行HTML（入力モード本体。時間帯ごとにグループ化し、
-// JS側でdisplayを切り替えて1時間帯だけ見せる）を組み立てる
-function buildHourlyInputRowsHtml(storeDef, fillings, hourlySlots, activeSlotIndex){
-  const { key: storeKey, totals, madeReadonly, showReceived, showMovedToZuid, showMovedToUva, showMovedToRozengracht } = storeDef;
-  const lastSlotIndex = hourlySlots.length - 1;
-  const groups = hourlySlots.map((h, si) => {
-    const rows = fillings.map((f, fi) => {
-      const isLastSlot = si === lastSlotIndex;
-      const movedRowHtml = isLastSlot ? `
-        <div class="hourly-moved-row">
-          ${showMovedToZuid ? `<label class="hourly-moved-field"><span>Zuidへ移動</span><input type="number" inputmode="numeric" class="moved-input" data-store="${storeKey}" data-filling="${f}" min="0" placeholder="0" value="0"></label>` : ""}
-          ${showMovedToUva ? `<label class="hourly-moved-field"><span>UvAへ移動</span><input type="number" inputmode="numeric" class="moved-uva-input" data-store="${storeKey}" data-filling="${f}" min="0" placeholder="0" value="0"></label>` : ""}
-          ${showMovedToRozengracht ? `<label class="hourly-moved-field"><span>Rozengrachtへ移動</span><input type="number" inputmode="numeric" class="moved-rozen-input" data-store="${storeKey}" data-filling="${f}" min="0" placeholder="0" value="0"></label>` : ""}
-        </div>` : "";
-      return `
-        <div class="hourly-input-row" data-store="${storeKey}" data-filling="${f}" data-slot="${si}" style="${si === activeSlotIndex ? "" : "display:none;"}">
-          <div class="hourly-row-head">
-            <span class="hourly-row-filling-name">${f}</span>
-            <label class="hourly-made-field" title="作った数">
-              作<input type="number" inputmode="numeric" class="made-input" data-store="${storeKey}" data-filling="${f}" value="${totals[f]}" min="0"${madeReadonly ? " readonly" : ""}>
-            </label>
-          </div>
-          <div class="hourly-row-fields">
-            <label class="hourly-field hourly-field-remain">
-              <span class="hourly-field-label">残り</span>
-              <input type="number" inputmode="numeric" enterkeyhint="next" class="hourly-input" data-store="${storeKey}" data-filling="${f}" data-slot="${si}" min="0" placeholder="—">
-            </label>
-            <label class="hourly-field hourly-field-given">
-              <span class="hourly-field-label">あげた数</span>
-              <input type="number" inputmode="numeric" class="given-input" data-store="${storeKey}" data-filling="${f}" data-slot="${si}" min="0" placeholder="0" value="0">
-            </label>
-            ${showReceived ? `
-            <label class="hourly-field hourly-field-received">
-              <span class="hourly-field-label">受け取った数</span>
-              <input type="number" inputmode="numeric" class="received-input" data-store="${storeKey}" data-filling="${f}" data-slot="${si}" min="0" placeholder="0" value="0">
-            </label>` : ""}
-          </div>
-          <div class="hourly-row-ref">
-            <span class="hourly-ref-prev" id="ref-prev-${storeKey}-${fi}-${si}"></span>
-            <span class="sold-display" id="sold-${storeKey}-${fi}-${si}"></span>
-            <span class="cum-display" id="cum-${storeKey}-${fi}-${si}" style="display:none;"></span>
-          </div>
-          ${movedRowHtml}
-        </div>`;
-    }).join("");
-    return rows;
-  }).join("");
-  // footerHtml（任意）：販売終了時間・販売場所・メモなど、時間帯に関係なく店舗ごとに1つだけ
-  // 持つ欄を呼び出し元から渡せる。店舗タブの表示/非表示と同じdisplay切り替えに相乗りする
-  return `<div class="hourly-store-rows" data-store="${storeKey}" style="${storeDef.active ? "" : "display:none;"}">${groups}${storeDef.footerHtml || ""}</div>`;
-}
-
-// 入力モードの土台（上部固定バー・店舗タブ・時間帯タブ・入力行コンテナ・一覧表示用コンテナ）
-// のHTML。storeDefsは [{key,label,totals,madeReadonly,showReceived,showMovedToZuid,
-// showMovedToUva,showMovedToRozengracht}]。showStoreTabsはindex.htmlのみtrue。
-function buildHourlyInputModeHtml(storeDefs, fillings, hourlySlots, activeStoreKey, activeSlotIndex, showStoreTabs){
-  const defsWithActive = storeDefs.map(s => ({ ...s, active: s.key === activeStoreKey }));
-  const storeTabsHtml = (showStoreTabs && storeDefs.length > 1) ? `
-    <div class="hourly-store-tabs" id="hourlyStoreTabs">
-      ${storeDefs.map(s => `<button type="button" class="hourly-store-tab${s.key === activeStoreKey ? " active" : ""}" data-store="${s.key}">${s.label}</button>`).join("")}
-    </div>` : "";
-  const slotTabsHtml = `
-    <div class="hourly-slot-tabs" id="hourlySlotTabs">
-      ${hourlySlots.map((h, si) => `<button type="button" class="hourly-slot-tab${si === activeSlotIndex ? " active" : ""}" data-slot="${si}">${h}時</button>`).join("")}
-    </div>`;
-  const rowsHtml = defsWithActive.map(s => buildHourlyInputRowsHtml(s, fillings, hourlySlots, activeSlotIndex)).join("");
-  const activeLabel = (storeDefs.find(s => s.key === activeStoreKey) || {}).label || activeStoreKey;
-  return `
-    <div class="hourly-mode-bar" id="hourlyModeBar">
-      <div class="hourly-mode-bar-row">
-        <span class="hourly-mode-bar-store" id="hourlyBarStore">${activeLabel}</span>
-        <span class="hourly-mode-bar-slot" id="hourlyBarSlot">${hourlySlots[activeSlotIndex]}時</span>
-        <span class="hourly-mode-bar-status" id="hourlyBarStatus"></span>
-        <button type="button" class="hourly-view-toggle-btn" id="hourlySaveNowBtn">💾 保存</button>
-        <button type="button" class="hourly-view-toggle-btn" id="hourlyViewToggleBtn">📋 一覧</button>
-      </div>
-      <div class="hourly-mode-bar-filling" id="hourlyBarFilling"></div>
-    </div>
-    ${storeTabsHtml}
-    ${slotTabsHtml}
-    <div id="hourlyInputRows">${rowsHtml}</div>
-    <div id="hourlyListViewArea" class="hourly-list-view-area" style="display:none;"></div>
-  `;
-}
-
-// 一覧（確認用・読み取り専用）の表HTML。buildStoreTable（従来の密な表）と同じクラス名・
-// 列構成にすることで、hourly-table.cssの固定列・サイズ指定（index.htmlの上書き含む）を
-// そのまま流用する。入力欄は持たず、タップするとその時間帯・具材の入力モードに移る。
-function buildHourlyListTableHtml(storeKey, fillings, hourlySlots, showReceived, showMovedToZuid, showMovedToUva, showMovedToRozengracht){
-  const slotSubhead = showReceived ? "残り／あげ／受取" : "残り／あげ";
-  const slotHeaders = hourlySlots.map(h => `<th>${h}時<br><span class="slot-subhead">${slotSubhead}</span></th>`).join("");
-  const rows = fillings.map((f, fi) => {
-    const slotCells = hourlySlots.map((h, si) => `
-      <td class="hourly-list-cell" data-store="${storeKey}" data-filling="${f}" data-slot="${si}">
-        <div class="hourly-list-remain" id="list-remain-${storeKey}-${fi}-${si}">—</div>
-        <div class="hourly-list-sub" id="list-extra-${storeKey}-${fi}-${si}"></div>
-        <div class="sold-display" id="list-sold-${storeKey}-${fi}-${si}"></div>
-      </td>`).join("");
-    const movedZuidCell = showMovedToZuid ? `<td><span id="list-moved-${storeKey}-${fi}"></span></td>` : "";
-    const movedUvaCell = showMovedToUva ? `<td><span id="list-movedUva-${storeKey}-${fi}"></span></td>` : "";
-    const movedRozenCell = showMovedToRozengracht ? `<td><span id="list-movedRozen-${storeKey}-${fi}"></span></td>` : "";
-    return `<tr>
-      <td class="col-name hourly-list-cell" data-store="${storeKey}" data-filling="${f}" data-slot="0">${f}</td>
-      <td><span id="list-made-${storeKey}-${fi}"></span></td>
-      ${movedZuidCell}
-      ${movedUvaCell}
-      ${movedRozenCell}
-      ${slotCells}
-    </tr>`;
-  }).join("");
-  const movedZuidHeader = showMovedToZuid ? `<th>Zuidへ<br>移動</th>` : "";
-  const movedUvaHeader = showMovedToUva ? `<th>UvAへ<br>移動</th>` : "";
-  const movedRozenHeader = showMovedToRozengracht ? `<th>Rozengrachtへ<br>移動</th>` : "";
-  // 合計行：updateStoreSoldDisplay（元のまま変更していない）が書き込むtotal-*のidを
-  // そのまま使うことで、全具材合計の表示を一覧（確認用）側で引き継ぐ
-  const remainCells = hourlySlots.map((h, si) => `<td class="total-cell"><span id="total-remain-${storeKey}-${si}"></span></td>`).join("");
-  const soldCells = hourlySlots.map((h, si) => `<td class="total-cell"><span id="total-sold-${storeKey}-${si}"></span></td>`).join("");
-  const cumCells = hourlySlots.map((h, si) => `<td class="total-cell"><span id="total-cum-${storeKey}-${si}"></span></td>`).join("");
-  const movedZuidTotalCell = showMovedToZuid ? `<td class="total-cell"><span id="total-moved-${storeKey}"></span></td>` : "";
-  const movedUvaTotalCell = showMovedToUva ? `<td class="total-cell"><span id="total-movedUva-${storeKey}"></span></td>` : "";
-  const movedRozenTotalCell = showMovedToRozengracht ? `<td class="total-cell"><span id="total-movedRozen-${storeKey}"></span></td>` : "";
-  const movedPlaceholderCells = `${showMovedToZuid ? "<td>—</td>" : ""}${showMovedToUva ? "<td>—</td>" : ""}${showMovedToRozengracht ? "<td>—</td>" : ""}`;
-  return `<div class="table-scroll table-scroll--bounded"><table class="hourly-table">
-    <thead><tr><th class="col-name">具材</th><th>作った数</th>${movedZuidHeader}${movedUvaHeader}${movedRozenHeader}${slotHeaders}</tr></thead>
-    <tbody>
-      ${rows}
-      <tr class="total-row"><td class="col-name">残り合計</td><td class="total-cell"><span id="total-made-${storeKey}"></span></td>${movedZuidTotalCell}${movedUvaTotalCell}${movedRozenTotalCell}${remainCells}</tr>
-      <tr class="total-row"><td class="col-name">売った合計</td><td class="total-cell"><span id="total-sold-grand-${storeKey}"></span></td>${movedPlaceholderCells}${soldCells}</tr>
-      <tr class="total-row"><td class="col-name">全具材累計売上</td><td>—</td>${movedPlaceholderCells}${cumCells}</tr>
-    </tbody>
-  </table></div>`;
-}
-
-// 一覧の表示内容を、入力モード側の実際の入力値から読み取って更新する（読み取り専用の
-// 値表示のみ。計算はcalcHourlySoldAndCumulative（元のまま）をそのまま使う）
-function refreshHourlyListView(storeKey, fillings, hourlySlots){
-  fillings.forEach((f, fi) => {
-    const madeEl = document.querySelector(`.made-input[data-store="${storeKey}"][data-filling="${f}"]`);
-    const madeOut = document.getElementById(`list-made-${storeKey}-${fi}`);
-    if(madeOut) madeOut.textContent = madeEl ? (madeEl.value || "0") : "0";
-
-    const movedEl = document.querySelector(`.moved-input[data-store="${storeKey}"][data-filling="${f}"]`);
-    const movedOut = document.getElementById(`list-moved-${storeKey}-${fi}`);
-    if(movedOut) movedOut.textContent = movedEl ? (movedEl.value || "0") : "0";
-    const movedUvaEl = document.querySelector(`.moved-uva-input[data-store="${storeKey}"][data-filling="${f}"]`);
-    const movedUvaOut = document.getElementById(`list-movedUva-${storeKey}-${fi}`);
-    if(movedUvaOut) movedUvaOut.textContent = movedUvaEl ? (movedUvaEl.value || "0") : "0";
-    const movedRozenEl = document.querySelector(`.moved-rozen-input[data-store="${storeKey}"][data-filling="${f}"]`);
-    const movedRozenOut = document.getElementById(`list-movedRozen-${storeKey}-${fi}`);
-    if(movedRozenOut) movedRozenOut.textContent = movedRozenEl ? (movedRozenEl.value || "0") : "0";
-
-    hourlySlots.forEach((h, si) => {
-      const remainEl = document.querySelector(`.hourly-input[data-store="${storeKey}"][data-filling="${f}"][data-slot="${si}"]`);
-      const givenEl = document.querySelector(`.given-input[data-store="${storeKey}"][data-filling="${f}"][data-slot="${si}"]`);
-      const receivedEl = document.querySelector(`.received-input[data-store="${storeKey}"][data-filling="${f}"][data-slot="${si}"]`);
-      const remainOut = document.getElementById(`list-remain-${storeKey}-${fi}-${si}`);
-      const extraOut = document.getElementById(`list-extra-${storeKey}-${fi}-${si}`);
-      const soldOut = document.getElementById(`list-sold-${storeKey}-${fi}-${si}`);
-      const soldSrc = document.getElementById(`sold-${storeKey}-${fi}-${si}`);
-      if(remainOut) remainOut.textContent = (remainEl && remainEl.value !== "") ? remainEl.value : "—";
-      if(extraOut){
-        const given = givenEl ? (parseInt(givenEl.value, 10) || 0) : 0;
-        const received = receivedEl ? (parseInt(receivedEl.value, 10) || 0) : 0;
-        const parts = [];
-        if(given > 0) parts.push(`あげ${given}`);
-        if(received > 0) parts.push(`受取${received}`);
-        extraOut.textContent = parts.join("/");
-      }
-      if(soldOut) soldOut.textContent = soldSrc ? soldSrc.textContent : "";
-      if(soldOut) soldOut.className = soldSrc ? soldSrc.className : "sold-display";
-    });
-  });
-}
-
-// 店舗・時間帯切り替え時に、保留中（デバウンス待ち）の保存があれば即座に行う。
-// 何も変更されていなければ何もしない（無駄な保存リクエストを送らない）。
-const hourlySaveTimers = {};
-function scheduleHourlySave(storeKey, saveFn, delayMs){
-  if(hourlySaveTimers[storeKey]) clearTimeout(hourlySaveTimers[storeKey].timer);
-  const timer = setTimeout(() => {
-    delete hourlySaveTimers[storeKey];
-    saveFn();
-  }, delayMs !== undefined ? delayMs : 800);
-  hourlySaveTimers[storeKey] = { timer, saveFn };
-}
-function flushHourlySave(storeKey){
-  const pending = hourlySaveTimers[storeKey];
-  if(!pending) return false;
-  clearTimeout(pending.timer);
-  delete hourlySaveTimers[storeKey];
-  pending.saveFn();
-  return true;
-}
-
-// 入力モードのイベント結線一式。opts: {
-//   storeDefs, fillings, hourlySlots, showStoreTabs,
-//   getActiveStoreKey()/setActiveStoreKey(key)（呼び出し元のstateと同期するため）,
-//   getActiveSlotIndex()/setActiveSlotIndex(i),
-//   save(storeKey)（呼び出し元が持つ実際の保存処理。saveStoreActual呼び出しを含む）,
-// }
-function bindHourlyInputMode(opts){
-  const { storeDefs, fillings, hourlySlots, save } = opts;
-  let activeStoreKey = opts.getActiveStoreKey();
-  let activeSlotIndex = opts.getActiveSlotIndex();
-  let listViewOpen = false;
-
-  function storeDef(key){ return storeDefs.find(s => s.key === key); }
-
-  function refreshActiveDisplays(){
-    updateStoreSoldDisplay(activeStoreKey, fillings, hourlySlots);
-    updateHourlyPrevRefDisplays(activeStoreKey, fillings, hourlySlots);
-  }
-
-  function updateBar(){
-    const d = storeDef(activeStoreKey);
-    const barStore = document.getElementById("hourlyBarStore");
-    const barSlot = document.getElementById("hourlyBarSlot");
-    if(barStore) barStore.textContent = d ? d.label : activeStoreKey;
-    if(barSlot) barSlot.textContent = `${hourlySlots[activeSlotIndex]}時`;
-  }
-
-  function setBarFilling(name){
-    const el = document.getElementById("hourlyBarFilling");
-    if(el) el.textContent = name ? `入力中：${name}` : "";
-  }
-
-  function setStatus(text){
-    const el = document.getElementById("hourlyBarStatus");
-    if(el) el.textContent = text || "";
-  }
-
-  function showStoreRows(key){
-    document.querySelectorAll("#hourlyInputRows .hourly-store-rows").forEach(el => {
-      el.style.display = el.dataset.store === key ? "" : "none";
-    });
-  }
-
-  function showSlotRows(key, slotIndex){
-    const container = document.querySelector(`#hourlyInputRows .hourly-store-rows[data-store="${key}"]`);
-    if(!container) return;
-    container.querySelectorAll(".hourly-input-row").forEach(row => {
-      row.style.display = Number(row.dataset.slot) === slotIndex ? "" : "none";
-    });
-  }
-
-  function markTabsActive(){
-    document.querySelectorAll("#hourlyStoreTabs .hourly-store-tab").forEach(btn => {
-      btn.classList.toggle("active", btn.dataset.store === activeStoreKey);
-    });
-    document.querySelectorAll("#hourlySlotTabs .hourly-slot-tab").forEach(btn => {
-      btn.classList.toggle("active", Number(btn.dataset.slot) === activeSlotIndex);
-    });
-  }
-
-  function applyActiveView(){
-    showStoreRows(activeStoreKey);
-    showSlotRows(activeStoreKey, activeSlotIndex);
-    markTabsActive();
-    updateBar();
-    refreshActiveDisplays();
-    opts.setActiveStoreKey(activeStoreKey);
-    opts.setActiveSlotIndex(activeSlotIndex);
-  }
-
-  function switchStore(key){
-    if(key === activeStoreKey) return;
-    flushHourlySave(activeStoreKey);
-    activeStoreKey = key;
-    applyActiveView();
-  }
-
-  function switchSlot(index){
-    if(index === activeSlotIndex) return;
-    flushHourlySave(activeStoreKey);
-    activeSlotIndex = index;
-    applyActiveView();
-  }
-
-  function focusFillingInStore(key, slotIndex, filling){
-    switchStore(key);
-    switchSlot(slotIndex);
-    const input = document.querySelector(`#hourlyInputRows .hourly-input-row[data-store="${key}"][data-filling="${filling}"][data-slot="${slotIndex}"] .hourly-input`);
-    if(input) input.focus();
-  }
-
-  const rowsContainer = document.getElementById("hourlyInputRows");
-
-  // 入力欄の変更：表示更新＋デバウンス保存の予約（店舗・時間帯切替時にflushHourlySaveで
-  // 即座に保存される。保存の0.8秒遅延の仕組みはこの関数が担う）
-  rowsContainer.addEventListener("input", e => {
-    const el = e.target;
-    const store = el.dataset.store;
-    if(!store || !(el.classList.contains("hourly-input") || el.classList.contains("given-input") ||
-       el.classList.contains("received-input") || el.classList.contains("made-input") ||
-       el.classList.contains("moved-input") || el.classList.contains("moved-uva-input") || el.classList.contains("moved-rozen-input"))) return;
-    updateStoreSoldDisplay(store, fillings, hourlySlots);
-    updateHourlyPrevRefDisplays(store, fillings, hourlySlots);
-    setStatus("未保存の変更があります");
-    scheduleHourlySave(store, () => {
-      setStatus("保存中...");
-      Promise.resolve(save(store)).then(ok => {
-        setStatus(ok === false ? "⚠️ 保存に失敗しました" : "✓ 保存しました");
-      });
-    });
-  });
-
-  // キーボードの「次へ」：残りの欄でEnter（iPhoneの数字キーパッドの「次へ」）を押すと、
-  // 同じ時間帯の次の具材の「残り」欄に移動する
-  rowsContainer.addEventListener("keydown", e => {
-    if(e.key !== "Enter") return;
-    const el = e.target;
-    if(!el.classList || !el.classList.contains("hourly-input")) return;
-    e.preventDefault();
-    const activeGroup = document.querySelector(`#hourlyInputRows .hourly-store-rows[data-store="${activeStoreKey}"]`);
-    if(!activeGroup) return;
-    const inputsInSlot = Array.from(activeGroup.querySelectorAll(`.hourly-input-row[data-slot="${activeSlotIndex}"] .hourly-input`));
-    const idx = inputsInSlot.indexOf(el);
-    if(idx !== -1 && idx < inputsInSlot.length - 1){
-      inputsInSlot[idx + 1].focus();
-    } else {
-      el.blur();
-    }
-  });
-
-  // 入力中の具材行をハイライト＋上部に具材名を固定表示する
-  rowsContainer.addEventListener("focusin", e => {
-    const row = e.target.closest(".hourly-input-row");
-    rowsContainer.querySelectorAll(".hourly-input-row--active").forEach(r => r.classList.remove("hourly-input-row--active"));
-    if(row){
-      row.classList.add("hourly-input-row--active");
-      setBarFilling(row.dataset.filling);
-    }
-  });
-  rowsContainer.addEventListener("focusout", () => {
-    // 少し遅らせて、同じ行の別の欄へのフォーカス移動では消えないようにする
-    setTimeout(() => {
-      if(!rowsContainer.contains(document.activeElement)) setBarFilling("");
-    }, 0);
-  });
-
-  if(storeDefs.length > 1){
-    document.querySelectorAll("#hourlyStoreTabs .hourly-store-tab").forEach(btn => {
-      btn.addEventListener("click", () => switchStore(btn.dataset.store));
-    });
-  }
-  document.querySelectorAll("#hourlySlotTabs .hourly-slot-tab").forEach(btn => {
-    btn.addEventListener("click", () => switchSlot(Number(btn.dataset.slot)));
-  });
-
-  const saveNowBtn = document.getElementById("hourlySaveNowBtn");
-  if(saveNowBtn){
-    saveNowBtn.addEventListener("click", () => {
-      clearTimeout((hourlySaveTimers[activeStoreKey] || {}).timer);
-      delete hourlySaveTimers[activeStoreKey];
-      setStatus("保存中...");
-      Promise.resolve(save(activeStoreKey)).then(ok => {
-        setStatus(ok === false ? "⚠️ 保存に失敗しました" : "✓ 保存しました");
-      });
-    });
-  }
-
-  const toggleBtn = document.getElementById("hourlyViewToggleBtn");
-  const listArea = document.getElementById("hourlyListViewArea");
-  const slotTabsEl = document.getElementById("hourlySlotTabs");
-  function renderListView(){
-    const d = storeDef(activeStoreKey);
-    listArea.innerHTML = buildHourlyListTableHtml(activeStoreKey, fillings, hourlySlots,
-      d.showReceived, d.showMovedToZuid, d.showMovedToUva, d.showMovedToRozengracht);
-    // 一覧は毎回作り直すため、売れた数・累計（sold-*/cum-*）と合計行（total-*）の両方を
-    // このタイミングで書き込み直す（先にupdateStoreSoldDisplayでsold-*/cum-*とtotal-*を
-    // 最新化してから、refreshHourlyListViewでそれを読み取って一覧のセルに反映する）
-    updateStoreSoldDisplay(activeStoreKey, fillings, hourlySlots);
-    refreshHourlyListView(activeStoreKey, fillings, hourlySlots);
-    listArea.querySelectorAll(".hourly-list-cell").forEach(cell => {
-      cell.addEventListener("click", () => {
-        const slotIndex = Number(cell.dataset.slot);
-        listViewOpen = false;
-        listArea.style.display = "none";
-        rowsContainer.style.display = "";
-        if(slotTabsEl) slotTabsEl.style.display = "";
-        toggleBtn.textContent = "📋 一覧";
-        focusFillingInStore(cell.dataset.store, slotIndex, cell.dataset.filling);
-      });
-    });
-  }
-  if(toggleBtn){
-    toggleBtn.addEventListener("click", () => {
-      listViewOpen = !listViewOpen;
-      if(listViewOpen){
-        flushHourlySave(activeStoreKey);
-        renderListView();
-        rowsContainer.style.display = "none";
-        if(slotTabsEl) slotTabsEl.style.display = "none";
-        listArea.style.display = "";
-        toggleBtn.textContent = "✏️ 入力";
-      } else {
-        listArea.style.display = "none";
-        rowsContainer.style.display = "";
-        if(slotTabsEl) slotTabsEl.style.display = "";
-        toggleBtn.textContent = "📋 一覧";
-      }
-    });
-  }
-
-  applyActiveView();
-
-  return {
-    refreshAll(){ storeDefs.forEach(s => { updateStoreSoldDisplay(s.key, fillings, hourlySlots); updateHourlyPrevRefDisplays(s.key, fillings, hourlySlots); }); if(listViewOpen) renderListView(); },
-    getActiveStoreKey(){ return activeStoreKey; },
-    getActiveSlotIndex(){ return activeSlotIndex; },
-  };
-}
-
 // ---------- 今日の販売メモ（店舗×日付ごとに1つ。「時間帯別実績」シートの既存の
 // 「備考」列にそのまま保存される。新しい列は追加しない）----------
 // 500文字は目安（ハード制限ではない）。超えても保存できるが、入力欄の下に注意を表示する。
@@ -898,3 +534,46 @@ function wireNoteLengthWarning(storeKey){
   ta.addEventListener("input", check);
   check();
 }
+
+// ---------- 入力中セルの強調（どこに入力しているか分からなくなる・誤タップを防ぐ） ----------
+// buildStoreTable()の入力欄にフォーカスが当たったら、その入力欄自体（hourly-table.cssの
+// :focus）に加えて、同じ行（具材＝tr）・同じ列（時間帯＝data-slotが一致するtd）に薄い色を
+// 付ける。index.html・uva.html・rozen.htmlのいずれで表を作り直しても効くように、個別の
+// テーブルに結線するのではなく、document全体にfocusin/focusoutを1回だけ委任で結線する。
+const HOURLY_FOCUSABLE_SELECTOR =
+  ".hourly-input, .given-input, .received-input, .made-input, .moved-input, .moved-uva-input, .moved-rozen-input";
+
+(function wireHourlyCellHighlight(){
+  let activeCell = null;
+  let activeRow = null;
+  let activeCols = [];
+
+  function clearHighlight(){
+    if(activeCell) activeCell.classList.remove("hourly-active-cell");
+    if(activeRow) activeRow.classList.remove("hourly-row-highlight");
+    activeCols.forEach(td => td.classList.remove("hourly-col-highlight"));
+    activeCell = null; activeRow = null; activeCols = [];
+  }
+
+  document.addEventListener("focusin", e => {
+    const el = e.target;
+    if(!el.matches || !el.matches(HOURLY_FOCUSABLE_SELECTOR)) return;
+    clearHighlight();
+    activeCell = el.closest("td");
+    if(activeCell) activeCell.classList.add("hourly-active-cell");
+    activeRow = el.closest("tr");
+    if(activeRow) activeRow.classList.add("hourly-row-highlight");
+    const slot = el.dataset.slot;
+    if(slot !== undefined){
+      const table = el.closest("table.hourly-table");
+      if(table){
+        activeCols = Array.from(table.querySelectorAll(`td[data-slot="${slot}"]`));
+        activeCols.forEach(td => td.classList.add("hourly-col-highlight"));
+      }
+    }
+  });
+
+  document.addEventListener("focusout", e => {
+    if(e.target.matches && e.target.matches(HOURLY_FOCUSABLE_SELECTOR)) clearHighlight();
+  });
+})();
