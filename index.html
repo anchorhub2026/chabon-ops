@@ -286,6 +286,16 @@
     margin: 2px 3px 2px 0;
   }
   .off-note{ color:#999; font-size: 0.85rem; }
+  .store-settings-warning-banner{
+    background: #fdeceb;
+    border: 1px solid var(--accent);
+    color: #8a2e22;
+    border-radius: 10px;
+    padding: 10px 16px;
+    margin: 0 0 16px;
+    font-size: 0.88rem;
+    font-weight: bold;
+  }
 
   /* 週間ビュー */
   .week-cards{
@@ -509,6 +519,8 @@
 
 <main>
 
+  <div id="storeSettingsWarningBanner" class="store-settings-warning-banner" style="display:none;"></div>
+
   <section>
     <h2>本日の天気予報<span class="badge">Open-Meteo / Amsterdam</span></h2>
     <div id="weatherList" class="loading">読み込み中...</div>
@@ -570,6 +582,7 @@
 <script src="active-members.js"></script>
 <script src="date-format.js"></script>
 <script src="hourly-actuals.js"></script>
+<script src="store-settings.js"></script>
 <script>
 const LAT = 52.3676, LON = 4.9041;
 const SPREADSHEET_ID = "1rQtRUSP5e7qOjnT4RPvMGfWrEFcFL89AsLe8cjGIW4U"; // チセさんの生産データ
@@ -642,17 +655,22 @@ async function fetchShiftSheetData(){
   }
 }
 
+// 確定プランにその日・その店舗の数があれば、推奨計算（天気予報・店舗の営業設定）の結果が
+// 休業(null)であっても、営業設定に関係なく確定数で上書きする（確定プランが正）。
+// 以前はr.zuid等が既に非null（＝推奨計算が営業と判定した日）の場合にしか上書きしておらず、
+// 推奨計算が休業と判定した日（店舗設定の不具合等）は確定プランの数があっても「休業」の
+// ままになってしまっていた。
 function applyConfirmedOverrides(results, confirmedMap){
   results.forEach(r => {
     const override = confirmedMap[mdLabel(r.dateStr)];
     if(!override) return;
-    if(r.zuid && override.zuid != null){
+    if(override.zuid != null){
       r.zuid = { total: override.zuid, reasons: ["管理画面で確定済み"] };
     }
-    if(r.uva && override.uva != null){
+    if(override.uva != null){
       r.uva = { total: override.uva, reasons: ["管理画面で確定済み"] };
     }
-    if(r.rozen && override.rozen != null){
+    if(override.rozen != null){
       r.rozen = { total: override.rozen, reasons: ["管理画面で確定済み"] };
     }
   });
@@ -686,13 +704,26 @@ function parseGvizDateCell(cell){
 
 // 「店舗設定」シートを取得する（admin.htmlの「店舗の営業設定」で保存される内容を読み取り専用で使う）。
 // 未保存（シート自体が無い等）の場合は空のまま進め、DEFAULT_STORE_SETTINGSにフォールバックする。
+// gvizではなくCode.gs(type=storeSettings)経由（fetchStoreSettingsRows・store-settings.js共通化）で
+// 取得する。gviz経由だと列ごとの型推定により値が消えたり、列がずれて読まれる不具合があった。
 async function fetchStoreSettings(){
-  try{
-    return parseStoreSettingsSheet(await fetchGvizSheet("店舗設定"));
-  }catch(e){
-    console.error("店舗設定の取得に失敗しました", e);
-    return {};
+  const rows = await fetchStoreSettingsRows(SCRIPT_URL);
+  return parseStoreSettingsRows(rows);
+}
+
+// 店舗設定シートの値が、入っているのに日付・数値として読み取れなかった場合に、
+// 画面上部に警告を表示する（空欄＝未設定は正常な状態のため警告しない）。
+function renderStoreSettingsWarningBanner(){
+  const el = document.getElementById("storeSettingsWarningBanner");
+  if(!el) return;
+  const warnings = state.storeSettingsWarnings || [];
+  if(warnings.length === 0){
+    el.style.display = "none";
+    el.innerHTML = "";
+    return;
   }
+  el.innerHTML = warnings.map(w => `⚠️ ${w}`).join("<br>");
+  el.style.display = "";
 }
 
 async function fetchGvizSheet(sheetName){
@@ -803,7 +834,8 @@ const state = {
   confirmedPlanByDate: {}, // { [dateKey "M/D"]: { zuid, uva, chise, ningiBreakdown, hqQty, hqBreakdown } }
   todayDraft: null, // forecast from "作業中プラン" for today: { zuidFillingQty, uvaFillingQty, ... } | null
   openWeekKey: null, // 週間ビューで展開中の日付キー "M/D" | null
-  storeSettings: {}, // 店舗名 -> {startDate,endDate,weekdays,weekdayQty,weekendQty}（admin.htmlで設定）
+  storeSettings: {}, // 店舗名 -> {startDate,endDate,weekdays,weekdayQty,weekendQty,weekdayBase}（admin.htmlで設定）
+  storeSettingsWarnings: [], // 店舗設定シートの値が読み取れなかった項目の警告文（空でなければ画面上部に警告表示する）
   hourlyUpdatedAtByStore: {}, // 店舗名 -> 時間帯別実績の最新更新日時(epochミリ秒)。保存前の楽観的ロック基準
 };
 
@@ -857,10 +889,6 @@ function weatherInfo(code){
   return { icon:"❔", text:"不明" };
 }
 
-function isRainCode(code){
-  return [51,53,55,56,57,61,63,65,66,67,80,81,82,95,96,99].includes(code);
-}
-
 function renderWeather(daily){
   const list = document.getElementById("weatherList");
   list.classList.remove("loading");
@@ -880,11 +908,8 @@ function renderWeather(daily){
   });
 }
 
-function weatherCategory(code){
-  if(code === 0 || code === 1) return "晴れ";
-  if(isRainCode(code)) return "雨";
-  return "曇り";
-}
+// isRainCode・weatherCategory・tempAdjustment・calcZuid・calcUvA・calcRozenは
+// store-settings.jsに共通化（admin.html・index.htmlで共通利用）。
 
 // 販売時間帯（11〜17時）の表示ブロック定義
 const SALES_SLOTS = [
@@ -934,172 +959,10 @@ function computeSalesWeather(hourlyByDate, dateStr){
   };
 }
 
-function tempAdjustment(temp){
-  if(temp <= 15) return { adj: -15, label: "15℃以下" };
-  if(temp <= 17) return { adj: -5, label: "16〜17℃" };
-  if(temp <= 24) return { adj: 10, label: "18〜24℃" };
-  if(temp <= 28) return { adj: 0, label: "25〜28℃" };
-  return { adj: -10, label: "29℃以上" };
-}
-
-function calcZuid(dow, salesWeather, baseOverride){
-  if(baseOverride === null || baseOverride === undefined || baseOverride === "") return null;
-
-  let total = Number(baseOverride);
-  const reasons = [`${DAY_NAMES[dow]}曜ベース ${total}個`];
-
-  if(!salesWeather){
-    reasons.push("予報範囲外のため気温・天気補正なし");
-    const ZUID_MIN_NF = 100;
-    if(total < ZUID_MIN_NF){ total = ZUID_MIN_NF; reasons.push(`最低保証 ${ZUID_MIN_NF}個 を適用`); }
-    return { total, reasons };
-  }
-
-  const { adj: tempAdj, label: tempLabel } = tempAdjustment(salesWeather.avgTemp);
-  total += tempAdj;
-  reasons.push(`気温${tempLabel}(11-15時平均) ${tempAdj >= 0 ? "+" : ""}${tempAdj}`);
-
-  if(salesWeather.hasRainGeneral){
-    total -= 20;
-    reasons.push("販売時間帯(11〜15時)に雨 -20");
-  } else if(weatherCategory(salesWeather.code) === "晴れ"){
-    total += 5;
-    reasons.push("晴れ +5");
-  } else if(weatherCategory(salesWeather.code) === "雨"){
-    reasons.push("販売時間帯外の雨のみ 天気補正なし");
-  } else {
-    reasons.push("曇り ±0");
-  }
-
-  const ZUID_MIN = 100;
-  if(total < ZUID_MIN){
-    total = ZUID_MIN;
-    reasons.push(`最低保証 ${ZUID_MIN}個 を適用`);
-  }
-
-  return { total, reasons };
-}
-
-function calcUvA(dow, salesWeather, baseOverride){
-  if(baseOverride === null || baseOverride === undefined || baseOverride === "") return null;
-  let total = Number(baseOverride);
-  const reasons = [`${DAY_NAMES[dow]}曜ベース ${total}個`];
-
-  if(salesWeather && salesWeather.avgTemp >= 18 && salesWeather.avgTemp <= 24){
-    total += 5;
-    reasons.push("気温18〜24℃ +5");
-  }
-
-  if(salesWeather && salesWeather.hasRainGeneral){ total -= 10; reasons.push("販売時間帯(11〜14時)に雨 -10"); }
-
-  const UVA_MIN = 25;
-  if(total < UVA_MIN){
-    total = UVA_MIN;
-    reasons.push(`最低保証 ${UVA_MIN}個 を適用`);
-  }
-
-  return { total, reasons };
-}
-
-/* ---------- 店舗設定（admin.htmlの「店舗の営業設定」を読み取り専用で利用） ---------- */
-// index.htmlはadmin.htmlとは別のJSスコープのため、営業期間・営業曜日の判定ロジック
-// （isStoreOperatingOn等）を同じ内容でここにも複製する（admin.html側のcalcZuid/calcUvA同様、
-// 元々index.htmlは予測計算を独自に持っている）。
-
-const STORE_SETTINGS_WEEKDAYS = [
-  { key: "mon", label: "月", dow: 1 },
-  { key: "tue", label: "火", dow: 2 },
-  { key: "wed", label: "水", dow: 3 },
-  { key: "thu", label: "木", dow: 4 },
-  { key: "fri", label: "金", dow: 5 },
-  { key: "sat", label: "土", dow: 6 },
-  { key: "sun", label: "日", dow: 0 },
-];
-
-function parseStoreSettingsSheet(json){
-  const result = {};
-  if(!json || !json.table || !json.table.rows) return result;
-  json.table.rows.forEach(r => {
-    const c = r.c;
-    if(!c || !c[0]) return;
-    const store = String(c[0].v || "").trim();
-    if(!store) return;
-    const weekdays = {};
-    STORE_SETTINGS_WEEKDAYS.forEach((wd, i) => {
-      const cell = c[3 + i];
-      weekdays[wd.key] = !(cell && cell.v === false);
-    });
-    const qtyOrNull = cell => (cell && cell.v !== null && cell.v !== undefined && cell.v !== "") ? Number(cell.v) : null;
-    // 曜日ごとの基準値（Zuid・UvA用。「平日基本数」「土日基本数」の2列の後に月〜日の7列で並ぶ）
-    const weekdayBase = {};
-    STORE_SETTINGS_WEEKDAYS.forEach((wd, i) => {
-      weekdayBase[wd.key] = qtyOrNull(c[12 + i]);
-    });
-    result[store] = {
-      startDate: parseGvizDateCell(c[1]) || "",
-      endDate: parseGvizDateCell(c[2]) || "",
-      weekdays,
-      weekdayQty: qtyOrNull(c[10]),
-      weekendQty: qtyOrNull(c[11]),
-      weekdayBase,
-    };
-  });
-  return result;
-}
-
-// Rozengracht店のオープン時点の初期値（admin.htmlのDEFAULT_STORE_SETTINGSと同じ値）。
-// 管理画面から一度でも保存すれば、以降はスプレッドシート側の値が優先される。
-// Zuid・UvAのweekdayBaseは、これまでコード中に埋め込まれていた曜日ごとの基準値
-// （Zuidは旧ZUID_SEASON_BASE.autumnの値、UvAは旧固定35個）をそのまま初期値として与える
-// （admin.htmlのDEFAULT_STORE_SETTINGSと同じ値）
-const DEFAULT_STORE_SETTINGS = {
-  Zuid: {
-    weekdayBase: { mon: 95, tue: 120, wed: 110, thu: 120, fri: 95, sat: null, sun: null },
-  },
-  UvA: {
-    weekdayBase: { mon: 35, tue: 35, wed: null, thu: 35, fri: null, sat: null, sun: null },
-  },
-  Rozengracht: {
-    startDate: "2026-11-09",
-    endDate: "2027-04-30",
-    weekdays: { mon: true, tue: true, wed: true, thu: true, fri: true, sat: true, sun: true },
-    weekdayQty: 100,
-    weekendQty: 150,
-  },
-};
-function getStoreConfig(store){
-  return state.storeSettings[store] || DEFAULT_STORE_SETTINGS[store] || null;
-}
-
-function isStoreOperatingOn(config, iso, dow){
-  if(!config) return true;
-  if(config.startDate && iso < config.startDate) return false;
-  if(config.endDate && iso > config.endDate) return false;
-  const wdEntry = STORE_SETTINGS_WEEKDAYS.find(wd => wd.dow === dow);
-  if(wdEntry && config.weekdays && config.weekdays[wdEntry.key] === false) return false;
-  return true;
-}
-
-// 天気等で自動計算する店舗（Zuid・UvA）の、指定した曜日の基準値（admin.htmlの
-// 「店舗の営業設定」で設定した値）を返す。未設定（null）ならその曜日は休業扱い
-function getStoreWeekdayBase(store, dow){
-  const config = getStoreConfig(store);
-  const wdEntry = STORE_SETTINGS_WEEKDAYS.find(wd => wd.dow === dow);
-  if(!config || !config.weekdayBase || !wdEntry) return null;
-  const v = config.weekdayBase[wdEntry.key];
-  return (v === null || v === undefined || v === "") ? null : Number(v);
-}
-
-// Rozengracht：天気等による自動計算は行わず、「店舗の営業設定」の平日・土日基本数をそのまま使う
-// （admin.htmlのbuildDays内の計算と同じロジック。営業期間・営業曜日の対象外の日はnull＝休業扱い）
-function calcRozen(iso, dow){
-  const config = getStoreConfig("Rozengracht");
-  if(!isStoreOperatingOn(config, iso, dow)) return null;
-  const isWeekend = (dow === 0 || dow === 6);
-  const baseQty = config ? (isWeekend ? config.weekendQty : config.weekdayQty) : null;
-  if(baseQty === null || baseQty === undefined || baseQty === "") return null;
-  return { total: Number(baseQty), reasons: [`${isWeekend ? "土日" : "平日"}基本数 ${baseQty}個`] };
-}
+// STORE_SETTINGS_WEEKDAYS・DEFAULT_STORE_SETTINGS・getStoreConfig・isStoreOperatingOn・
+// getStoreWeekdayBase・parseStoreSettingsRows・calcRozenはstore-settings.jsに共通化
+// （admin.html・index.htmlで共通利用。以前はindex.html側に別実装を複製していたため、
+// admin.htmlとindex.htmlで営業設定の判定が食い違う不具合があった）。
 
 /* ---------- 祝日（オランダ・Nager.Date API） ---------- */
 
@@ -1191,6 +1054,22 @@ function storeCardHtml(title, result, storeKey, plan, holidayName, nsDisruptions
   const holidayBadge = holidayName ? `<div class="holiday-badge">🎉 祝日：${holidayName}</div>` : "";
   const nsBadge = (nsDisruptions && nsDisruptions.length) ? `<div class="ns-badge">🚆 NSストライキ/運休</div>` : "";
   if(!result){
+    // 推奨計算（天気予報・店舗の営業設定）では休業扱いでも、確定プランにその店舗の数が
+    // 既にある場合は、営業設定・推奨計算の結果に関係なく「営業」として確定数を表示する
+    // （確定プランが正。admin.htmlの確定済み日表示と同じ考え方）
+    const confirmedVal = plan ? plan[storeKey] : null;
+    if(confirmedVal !== null && confirmedVal !== undefined && confirmedVal > 0){
+      return `
+        <div class="store-card">
+          <h3>${title}</h3>
+          ${holidayBadge}${nsBadge}
+          <div class="confirm-compare">
+            <div class="confirm-num">${confirmedVal}<span>個</span></div>
+            <div class="confirm-compare-note">確定数</div>
+          </div>
+        </div>
+      `;
+    }
     return `
       <div class="store-card">
         <h3>${title}</h3>
@@ -1224,9 +1103,14 @@ function buildDailyResults(daily, hourlyByDate, holidaysByIso, nsDisruptionsByDa
     const salesWeather = computeSalesWeather(hourlyByDate, dateStr);
     const holidayName = (holidaysByIso && holidaysByIso[dateStr]) || null;
     const nsDisruptions = (nsDisruptionsByDate && nsDisruptionsByDate[dateStr]) || null;
-    const zuid = calcZuid(dow, salesWeather, getStoreWeekdayBase("Zuid", dow));
-    const uva = calcUvA(dow, salesWeather, getStoreWeekdayBase("UvA", dow));
-    const rozen = calcRozen(dateStr, dow);
+    let zuid = calcZuid(dow, salesWeather, getStoreWeekdayBase(state.storeSettings, "Zuid", dow));
+    let uva = calcUvA(dow, salesWeather, getStoreWeekdayBase(state.storeSettings, "UvA", dow));
+    // 「店舗の営業設定」による営業期間・営業曜日の制限を、各店舗自身の計算（calcZuid/calcUvA）の
+    // 上にさらに重ねて適用する（admin.html側のbuildDaysと同じ扱い。以前はこのチェックが
+    // index.html側に無く、admin.htmlとindex.htmlで営業の判定が食い違う一因になっていた）
+    if(zuid && !isStoreOperatingOn(getStoreConfig(state.storeSettings, "Zuid"), dateStr, dow)) zuid = null;
+    if(uva && !isStoreOperatingOn(getStoreConfig(state.storeSettings, "UvA"), dateStr, dow)) uva = null;
+    const rozen = calcRozen(state.storeSettings, dateStr, dow);
     if(holidayName){
       applyHolidayPenalty(zuid, ZUID_MIN_GUARANTEE);
       applyHolidayPenalty(uva, UVA_MIN_GUARANTEE);
@@ -1288,8 +1172,11 @@ function renderRecommendation(){
 
   state.todayTotal = (today.zuid ? today.zuid.total : 0) + (today.uva ? today.uva.total : 0) + (today.rozen ? today.rozen.total : 0);
 
+  // Zuid・Rozengrachtと同様、UvAも推奨計算が休業(null)でも確定プランの数があれば
+  // storeCardHtml側で確定数を表示するため、常にカードを描画する（以前はtoday.uvaが
+  // nullだとカード自体を描画せず、確定プランの数があっても表示されなかった）
   let html = storeCardHtml("Zuid（1号店）", today.zuid, "zuid", plan, today.holidayName, today.nsDisruptions);
-  if(today.uva !== null) html += storeCardHtml(today.uvaVenueLabel || "UvA", today.uva, "uva", plan, today.holidayName, today.nsDisruptions);
+  html += storeCardHtml(today.uvaVenueLabel || "UvA", today.uva, "uva", plan, today.holidayName, today.nsDisruptions);
   html += storeCardHtml("Rozengracht", today.rozen, "rozen", plan, null, null);
   box.innerHTML = html;
 }
@@ -1754,7 +1641,7 @@ async function loadWeather(){
       confirmedMap,
       bootstrap,
       shiftSheetData,
-      storeSettings,
+      storeSettingsResult,
     ] = await Promise.all([
       track(fetch(weatherUrl).then(r => r.json()), "天気予報(open-meteo)"),
       track(fetchDutchHolidays([thisYear, thisYear + 1]), "祝日データ(date.nager.at)"),
@@ -1768,7 +1655,9 @@ async function loadWeather(){
     const draftList = bootstrap.drafts;
     applyStatusesToState(bootstrap.statuses);
 
-    state.storeSettings = storeSettings;
+    state.storeSettings = storeSettingsResult.settings;
+    state.storeSettingsWarnings = storeSettingsResult.warnings;
+    renderStoreSettingsWarningBanner();
     state.hourlyByDate = buildHourlyByDate(data.hourly);
     state.holidaysByIso = holidaysByIso;
     state.nsDisruptionsByDate = {}; // NS運休情報は後段で取得するため、初期表示時点では空のまま進める

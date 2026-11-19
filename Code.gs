@@ -549,41 +549,53 @@ function handleGetMonthlyOnigiri(ss) {
 // 店舗（Zuid・UvA・Rozengracht等）ごとの営業期間・営業曜日・基本販売数（天気等による自動計算を
 // 使わない店舗向け）・曜日ごとの基準値（天気等による自動計算を使う店舗向け）を「店舗名」で
 // 1店舗1行（店舗名キーでupsert）保存する。
-// 設定行が無い店舗は、admin.html側で「期間制限なし・曜日すべて営業」として扱う＝既存店舗
+// 設定行が無い店舗は、クライアント側で「期間制限なし・曜日すべて営業」として扱う＝既存店舗
 // （Zuid・UvA）は設定するまでこれまでの動きと完全に同じになる（この関数は保存のみ行い、
 // 未設定時の既定値の解釈はクライアント側の責務）。
-// 読み取りは他の低頻度シートと同様gviz経由で行う（admin.html側でtype=取得エンドポイントは
-// 用意しない）。
+//
+// 読み取りはgvizを使わず、type=storeSettingsエンドポイント（handleGetStoreSettings、
+// getDisplayValues()経由）で行う。以前はgviz経由で読んでいたため、過去に列を追加した際に
+// セルの型推定・列位置のずれにより、古い行の「更新日時」の値が新しい「月曜基準値」列として
+// 読まれてNaNになったり、他の曜日が全部休業扱いになる不具合が起きた
+// （チセさん/今月のおにぎり担当シートと同種の問題）。
+// 保存側も同じ理由で、日付・曜日・数値をすべて明示的に書式なしテキスト（setNumberFormat("@")）
+// としてから文字列で書き込み、Googleスプレッドシートによる自動型変換を防ぐ。
+var STORE_SETTINGS_SHEET_NAME = "店舗設定";
 var STORE_SETTINGS_HEADER = ["店舗名", "開始日", "終了日", "月", "火", "水", "木", "金", "土", "日", "平日基本数", "土日基本数",
   "月曜基準値", "火曜基準値", "水曜基準値", "木曜基準値", "金曜基準値", "土曜基準値", "日曜基準値", "更新日時"];
+
+function storeSettingsRowValues(store, data) {
+  var weekdays = data.weekdays || {};
+  var flagStr = function(key) { return weekdays[key] === false ? "FALSE" : "TRUE"; };
+  var weekdayBase = data.weekdayBase || {};
+  var numStr = function(v) {
+    return (v !== undefined && v !== null && v !== "" && isFinite(Number(v))) ? String(Number(v)) : "";
+  };
+  var baseStr = function(key) { return numStr(weekdayBase[key]); };
+  var updatedAtStr = Utilities.formatDate(new Date(), "Etc/UTC", "yyyy-MM-dd HH:mm:ss");
+
+  return [
+    store,
+    String(data.startDate || ""),
+    String(data.endDate || ""),
+    flagStr("mon"), flagStr("tue"), flagStr("wed"), flagStr("thu"), flagStr("fri"), flagStr("sat"), flagStr("sun"),
+    numStr(data.weekdayQty),
+    numStr(data.weekendQty),
+    baseStr("mon"), baseStr("tue"), baseStr("wed"), baseStr("thu"), baseStr("fri"), baseStr("sat"), baseStr("sun"),
+    updatedAtStr
+  ];
+}
+
 function handleSaveStoreSettings(ss, data) {
-  var sheet = ss.getSheetByName("店舗設定");
+  var sheet = ss.getSheetByName(STORE_SETTINGS_SHEET_NAME);
   if (!sheet) {
-    sheet = ss.insertSheet("店舗設定");
-    sheet.appendRow(STORE_SETTINGS_HEADER);
-  } else {
-    sheet.getRange(1, 1, 1, STORE_SETTINGS_HEADER.length).setValues([STORE_SETTINGS_HEADER]);
+    sheet = ss.insertSheet(STORE_SETTINGS_SHEET_NAME);
   }
+  sheet.getRange(1, 1, 1, STORE_SETTINGS_HEADER.length).setNumberFormat("@").setValues([STORE_SETTINGS_HEADER]);
 
   var store = String(data.store || "").trim();
   if (!store) return;
-  var weekdays = data.weekdays || {};
-  var flag = function(key) { return weekdays[key] === false ? false : true; };
-  var weekdayBase = data.weekdayBase || {};
-  var baseVal = function(key) {
-    return (weekdayBase[key] !== undefined && weekdayBase[key] !== null && weekdayBase[key] !== "") ? Number(weekdayBase[key]) : "";
-  };
-
-  var row = [
-    store,
-    data.startDate || "",
-    data.endDate || "",
-    flag("mon"), flag("tue"), flag("wed"), flag("thu"), flag("fri"), flag("sat"), flag("sun"),
-    (data.weekdayQty !== undefined && data.weekdayQty !== "") ? Number(data.weekdayQty) : "",
-    (data.weekendQty !== undefined && data.weekendQty !== "") ? Number(data.weekendQty) : "",
-    baseVal("mon"), baseVal("tue"), baseVal("wed"), baseVal("thu"), baseVal("fri"), baseVal("sat"), baseVal("sun"),
-    new Date()
-  ];
+  var row = storeSettingsRowValues(store, data);
 
   var values = sheet.getDataRange().getValues();
   var foundRow = -1;
@@ -593,11 +605,25 @@ function handleSaveStoreSettings(ss, data) {
       break;
     }
   }
-  if (foundRow > 0) {
-    sheet.getRange(foundRow, 1, 1, row.length).setValues([row]);
-  } else {
-    sheet.appendRow(row);
+  var targetRow = foundRow > 0 ? foundRow : sheet.getLastRow() + 1;
+  sheet.getRange(targetRow, 1, 1, row.length).setNumberFormat("@").setValues([row]);
+}
+
+// 「店舗設定」シートを、gvizの型推定を経由せずに返す（チセさんシートと同じ方式）。
+// getDisplayValues()はセルの型推定を一切行わず、シート上の表示文字列をそのまま返すため、
+// 過去に列を追加・変更した際の型推定・列位置のずれによる値消失・読み違いを避けられる。
+// store-settings.js（admin.html・index.html・uva.html・rozen.html・cooking.html・
+// production.htmlで共通利用）のparseStoreSettingsRows()が、ここで返した文字列の
+// 2次元配列（1行目はヘッダー）を解析する。
+function handleGetStoreSettings(ss) {
+  var sheet = ss.getSheetByName(STORE_SETTINGS_SHEET_NAME);
+  if (!sheet) {
+    return ContentService.createTextOutput(JSON.stringify({ rows: [] }))
+      .setMimeType(ContentService.MimeType.JSON);
   }
+  var rows = sheet.getDataRange().getDisplayValues();
+  return ContentService.createTextOutput(JSON.stringify({ rows: rows }))
+    .setMimeType(ContentService.MimeType.JSON);
 }
 
 // UvA学事暦（週開始日｜ISO週番号｜区分｜メモ）の初期データ。
@@ -1202,6 +1228,10 @@ function doGetInner(e) {
 
   if (e.parameter && e.parameter.type === "bootstrap") {
     return handleGetBootstrap(ss);
+  }
+
+  if (e.parameter && e.parameter.type === "storeSettings") {
+    return handleGetStoreSettings(ss);
   }
 
   if (e.parameter && e.parameter.type === "monthlyOnigiri") {
