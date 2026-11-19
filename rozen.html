@@ -55,6 +55,14 @@
     padding: 20px 14px; text-align: center; color: #777; font-size: 0.95rem;
   }
 
+  .save-btn{
+    display: block; width: 100%; margin-top: 16px; padding: 14px;
+    min-height: 52px; background: var(--main); color: #fff; border: none; border-radius: 10px;
+    font-size: 1.08rem; font-weight: bold; cursor: pointer;
+  }
+  .save-btn:disabled{ background: #aaa; cursor: default; }
+  .save-btn:active:not(:disabled){ background: var(--main-dark); }
+
   .status-msg{ margin-top: 10px; padding: 10px 12px; border-radius: 8px; font-size: 0.92rem; text-align: center; display: none; }
   .status-msg.show{ display: block; }
   .status-msg.success{ background: #e4f3e8; color: var(--main-dark); border: 1px solid #b9ddc3; }
@@ -90,8 +98,6 @@ const state = {
   fillings: [],
   totals: {},
   expectedUpdatedAt: null,
-  activeSlotIndex: 0,
-  inputModeController: null,
 };
 
 function pad2(n){ return String(n).padStart(2, "0"); }
@@ -156,9 +162,6 @@ function clearStatus(){
 }
 
 async function loadForSelectedDate(){
-  // 日付を切り替える前に、保留中（デバウンス待ち）の保存があれば確定させておく
-  // （切り替え後に古い日付のデータが別の日付として送信される事故を防ぐ）
-  flushHourlySave(STORE_KEY);
   const area = document.getElementById("contentArea");
   area.innerHTML = `<p class="loading-note">読み込み中...</p>`;
 
@@ -177,41 +180,38 @@ async function loadForSelectedDate(){
   state.fillings = fillings;
   state.totals = totals;
 
-  const hourlySlots = HOURLY_SLOTS;
-  const activeSlotIndex = nearestHourlySlotIndex(hourlySlots);
-  const storeDefs = [{
-    key: STORE_KEY, label: "Rozengracht", totals,
-    madeReadonly: true, showReceived: true,
-    showMovedToZuid: true, showMovedToUva: true, showMovedToRozengracht: false,
-  }];
-
   area.innerHTML = `
-    ${buildHourlyInputModeHtml(storeDefs, fillings, hourlySlots, STORE_KEY, activeSlotIndex, false)}
+    <div class="table-scroll">${buildStoreTable(STORE_KEY, fillings, totals, HOURLY_SLOTS, true)}</div>
     ${buildNotesAreaHtml(STORE_KEY)}
-    <div class="status-msg" id="statusMsg"></div>
   `;
+
+  area.insertAdjacentHTML("beforeend", `
+    <button type="button" class="save-btn" id="saveBtn" disabled>読み込み中...</button>
+    <div class="status-msg" id="statusMsg"></div>
+  `);
+
+  area.querySelectorAll(".hourly-input, .given-input, .received-input, .moved-input, .moved-uva-input, .moved-rozen-input").forEach(inp =>
+    inp.addEventListener("input", () => updateStoreSoldDisplay(STORE_KEY, fillings))
+  );
   wireNoteLengthWarning(STORE_KEY);
 
-  // 保存済みデータを、入力モードのイベント結線（＝自動保存が働き始めるタイミング）より
-  // 先に復元することで、復元が終わる前に空欄のまま自動保存されて既存データが
-  // 消えてしまう事故を防ぐ（イベントはまだ結線されていないため、復元中は何も保存されない）
+  document.getElementById("saveBtn").addEventListener("click", handleSaveClick);
+
+  // 保存済みデータを復元する（復元完了まで保存ボタンは無効化し、空欄での誤上書きを防ぐ）
   const rows = await fetchHourlyData(SCRIPT_URL, state.selectedIso);
   restoreHourlyInputs(rows, state.selectedIso);
+  updateStoreSoldDisplay(STORE_KEY, fillings);
   state.expectedUpdatedAt = maxUpdatedAtForStore(rows, STORE_KEY);
 
-  state.inputModeController = bindHourlyInputMode({
-    storeDefs, fillings, hourlySlots, showStoreTabs: false,
-    getActiveStoreKey: () => STORE_KEY, setActiveStoreKey: () => {},
-    getActiveSlotIndex: () => state.activeSlotIndex,
-    setActiveSlotIndex: i => { state.activeSlotIndex = i; },
-    save: saveStoreNow,
-  });
+  const btn = document.getElementById("saveBtn");
+  if(btn){ btn.disabled = false; btn.textContent = "Rozengrachtの実績を記録する"; }
 }
 
-// 入力モードから自動保存（スロット切替時・デバウンス経過時）・手動保存の両方から呼ばれる。
-// 保存先・楽観的ロックのチェックはsaveStoreActual（hourly-actuals.js共通）のまま変えていない。
-async function saveStoreNow(){
+async function handleSaveClick(){
+  const btn = document.getElementById("saveBtn");
+  if(btn){ btn.disabled = true; btn.textContent = "送信中..."; }
   clearStatus();
+
   const result = await saveStoreActual({
     scriptUrl: SCRIPT_URL,
     storeKey: STORE_KEY,
@@ -223,13 +223,14 @@ async function saveStoreNow(){
 
   if(result.ok){
     state.expectedUpdatedAt = result.expectedUpdatedAt;
-    return true;
+    showStatus("success", `保存しました（${formatSavedAtLabel(result.savedAt)}）`);
+    if(btn){ btn.disabled = false; btn.textContent = "Rozengrachtの実績を記録する"; }
   } else if(result.reason === "conflict"){
     showStatus("error", "⚠️ 他の端末で更新されています。再読み込みしてください。");
-    return false;
+    if(btn){ btn.disabled = false; btn.textContent = "Rozengrachtの実績を記録する"; }
   } else {
     showStatus("error", "⚠️ 保存に失敗しました。通信状態を確認してもう一度お試しください。");
-    return false;
+    if(btn){ btn.disabled = false; btn.textContent = "Rozengrachtの実績を記録する"; }
   }
 }
 
