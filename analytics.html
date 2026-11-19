@@ -18,6 +18,9 @@
     --card: #ffffff;
     --ink: #2b2b28;
     --line: #e2ddd0;
+    /* 日別データ一覧の土曜・日曜の行の背景色（他の画面でも使えるよう1か所で定義） */
+    --weekend-sat-bg: #e8f1fb;
+    --weekend-sun-bg: #fbeaea;
   }
   *{box-sizing:border-box;}
   body{
@@ -200,6 +203,16 @@
     position: sticky; left: 0; z-index: 1; background: var(--card);
   }
   .daily-table th.date-col{ z-index: 3; background: var(--main-light); }
+  /* 土曜・日曜の行：曜日は日付（dt.getDay()）から判定してクラスを付ける（曜日列の文字は見ない）。
+     固定している日付の列(.date-col)にも同じ色を重ねて、横スクロールしても色がずれないようにする。
+     文字色は変えない（背景色だけ）。 */
+  .daily-table tr.row-sat td{ background: var(--weekend-sat-bg); }
+  .daily-table tr.row-sun td{ background: var(--weekend-sun-bg); }
+  .daily-table tr.row-sat td.date-col{ background: var(--weekend-sat-bg); }
+  .daily-table tr.row-sun td.date-col{ background: var(--weekend-sun-bg); }
+  /* メモの全文を表示する行（note-detail-row）も、同じ日の行なら同じ色にする */
+  .daily-table tr.note-detail-row.row-sat td{ background: var(--weekend-sat-bg); }
+  .daily-table tr.note-detail-row.row-sun td{ background: var(--weekend-sun-bg); }
   th.sortable{ cursor: pointer; user-select: none; }
   th.sortable:hover{ background: #dcebe0; }
   th.sortable .arrow{ font-size: 0.7rem; opacity: 0.5; margin-left: 3px; }
@@ -1278,6 +1291,11 @@ function renderDailyTable(){
 
   const bodyHtml = rows.map(r => {
     const dt = r.dateObj;
+    // 土曜・日曜の行の色分け：曜日列の文字列（r.weekday）ではなく、日付（dt.getDay()）から
+    // 判定する。並び替え・絞り込みをしても、常にその行の実際の日付から再計算されるため
+    // 色がずれない
+    const dow = dt.getDay();
+    const weekendRowClass = dow === 6 ? " row-sat" : dow === 0 ? " row-sun" : "";
     // 各時間帯セルに、その時間帯単体の売上個数と、当日その時間帯までの累計（sold値の
     // 単純合算。値が無い（未計測）時間帯は加算せずスキップする）を併記する
     let runningTotal = 0;
@@ -1300,14 +1318,14 @@ function renderDailyTable(){
         const isOpen = state.noteRowsExpanded.has(r.date);
         noteCell = `<td class="note-cell has-note" data-note-toggle="${r.date}" title="クリックで全文を${isOpen ? "閉じる" : "表示"}">📝 ${noteShort}</td>`;
         const noteFullHtml = escapeHtml(r.note).replace(/\n/g, "<br>");
-        noteDetailRow = `<tr class="note-detail-row${isOpen ? "" : " hidden"}" data-note-detail="${r.date}">
+        noteDetailRow = `<tr class="note-detail-row${isOpen ? "" : " hidden"}${weekendRowClass}" data-note-detail="${r.date}">
           <td colspan="${colCount}">📝 ${noteFullHtml}</td>
         </tr>`;
       } else {
         noteCell = `<td class="note-cell"></td>`;
       }
     }
-    return `<tr>
+    return `<tr class="${weekendRowClass.trim()}">
       <td class="date-col">${dt.getMonth()+1}/${dt.getDate()}</td>
       <td>${r.weekday}曜</td>
       <td>${r.weather || "—"}</td>
