@@ -28,14 +28,97 @@ table.hourly-table input[type="number"]{
 }
 .made-input{ background: #f3f1ea; color: #555; }
 .slot-subhead{ font-weight: normal; font-size: 0.62rem; opacity: 0.8; display: block; }
-.slot-extra-row{ display: flex; gap: 4px; justify-content: center; margin-top: 4px; }
-.given-input{ width: 46px !important; min-height: 40px !important; font-size: 0.82rem !important; color: #a35; }
-.received-input{ width: 46px !important; min-height: 40px !important; font-size: 0.82rem !important; color: #358; }
-.moved-input, .moved-uva-input, .moved-rozen-input{ width: 64px !important; color: #358; }
+/* 具材・あげた数・受け取った数・移動欄の色分けだけ残し、サイズ指定は入力モード側
+   （下の「入力モード」セクションの.hourly-field-given input等）に譲る。入力モードの
+   入力欄はこのclass名をそのまま使うため、ここで幅・高さ・文字サイズを固定してしまうと
+   タップしやすい大きな入力欄にならない（誤タップ防止という今回の目的と矛盾する） */
+.given-input{ color: #a35; }
+.received-input{ color: #358; }
+.moved-input, .moved-uva-input, .moved-rozen-input{ color: #358; }
 .sold-display{ font-size: 0.74rem; color: #888; margin-top: 4px; min-height: 16px; }
 .sold-neg{ color: #e53; font-weight: bold; }
 .cum-display{ font-size: 0.74rem; color: #4a7; margin-top: 2px; min-height: 16px; }
 .total-row td{ background: #f5f2ec; font-weight: bold; color: #555; border-top: 2px solid #d0c8b8; }
+
+/* ========== 入力モード（1時間帯ずつの大きな入力欄） ========== */
+
+/* 上部固定バー：店舗・時間帯・保存状態・一覧切替ボタンを常時表示する */
+.hourly-mode-bar{
+  position: sticky; top: 0; z-index: 5;
+  background: var(--card); border: 1px solid var(--line); border-radius: 10px;
+  padding: 8px 10px; margin-bottom: 8px;
+  box-shadow: 0 2px 6px rgba(0,0,0,0.06);
+}
+.hourly-mode-bar-row{ display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.hourly-mode-bar-store{ font-weight: bold; color: var(--main-dark); font-size: 0.95rem; }
+.hourly-mode-bar-slot{
+  background: var(--main); color: #fff; border-radius: 100px; padding: 2px 10px; font-weight: bold; font-size: 0.88rem;
+}
+.hourly-mode-bar-status{ font-size: 0.76rem; color: #888; flex: 1; min-width: 60px; }
+.hourly-mode-bar-filling{ font-size: 0.82rem; color: var(--main-dark); font-weight: bold; margin-top: 4px; min-height: 1.1em; }
+.hourly-view-toggle-btn{
+  background: var(--main-light); color: var(--main-dark); border: 1px solid var(--line);
+  border-radius: 100px; padding: 6px 12px; font-size: 0.82rem; font-weight: bold;
+  cursor: pointer; font-family: inherit; min-height: 36px;
+}
+
+/* 店舗タブ・時間帯タブ：大きめのボタンを横に並べる */
+.hourly-store-tabs, .hourly-slot-tabs{
+  display: flex; gap: 6px; overflow-x: auto; margin-bottom: 10px; padding-bottom: 2px;
+}
+.hourly-store-tab, .hourly-slot-tab{
+  flex-shrink: 0; min-height: 48px; min-width: 56px;
+  border: 1px solid var(--line); border-radius: 10px; background: var(--card);
+  color: var(--ink); font-size: 0.95rem; font-weight: bold; font-family: inherit;
+  cursor: pointer; padding: 6px 14px;
+}
+.hourly-store-tab.active, .hourly-slot-tab.active{
+  background: var(--main); color: #fff; border-color: var(--main);
+}
+
+/* 具材1つ分の入力行：縦にゆったり並べ、誤タップを防ぐ */
+.hourly-input-row{
+  background: var(--card); border: 1px solid var(--line); border-radius: 10px;
+  padding: 12px 14px; margin-bottom: 14px;
+}
+.hourly-input-row--active{
+  background: var(--main-light); border-color: var(--main);
+}
+.hourly-row-head{ display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
+.hourly-row-filling-name{ font-size: 1.05rem; font-weight: bold; color: var(--ink); }
+.hourly-made-field{ display: flex; align-items: center; gap: 4px; font-size: 0.8rem; color: #888; }
+.hourly-made-field input{
+  width: 56px; min-height: 48px; border: 1px solid #ccc; border-radius: 6px;
+  padding: 2px 4px; font-size: 16px; text-align: center; background: #f3f1ea; color: #555;
+}
+.hourly-row-fields{ display: flex; align-items: flex-end; gap: 10px; flex-wrap: wrap; }
+.hourly-field{ display: flex; flex-direction: column; gap: 4px; }
+.hourly-field-label{ font-size: 0.74rem; color: #888; }
+.hourly-field input{
+  min-height: 48px; border: 1px solid #ccc; border-radius: 8px;
+  padding: 4px 6px; font-size: 16px; text-align: center; font-family: inherit;
+}
+.hourly-field-remain{ flex: 1; min-width: 100px; }
+.hourly-field-remain input{
+  min-height: 56px; font-size: 1.5rem; font-weight: bold; border: 2px solid var(--main); color: var(--main-dark);
+}
+.hourly-field-given input, .hourly-field-received input{ width: 72px; color: #a35; }
+.hourly-field-received input{ color: #358; }
+.hourly-row-ref{ display: flex; gap: 10px; margin-top: 6px; font-size: 0.78rem; color: #888; min-height: 1.1em; }
+.hourly-row-ref .sold-display{ margin-top: 0; min-height: 0; }
+.hourly-moved-row{ display: flex; gap: 10px; flex-wrap: wrap; margin-top: 10px; padding-top: 10px; border-top: 1px dashed var(--line); }
+.hourly-moved-field{ display: flex; flex-direction: column; gap: 4px; font-size: 0.78rem; color: #358; }
+.hourly-moved-field input{
+  min-height: 48px; width: 76px; border: 1px solid #ccc; border-radius: 8px;
+  padding: 4px 6px; font-size: 16px; text-align: center; font-family: inherit; color: #358;
+}
+
+/* 一覧（確認用）セルのタップ領域 */
+.hourly-list-cell{ cursor: pointer; }
+.hourly-list-cell:active{ background: var(--main-light); }
+.hourly-list-remain{ font-weight: bold; font-size: 0.95rem; }
+.hourly-list-sub{ font-size: 0.68rem; color: #888; min-height: 14px; }
+.hourly-list-view-area{ margin-bottom: 10px; }
 
 .notes-area{ margin-top: 8px; }
 .notes-label{ font-size: 0.82rem; color: #666; display: block; margin-bottom: 3px; }
