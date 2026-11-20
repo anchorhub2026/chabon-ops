@@ -119,7 +119,7 @@
     font-size: 1rem;
     color: var(--main-dark);
   }
-  .confirm-week-btn{
+  .confirm-week-btn, .publish-week-btn{
     border: none;
     border-radius: 100px;
     background: var(--main);
@@ -130,6 +130,8 @@
     cursor: pointer;
   }
   .confirm-week-btn:active{ background: var(--main-dark); }
+  .publish-week-btn{ background: #2a6fb0; }
+  .publish-week-btn:active{ background: #20568a; }
   .production-link{
     font-size: 0.78rem;
     color: var(--main-dark);
@@ -324,6 +326,18 @@
     padding: 2px 9px;
     border-radius: 100px;
   }
+  /* 各日の状態ラベル（未確定／確定・非公開／公開中）：色で一目で見分けられるようにする */
+  .day-status-badge{
+    display: inline-block;
+    margin-top: 4px;
+    font-size: 0.64rem;
+    font-weight: bold;
+    padding: 2px 9px;
+    border-radius: 100px;
+  }
+  .day-status-badge.status-unconfirmed{ background: #e2ddd0; color: #777; }
+  .day-status-badge.status-confirmed-private{ background: #8a6d3b; color: #fff; }
+  .day-status-badge.status-published{ background: #2a6fb0; color: #fff; }
   /* この日を修正する */
   .revise-day-btn{
     font-size: 0.75rem;
@@ -360,6 +374,47 @@
   }
   .cancel-revision-btn:hover{ background: #f2f2f2; }
   .revise-status-msg{
+    font-size: 0.72rem;
+    color: var(--accent);
+    font-weight: bold;
+  }
+  /* この日を確定 */
+  .confirm-day-btn{
+    border: none;
+    border-radius: 100px;
+    background: var(--main);
+    color: #fff;
+    font-weight: bold;
+    font-size: 0.78rem;
+    padding: 7px 16px;
+    cursor: pointer;
+  }
+  .confirm-day-btn:hover{ background: var(--main-dark); }
+  .confirm-day-btn:disabled{ background: #aaa; cursor: default; }
+  /* シフト表に公開 */
+  .publish-day-btn{
+    border: none;
+    border-radius: 100px;
+    background: #2a6fb0;
+    color: #fff;
+    font-weight: bold;
+    font-size: 0.78rem;
+    padding: 7px 16px;
+    cursor: pointer;
+  }
+  .publish-day-btn:hover{ background: #20568a; }
+  /* 公開を取り消す */
+  .unpublish-day-btn{
+    font-size: 0.75rem;
+    padding: 6px 14px;
+    border: 1px solid #ccc;
+    border-radius: 100px;
+    background: #fff;
+    color: #666;
+    cursor: pointer;
+  }
+  .unpublish-day-btn:hover{ background: #f2f2f2; }
+  .day-action-status-msg{
     font-size: 0.72rem;
     color: var(--accent);
     font-weight: bold;
@@ -936,6 +991,7 @@
 
   /* ── 確定ボタン ── */
   .confirm-week-btn:hover{ background: var(--main-dark); box-shadow: 0 2px 8px rgba(51,92,62,0.28); }
+  .publish-week-btn:hover{ background: #20568a; box-shadow: 0 2px 8px rgba(42,111,176,0.28); }
 
   /* ── 折りたたみボタン ── */
   .toggle-week-btn:hover{ background: var(--main-light); border-color: var(--main-dark); }
@@ -994,7 +1050,7 @@
     section{ padding: 14px 12px; border-radius: 10px; }
     .week-heading{ flex-direction: column; align-items: flex-start; }
     .week-heading > div{ display: flex; flex-wrap: wrap; gap: 6px; }
-    .confirm-week-btn{ font-size: 0.8rem; padding: 7px 14px; }
+    .confirm-week-btn, .publish-week-btn{ font-size: 0.8rem; padding: 7px 14px; }
     .breakdown-toggle-btn{ font-size: 0.82rem; padding: 8px 14px; }
   }
 
@@ -2322,7 +2378,8 @@ function renderCombined(){
           <h3><span class="week-title-badge">${week.title}</span>（${thisWeekBadge(week.days)}）</h3>
           <div>
             ${collapsible ? `<button class="toggle-week-btn" data-week-index="${week.weekIndex}">${btnLabel}</button>` : ""}
-            <button class="confirm-week-btn" data-week="${week.weekIndex}">この週を確定・公開する</button>
+            <button class="confirm-week-btn" data-week="${week.weekIndex}">未確定の日をまとめて確定</button>
+            <button class="publish-week-btn" data-week="${week.weekIndex}">確定した日をまとめて公開</button>
             <a class="production-link" href="production.html" target="_blank">ニギニギ隊生産数を見る</a>
             <span class="week-status-msg" id="weekStatus${week.weekIndex}"></span>
           </div>
@@ -2345,7 +2402,10 @@ function renderCombined(){
   });
 
   area.querySelectorAll(".confirm-week-btn").forEach(btn => {
-    btn.addEventListener("click", () => confirmWeek(+btn.dataset.week));
+    btn.addEventListener("click", () => bulkConfirmUnconfirmedDays(+btn.dataset.week));
+  });
+  area.querySelectorAll(".publish-week-btn").forEach(btn => {
+    btn.addEventListener("click", () => bulkPublishConfirmedDays(+btn.dataset.week));
   });
   area.querySelectorAll(".toggle-week-btn").forEach(btn => {
     btn.addEventListener("click", () => toggleWeek(+btn.dataset.weekIndex));
@@ -2994,6 +3054,13 @@ function confirmedBadgeHtml(confirmedData, snap){
   return `<span class="confirmed-badge">✓ 確定済み${snap.confirmedAtLabel ? `（${snap.confirmedAtLabel}）` : ""}</span>`;
 }
 
+// 各日の状態ラベル（未確定／確定・非公開／公開中）。色で一目で見分けられるようにする
+function dayStatusBadgeHtml(confirmedData){
+  if(!confirmedData) return `<span class="day-status-badge status-unconfirmed">未確定</span>`;
+  if(confirmedData.publishState === "公開") return `<span class="day-status-badge status-published">📢 公開中</span>`;
+  return `<span class="day-status-badge status-confirmed-private">🔒 確定・非公開</span>`;
+}
+
 // その日のチセ分を最優先で担当させるメンバーを選ぶ欄（自動／YUMI／MARI／CHIKAKO／MIKI）。
 // 確定済みで修正中でない日は確定時点の値を読み取り専用で表示し、それ以外は
 // day.chisePriorityAssigneeを直接編集できるようにする。
@@ -3024,18 +3091,33 @@ function dayBlockHtml(day){
   const hasSavedForecast = !isConfirmed && !!localStorage.getItem(`chabon_forecast_${mdLabel(day.dateObj)}`);
   const hasSavedProd = !isConfirmed && !!localStorage.getItem(`chabon_prod_${mdLabel(day.dateObj)}`);
 
-  // 確定済みの日の生産割り振りを修正するための操作ボタン。
-  // 修正中は「修正を確定・公開する」「修正をやめる」、修正中でなければ「この日を修正する」のみ表示する
-  // （未確定の日はhasConfirmedPlanがfalseのため、これまでどおり何も表示しない）
+  // 各日の確定・公開操作ボタン。
+  // - 修正中：「修正を確定」（公開中の日は「修正を確定（シフト表にも反映）」）・「修正をやめる」
+  // - 確定・非公開：「この日を修正する」「シフト表に公開」
+  // - 公開中：「この日を修正する」「公開を取り消す」
+  // - 未確定：「この日を確定」
   let revisionActionsHtml = "";
   if(isRevising){
+    const willStayPublished = hasConfirmedPlan && confirmedData.publishState === "公開";
     revisionActionsHtml = `
       <span class="revise-status-msg" id="reviseStatus-${day.dateKey}"></span>
-      <button type="button" class="publish-revision-btn" data-key="${day.dateKey}">修正を確定・公開する</button>
+      <button type="button" class="publish-revision-btn" data-key="${day.dateKey}">${willStayPublished ? "修正を確定（シフト表にも反映）" : "修正を確定"}</button>
       <button type="button" class="cancel-revision-btn" data-key="${day.dateKey}">修正をやめる</button>
     `;
   } else if(hasConfirmedPlan){
-    revisionActionsHtml = `<button type="button" class="revise-day-btn" data-key="${day.dateKey}">✏️ この日を修正する</button>`;
+    const isPublished = confirmedData.publishState === "公開";
+    revisionActionsHtml = `
+      <span class="day-action-status-msg" id="dayActionStatus-${day.dateKey}"></span>
+      <button type="button" class="revise-day-btn" data-key="${day.dateKey}">✏️ この日を修正する</button>
+      ${isPublished
+        ? `<button type="button" class="unpublish-day-btn" data-key="${day.dateKey}">公開を取り消す</button>`
+        : `<button type="button" class="publish-day-btn" data-key="${day.dateKey}">シフト表に公開</button>`}
+    `;
+  } else {
+    revisionActionsHtml = `
+      <span class="day-action-status-msg" id="dayActionStatus-${day.dateKey}"></span>
+      <button type="button" class="confirm-day-btn" data-key="${day.dateKey}" ${(lockReason || state.productionDataIncomplete) ? "disabled" : ""}>この日を確定</button>
+    `;
   }
 
   // 修正中、「希望しない」と回答した・まだ回答が無いメンバーも、必要なら手動で列を追加できる。
@@ -3074,7 +3156,7 @@ function dayBlockHtml(day){
             <div class="day-head">${day.label}</div>
             <div class="day-weather"><span class="weather-icon">${day.weatherIcon}</span><span class="weather-temp">${day.tempLabel}</span></div>
           </div>
-          ${(day.holidayName || (day.nsDisruptions && day.nsDisruptions.length) || isConfirmed || isRevising) ? `<div class="day-badges">${day.holidayName ? `<span class="holiday-badge">🎉 祝日：${day.holidayName}</span>` : ""}${day.nsDisruptions && day.nsDisruptions.length ? `<span class="ns-badge">🚆 NSストライキ/運休</span>` : ""}${isConfirmed ? confirmedBadgeHtml(confirmedData, snap) : ""}${isRevising ? `<span class="revising-badge">✏️ 修正中（未公開）</span>` : ""}</div>` : ""}
+          <div class="day-badges">${dayStatusBadgeHtml(confirmedData)}${day.holidayName ? `<span class="holiday-badge">🎉 祝日：${day.holidayName}</span>` : ""}${day.nsDisruptions && day.nsDisruptions.length ? `<span class="ns-badge">🚆 NSストライキ/運休</span>` : ""}${isConfirmed ? confirmedBadgeHtml(confirmedData, snap) : ""}${isRevising ? `<span class="revising-badge">✏️ 修正中（未公開）</span>` : ""}</div>
           <div class="store-stack-with-toggle">
             ${storeBoxWithToggleHtml(day, "zuid", "Zuid", day.zuid, isConfirmed, isConfirmed ? confirmedData.zuid : null)}
             ${showUva ? storeBoxWithToggleHtml(day, "uva", day.uvaVenueLabel, day.uva, isConfirmed, isConfirmed ? confirmedData.uva : null) : ""}
@@ -3762,6 +3844,16 @@ function bindProductionDayEvents(day){
 
   const cancelRevisionBtn = container.querySelector(".cancel-revision-btn");
   if(cancelRevisionBtn) cancelRevisionBtn.addEventListener("click", () => cancelRevisingDay(day));
+
+  // 日ごとの確定・公開・公開取り消し
+  const confirmDayBtn = container.querySelector(".confirm-day-btn");
+  if(confirmDayBtn) confirmDayBtn.addEventListener("click", () => confirmDay(day));
+
+  const publishDayBtn = container.querySelector(".publish-day-btn");
+  if(publishDayBtn) publishDayBtn.addEventListener("click", () => publishDay(day));
+
+  const unpublishDayBtn = container.querySelector(".unpublish-day-btn");
+  if(unpublishDayBtn) unpublishDayBtn.addEventListener("click", () => unpublishDay(day));
 
   // 修正中：「希望しない」と回答した・まだ回答が無いメンバー（CHISEも含む）の列を手動で追加する。
   // 修正中でない通常の日：CHISEだけをこのボタンから手動追加できる（他のメンバーはシフト回答ベース）
@@ -4955,77 +5047,60 @@ function hqBreakdownToString(hqBreakdown){
   return Object.entries(hqBreakdown).filter(([, q]) => q > 0).map(([f, q]) => `${f}×${q}`).join(" ");
 }
 
-async function confirmWeek(weekIndex){
-  if(state.productionDataIncomplete){
-    alert("データの読み込みに失敗しているため確定できません。再読み込みしてください");
-    return;
-  }
-  // 既に確定済みの日（修正中かどうかを問わない）は対象から除外する。
-  // 確定済みの日の修正は「この日を修正する」専用の経路（publishDayRevision）でのみ行い、
-  // 週単位の確定で確定済みの日を再送してライブ再計算の値で黙って上書きしないようにする
-  // （「確定済みの日を自動の処理で書き換えない」という方針を、週単位の確定ボタンにも適用する）。
-  const days = state.days.filter(d => d.weekIndex === weekIndex && !getConfirmedPlanForDay(d));
-  if(days.length === 0){
-    const statusEl = document.getElementById(`weekStatus${weekIndex}`);
-    if(statusEl) statusEl.textContent = "この週はすべて確定済みです（個別に修正する場合は「この日を修正する」を使ってください）";
-    return;
-  }
-  const dayEntries = days.map(d => {
-    const snap = computeDaySnapshot(d);
-    const ningiBreakdown = snap.working
-      .map(name => `${name}:${memberFillingToString(d.memberFillingQty[name])}`)
-      .join("；");
-    const ningiBreakdownByStore = ningiBreakdownByStoreToString(d, snap.working);
-    const chise = state.chiseByDate[mdLabel(d.dateObj)];
-    const zuidBreakdown = d.zuidOpen ? d.zuidFillingQty : {};
-    const uvaBreakdown = d.uvaOpen ? d.uvaFillingQty : {};
-    const rozenBreakdown = d.rozenOpen ? d.rozenFillingQty : {};
-    const chiseBreakdown = chise ? chise.breakdown : {};
+// 1日分の確定プランのペイロード（Code.gsのtype=confirmPlanに送る内容）を組み立てる。
+// 単発の「この日を確定」・複数日まとめての「未確定の日をまとめて確定」の両方から使う
+// （以前は週単位の確定処理にだけ書かれていた組み立てロジックを切り出したもの）。
+function buildConfirmPlanDayEntry(d){
+  const snap = computeDaySnapshot(d);
+  const ningiBreakdown = snap.working
+    .map(name => `${name}:${memberFillingToString(d.memberFillingQty[name])}`)
+    .join("；");
+  const ningiBreakdownByStore = ningiBreakdownByStoreToString(d, snap.working);
+  const chise = state.chiseByDate[mdLabel(d.dateObj)];
+  const zuidBreakdown = d.zuidOpen ? d.zuidFillingQty : {};
+  const uvaBreakdown = d.uvaOpen ? d.uvaFillingQty : {};
+  const rozenBreakdown = d.rozenOpen ? d.rozenFillingQty : {};
+  const chiseBreakdown = chise ? chise.breakdown : {};
 
-    return {
-      date: mdLabel(d.dateObj),
-      day: `${DAY_NAMES[d.dow]}曜日`,
-      zuid: zuidFinal(d),
-      uva: uvaFinal(d),
-      rozen: rozenFinal(d),
-      chise: snap.chiseQty,
-      ningiBreakdown,
-      hqQty: snap.hqQty,
-      hqBreakdown: hqBreakdownToString(snap.hqBreakdown),
-      // 過去の生産実績（analytics.html）で店舗別の具材内訳を確認できるよう、
-      // 確定時点のZuid・UvA・Rozen・チセ向けの具材別内訳もあわせて保存する
-      zuidBreakdown: memberFillingToString(zuidBreakdown),
-      uvaBreakdown: memberFillingToString(uvaBreakdown),
-      rozenBreakdown: memberFillingToString(rozenBreakdown),
-      chiseBreakdown: memberFillingToString(chiseBreakdown),
-      // ニギニギ隊内訳（店舗別）：どの店舗の分を誰が担当したかの記録。末尾の新しい列に保存する。
-      // 既存の「ニギニギ隊内訳」列（具材合計）は変えないため、月次支払い集計には影響しない
-      ningiBreakdownByStore,
-      chisePriorityAssignee: d.chisePriorityAssignee || "自動",
-      // state.confirmedPlansByDateを即時反映するための生データ（送信ペイロードには含めない）
-      _local: { snap, zuidBreakdown, uvaBreakdown, rozenBreakdown, chiseBreakdown },
-    };
-  });
+  return {
+    date: mdLabel(d.dateObj),
+    day: `${DAY_NAMES[d.dow]}曜日`,
+    zuid: zuidFinal(d),
+    uva: uvaFinal(d),
+    rozen: rozenFinal(d),
+    chise: snap.chiseQty,
+    ningiBreakdown,
+    hqQty: snap.hqQty,
+    hqBreakdown: hqBreakdownToString(snap.hqBreakdown),
+    // 過去の生産実績（analytics.html）で店舗別の具材内訳を確認できるよう、
+    // 確定時点のZuid・UvA・Rozen・チセ向けの具材別内訳もあわせて保存する
+    zuidBreakdown: memberFillingToString(zuidBreakdown),
+    uvaBreakdown: memberFillingToString(uvaBreakdown),
+    rozenBreakdown: memberFillingToString(rozenBreakdown),
+    chiseBreakdown: memberFillingToString(chiseBreakdown),
+    // ニギニギ隊内訳（店舗別）：どの店舗の分を誰が担当したかの記録。末尾の新しい列に保存する。
+    // 既存の「ニギニギ隊内訳」列（具材合計）は変えないため、月次支払い集計には影響しない
+    ningiBreakdownByStore,
+    chisePriorityAssignee: d.chisePriorityAssignee || "自動",
+    // state.confirmedPlansByDateを即時反映するための生データ（送信ペイロードには含めない）
+    _local: { snap, zuidBreakdown, uvaBreakdown, rozenBreakdown, chiseBreakdown },
+  };
+}
 
+// 指定した日（複数可）を「確定（非公開）」にする。production.htmlには表示されない
+// （公開するには、別途「シフト表に公開」「確定した日をまとめて公開」を使う）。
+// 「この日を確定」（1日）・「未確定の日をまとめて確定」（週単位）の両方から呼ばれる。
+async function confirmDaysNow(days, statusEl){
+  const dayEntries = days.map(buildConfirmPlanDayEntry);
   const payload = {
     type: "confirmPlan",
     days: dayEntries.map(({ _local, ...rest }) => rest),
   };
 
-  const statusEl = document.getElementById(`weekStatus${weekIndex}`);
-  statusEl.textContent = "送信中...";
-
-  console.log("確定データ送信:", JSON.stringify(payload));
-  console.log("確定データ:", JSON.stringify(payload.days));
-
+  if(statusEl) statusEl.textContent = "送信中...";
   try{
-    const result = await fetch(SCRIPT_URL, {
-      method: "POST",
-      mode: "no-cors",
-      body: JSON.stringify(payload),
-    });
-    console.log("送信成功:", result);
-    statusEl.textContent = "確定・公開しました ✓";
+    await fetch(SCRIPT_URL, { method: "POST", mode: "no-cors", body: JSON.stringify(payload) });
+    if(statusEl) statusEl.textContent = "確定しました（非公開）✓";
     // 確定済みかどうか・確定内容はスプレッドシートの「確定プラン」を正とするが、
     // 再読み込みなしでも画面にすぐ反映されるよう、送信した内容でstate.confirmedPlansByDateも
     // 即時更新する（次回の読み込み時にはgviz経由で取得した内容に置き換わる）
@@ -5039,6 +5114,9 @@ async function confirmWeek(weekIndex){
         memberFillingQty[name] = { ...buildFillingDefaults(0), ...(srcDay.memberFillingQty[name] || {}) };
         memberStoreFillingQty[name] = JSON.parse(JSON.stringify((srcDay.memberStoreFillingQty || {})[name] || {}));
       });
+      // 既に確定済みだった日（通常はここに来ない）を再送した場合は、公開状態を変えない。
+      // 新規確定の日は非公開から始まる
+      const existing = state.confirmedPlansByDate[date];
       state.confirmedPlansByDate[date] = {
         zuid: zuidFinal(srcDay), uva: uvaFinal(srcDay), rozen: rozenFinal(srcDay), chise: snap.chiseQty,
         memberNames: snap.working, memberFillingQty, memberStoreFillingQty,
@@ -5046,13 +5124,127 @@ async function confirmWeek(weekIndex){
         confirmedAtLabel: "確定済み",
         zuidBreakdown, uvaBreakdown, rozenBreakdown, chiseBreakdown, hasDetailBreakdown: true,
         chisePriorityAssignee: srcDay.chisePriorityAssignee || "自動",
+        publishState: existing ? existing.publishState : "非公開",
+        publishedAtLabel: existing ? existing.publishedAtLabel : "",
       };
     });
     renderCombined();
   }catch(e){
-    console.error("送信失敗:", e);
-    statusEl.textContent = "送信に失敗しました";
+    console.error("確定の送信に失敗しました:", e);
+    if(statusEl) statusEl.textContent = "送信に失敗しました";
   }
+}
+
+// 指定した日（"M/D"文字列、複数可）を「公開」にする（production.htmlに表示される）。
+// 「シフト表に公開」（1日）・「確定した日をまとめて公開」（週単位）の両方から呼ばれる。
+// 日ごとに楽観的ロック（確定日時）を確認し、一致しない日はその日だけ公開せずスキップする。
+async function publishDaysNow(dates, statusEl){
+  const items = dates.map(date => ({
+    date,
+    expectedConfirmedAt: (state.confirmedPlansByDate[date] || {}).confirmedAtRaw || undefined,
+  }));
+  if(statusEl) statusEl.textContent = "送信中...";
+  try{
+    await fetch(SCRIPT_URL, { method: "POST", mode: "no-cors", body: JSON.stringify({ type: "publishDays", items }) });
+    if(statusEl) statusEl.textContent = "公開しました ✓";
+    dates.forEach(date => {
+      const entry = state.confirmedPlansByDate[date];
+      if(entry){ entry.publishState = "公開"; entry.publishedAtLabel = "公開済み"; }
+    });
+    renderCombined();
+  }catch(e){
+    console.error("公開の送信に失敗しました:", e);
+    if(statusEl) statusEl.textContent = "送信に失敗しました";
+  }
+}
+
+// 公開済みの1日を非公開（確定のみ）に戻す（「公開を取り消す」）。
+// 単発の操作のため、送信直前にスプレッドシート側の最新の確定日時を取得し直して
+// 楽観的ロックを確認する（publishDayRevisionと同じ考え方）。
+async function unpublishDayNow(day){
+  const mdKey = mdLabel(day.dateObj);
+  const statusEl = document.getElementById(`dayActionStatus-${day.dateKey}`);
+  if(statusEl) statusEl.textContent = "確認中...";
+  const currentConfirmedAt = await fetchConfirmedPlanConfirmedAtRaw(mdKey);
+  const expected = (state.confirmedPlansByDate[mdKey] || {}).confirmedAtRaw;
+  if(currentConfirmedAt !== undefined && expected && currentConfirmedAt && currentConfirmedAt !== expected){
+    if(statusEl) statusEl.textContent = "⚠️ 他の端末で更新されています。再読み込みしてください";
+    return;
+  }
+  if(statusEl) statusEl.textContent = "送信中...";
+  try{
+    await fetch(SCRIPT_URL, {
+      method: "POST", mode: "no-cors",
+      body: JSON.stringify({ type: "unpublishDay", date: mdKey, expectedConfirmedAt: expected || undefined }),
+    });
+    if(statusEl) statusEl.textContent = "公開を取り消しました";
+    const entry = state.confirmedPlansByDate[mdKey];
+    if(entry){ entry.publishState = "非公開"; entry.publishedAtLabel = ""; }
+    renderCombined();
+  }catch(e){
+    console.error("公開取り消しの送信に失敗しました:", e);
+    if(statusEl) statusEl.textContent = "送信に失敗しました";
+  }
+}
+
+// 「この日を確定」：1日だけを確定（非公開）にする
+function confirmDay(day){
+  if(state.productionDataIncomplete){
+    alert("データの読み込みに失敗しているため確定できません。再読み込みしてください");
+    return;
+  }
+  const statusEl = document.getElementById(`dayActionStatus-${day.dateKey}`);
+  confirmDaysNow([day], statusEl);
+}
+
+// 「シフト表に公開」：1日だけを公開する
+function publishDay(day){
+  const statusEl = document.getElementById(`dayActionStatus-${day.dateKey}`);
+  publishDaysNow([mdLabel(day.dateObj)], statusEl);
+}
+
+// 「公開を取り消す」：確認ダイアログを出してから取り消す
+function unpublishDay(day){
+  showConfirm(`${day.label}の公開を取り消しますか？\n（シフト表（production.html）に表示されなくなります。確定内容は残ります）`, () => {
+    unpublishDayNow(day);
+  });
+}
+
+// 「未確定の日をまとめて確定」：週の中でまだ確定していない日をすべて、確認ダイアログの
+// あとまとめて確定（非公開）にする。以前の「この週を確定・公開する」の確定部分にあたる
+function bulkConfirmUnconfirmedDays(weekIndex){
+  if(state.productionDataIncomplete){
+    alert("データの読み込みに失敗しているため確定できません。再読み込みしてください");
+    return;
+  }
+  const days = state.days.filter(d => d.weekIndex === weekIndex && !getConfirmedPlanForDay(d));
+  const statusEl = document.getElementById(`weekStatus${weekIndex}`);
+  if(days.length === 0){
+    if(statusEl) statusEl.textContent = "この週に未確定の日はありません";
+    return;
+  }
+  const dateList = days.map(d => d.label).join("、");
+  showConfirm(`次の日をまとめて確定（非公開）します。よろしいですか？\n${dateList}`, () => {
+    confirmDaysNow(days, statusEl);
+  });
+}
+
+// 「確定した日をまとめて公開」：週の中で確定済み・まだ公開していない日をすべて、
+// 確認ダイアログのあとまとめて公開する
+function bulkPublishConfirmedDays(weekIndex){
+  const days = state.days.filter(d => d.weekIndex === weekIndex);
+  const targets = days
+    .map(d => ({ d, confirmed: getConfirmedPlanForDay(d) }))
+    .filter(({ confirmed }) => confirmed && confirmed.publishState !== "公開");
+  const statusEl = document.getElementById(`weekStatus${weekIndex}`);
+  if(targets.length === 0){
+    if(statusEl) statusEl.textContent = "この週に、公開できる確定済み（非公開）の日はありません";
+    return;
+  }
+  const dateList = targets.map(({ d }) => d.label).join("、");
+  showConfirm(`次の確定済み（非公開）の日をまとめて公開します。よろしいですか？\n${dateList}`, () => {
+    publishDaysNow(targets.map(({ d }) => mdLabel(d.dateObj)), statusEl);
+  });
 }
 
 /* ---------- レンダリング：シフト一覧 ---------- */

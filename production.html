@@ -669,6 +669,11 @@ async function loadData(){
     const c = r.c;
     const dateLabel = String(c[0]?.f || c[0]?.v || "").trim();
     if(!dateLabel) return;
+    // 公開状態（18列目）。確定していても「公開」でない日（確定のみ・非公開）は、
+    // ニギニギ隊向けのこの画面には表示しない。古い確定行（この列が無い）は、
+    // 従来どおり確定＝即公開だったとみなし「公開」として扱う
+    const publishState = (c[17]?.v) ? String(c[17].v) : "公開";
+    if(publishState !== "公開") return;
     const zuidQty  = Number(c[2]?.v) || 0;
     const uvaQty   = Number(c[3]?.v) || 0;
     const chiseQty = Number(c[4]?.v) || 0;
