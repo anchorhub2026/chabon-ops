@@ -26,6 +26,10 @@ function doPost(e) {
       handleConfirmPlan(ss, data);
     } else if (data.type === "reviseConfirmedDay") {
       handleReviseConfirmedDay(ss, data);
+    } else if (data.type === "publishDays") {
+      handlePublishDays(ss, data);
+    } else if (data.type === "unpublishDay") {
+      handleUnpublishDay(ss, data);
     } else if (data.type === "saveDraft") {
       handleSaveDraft(ss, data);
     } else if (data.type === "saveStatus") {
@@ -96,7 +100,12 @@ function findConfirmedPlanRow(values, dateStr) {
 // これより前に確定された行はこの列が空（＝店舗別内訳データなし）として扱われる。
 // チセ優先担当（17列目）は、その日のチセ分を最優先で担当させるメンバー（自動/YUMI/MARI/
 // CHIKAKO/MIKI）を記録する列。これより前に確定された行はこの列が空（＝自動）として扱われる。
-var CONFIRMED_PLAN_HEADERS = ["日付", "曜日", "Zuid確定数", "UvA確定数", "チセ分", "ニギニギ隊内訳", "本部製造数", "本部内訳", "確定日時", "Zuid内訳", "UvA内訳", "チセ内訳", "修正日時", "Rozen確定数", "Rozen内訳", "ニギニギ隊内訳（店舗別）", "チセ優先担当"];
+// 公開状態・公開日時（18・19列目）は、確定（ニギニギ隊への内部確定）とシフト表
+// （production.html）への公開を日ごとに分けて行えるようにするために追加した列。
+// 「公開」「非公開」のどちらかの文字列を入れる。これより前に確定された行（これらの列が
+// 空）は、従来どおり確定＝即公開だったため「公開」として扱う（handleGetConfirmedPlans・
+// production.html・confirmed-plan.jsのparseConfirmedPlansSheetで判定する）。
+var CONFIRMED_PLAN_HEADERS = ["日付", "曜日", "Zuid確定数", "UvA確定数", "チセ分", "ニギニギ隊内訳", "本部製造数", "本部内訳", "確定日時", "Zuid内訳", "UvA内訳", "チセ内訳", "修正日時", "Rozen確定数", "Rozen内訳", "ニギニギ隊内訳（店舗別）", "チセ優先担当", "公開状態", "公開日時"];
 
 function ensureConfirmedPlanSheet(ss) {
   var sheet = ss.getSheetByName("確定プラン");
@@ -109,6 +118,24 @@ function ensureConfirmedPlanSheet(ss) {
     sheet.getRange(1, 1, 1, CONFIRMED_PLAN_HEADERS.length).setValues([CONFIRMED_PLAN_HEADERS]);
   }
   return sheet;
+}
+
+// 指定行（1始まり）の現在の確定日時（9列目）を、gvizの日時リテラルと比較できる文字列に
+// 正規化して返す。クライアント側（fetchConfirmedPlanConfirmedAtRaw等）が読む値と
+// 同じ形式にすることで、楽観的ロックの照合に使える。
+function confirmedPlanRowConfirmedAtLiteral(values, rowIndex1) {
+  var cell = values[rowIndex1 - 1][8];
+  return cell instanceof Date ? dateToGvizLiteral(cell) : String(cell || "");
+}
+
+// 楽観的ロックのチェック：expectedConfirmedAtが指定されていて、かつ現在シート上の
+// 確定日時と一致しなければ、他の端末が先に確定・修正・公開している可能性があるとみなし
+// falseを返す（呼び出し側は書き込まずに中断する）。expectedConfirmedAtが無ければ常にtrue
+// （チェックをスキップする）。
+function checkConfirmedPlanLock(values, rowIndex1, expectedConfirmedAt) {
+  if (!expectedConfirmedAt) return true;
+  var current = confirmedPlanRowConfirmedAtLiteral(values, rowIndex1);
+  return !current || current === String(expectedConfirmedAt);
 }
 
 function handleConfirmPlan(ss, data) {
@@ -135,7 +162,15 @@ function handleConfirmPlan(ss, data) {
       day.chiseBreakdown || ""
     ];
     var targetRow;
+    // 公開状態・公開日時：新規に確定した行は「確定のみ（非公開）」から始める
+    // （「シフト表に公開」「まとめて公開」を押すまでproduction.htmlには表示されない）。
+    // 既に行があるのにこの経路（確定のみ）が呼ばれた場合は、既存の公開状態を変えない
+    // （「確定のみ」の操作で、既に公開済みの日を黙って非公開に戻してしまわないため）。
+    var publishState = "非公開";
+    var publishedAt = "";
     if (foundRow > 0) {
+      publishState = String(values[foundRow - 1][17] || "非公開");
+      publishedAt = values[foundRow - 1][18] || "";
       // 「修正日時」列（13列目）には触れない。週単位の確定（新規確定・まだ修正されていない日の
       // 再送）はここに値を書き込まないことで、「修正済み」バッジは本当に修正操作が行われた
       // 日にだけ表示されるようにする
@@ -151,13 +186,17 @@ function handleConfirmPlan(ss, data) {
     sheet.getRange(targetRow, 14, 1, 2).setValues([[day.rozen || 0, day.rozenBreakdown || ""]]);
     // ニギニギ隊内訳（店舗別）（16列目）・チセ優先担当（17列目）も同様に常に最新の値へ上書きする
     sheet.getRange(targetRow, 16, 1, 2).setValues([[day.ningiBreakdownByStore || "", day.chisePriorityAssignee || "自動"]]);
+    sheet.getRange(targetRow, 18, 1, 2).setValues([[publishState, publishedAt]]);
   }
 }
 
-// 確定済みの1日分だけを、admin.htmlの「修正を確定・公開する」から更新する。
+// 確定済みの1日分だけを、admin.htmlの「この日を修正する」→「修正を確定」から更新する。
 // 週単位のhandleConfirmPlanとは違い対象は1行だけで、かつ楽観的ロックを必須で確認する
 // （確定日時が読み込み時点から変わっていれば、他の端末が先に確定・修正している可能性があるため
 // 書き込まずに中断する＝「確定済みの日を自動の処理や競合した保存で書き換えない」の延長）。
+// 公開状態・公開日時（18・19列目）は変更しない（修正前の値をそのまま書き戻す）：
+// 公開中の日を修正すれば内容がそのままproduction.htmlに反映され、非公開の日を修正しても
+// 非公開のままになる。
 function handleReviseConfirmedDay(ss, data) {
   var sheet = ss.getSheetByName("確定プラン");
   if (!sheet) return; // 確定プランシート自体が無い＝修正対象の確定行も無い
@@ -169,16 +208,14 @@ function handleReviseConfirmedDay(ss, data) {
   // 楽観的ロック：クライアントが読み込んだ時点の確定日時(expectedConfirmedAt)と、
   // 現在シート上の確定日時が一致しなければ、他の端末が先に確定・修正しているとみなして
   // 書き込まない（expectedConfirmedAtが無い場合はチェックをスキップする）
-  if (data.expectedConfirmedAt) {
-    var currentConfirmedAtCell = values[foundRow - 1][8];
-    var currentConfirmedAtLiteral = currentConfirmedAtCell instanceof Date
-      ? dateToGvizLiteral(currentConfirmedAtCell) : String(currentConfirmedAtCell || "");
-    if (currentConfirmedAtLiteral && currentConfirmedAtLiteral !== String(data.expectedConfirmedAt)) {
-      return; // 競合：書き込まずに中断する
-    }
-  }
+  if (!checkConfirmedPlanLock(values, foundRow, data.expectedConfirmedAt)) return;
 
   sheet.getRange(1, 1, 1, CONFIRMED_PLAN_HEADERS.length).setValues([CONFIRMED_PLAN_HEADERS]);
+
+  // 修正前の公開状態をそのまま維持する。これより前に確定された行（列が無い・空）は
+  // 従来どおり確定＝公開だったとみなし、この機会に明示的な「公開」へ正規化する
+  var existingPublishState = String(values[foundRow - 1][17] || "") || "公開";
+  var existingPublishedAt = values[foundRow - 1][18] || "";
 
   var ts = new Date();
   var row = [
@@ -198,9 +235,44 @@ function handleReviseConfirmedDay(ss, data) {
     data.rozen || 0,
     data.rozenBreakdown || "",
     data.ningiBreakdownByStore || "",
-    data.chisePriorityAssignee || "自動"
+    data.chisePriorityAssignee || "自動",
+    existingPublishState,
+    existingPublishedAt
   ];
   sheet.getRange(foundRow, 1, 1, row.length).setValues([row]);
+}
+
+// 確定済みの日を、production.html（シフト表）に公開する。複数日を1回のリクエストで
+// まとめて処理できる（「シフト表に公開」「確定した日をまとめて公開」の両方から呼ばれる）。
+// data.items: [{date, expectedConfirmedAt}, ...]。日ごとに楽観的ロックを確認し、
+// 一致しない日はその日だけ書き込みをスキップする（他の日の公開は続行する）。
+function handlePublishDays(ss, data) {
+  var sheet = ss.getSheetByName("確定プラン");
+  if (!sheet) return; // 確定プランシート自体が無い＝公開対象の確定行も無い
+
+  var values = sheet.getDataRange().getValues();
+  var ts = new Date();
+  var items = data.items || [];
+  for (var i = 0; i < items.length; i++) {
+    var item = items[i];
+    var foundRow = findConfirmedPlanRow(values, item.date);
+    if (foundRow === -1) continue; // 確定されていない日は対象外（無視）
+    if (!checkConfirmedPlanLock(values, foundRow, item.expectedConfirmedAt)) continue; // 競合：この日だけスキップ
+    sheet.getRange(foundRow, 18, 1, 2).setValues([["公開", ts]]);
+  }
+}
+
+// 公開済みの日を、非公開（確定のみ）に戻す（「公開を取り消す」）。
+function handleUnpublishDay(ss, data) {
+  var sheet = ss.getSheetByName("確定プラン");
+  if (!sheet) return;
+
+  var values = sheet.getDataRange().getValues();
+  var foundRow = findConfirmedPlanRow(values, data.date);
+  if (foundRow === -1) return;
+  if (!checkConfirmedPlanLock(values, foundRow, data.expectedConfirmedAt)) return;
+
+  sheet.getRange(foundRow, 18, 1, 2).setValues([["非公開", ""]]);
 }
 
 // 「確定プラン」シートの全行を、analytics.htmlの「過去の確定プラン履歴」表示用に返す。
@@ -269,6 +341,10 @@ function handleGetConfirmedPlans(ss) {
         // チセ優先担当（17列目）は後から追加した列のため、それより前に確定された行では
         // 空文字になる（＝自動として扱う）
         chisePriorityAssignee: String(r[16] || "") || "自動",
+        // 公開状態（18列目）は後から追加した列のため、それより前に確定された行では空文字に
+        // なる＝従来どおり確定と同時に公開だったとみなし「公開」として扱う
+        publishState: String(r[17] || "") || "公開",
+        publishedAtLabel: String(r[18] || ""),
       });
     } catch (rowErr) {
       // この行はスキップして次の行へ
