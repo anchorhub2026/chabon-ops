@@ -1226,16 +1226,6 @@
     height: 18px;
     accent-color: var(--main);
   }
-  .store-settings-qty-field input[type="number"]{
-    font-family: inherit;
-    font-size: 0.9rem;
-    border: 1px solid var(--line);
-    border-radius: 8px;
-    padding: 7px 10px;
-    background: #fff;
-    color: var(--ink);
-    width: 80px;
-  }
   .store-settings-weekday-base-row{
     display: flex;
     gap: 6px;
@@ -1266,6 +1256,28 @@
     color: var(--ink);
     width: 56px;
     text-align: center;
+  }
+  /* 営業曜日のチェックを外した曜日は、販売数の欄をグレーにして「ここは使われない」ことを示す */
+  .store-settings-weekday-base-label.is-closed{ opacity: 0.45; }
+  .store-settings-weekday-base-label.is-closed input[type="number"]{ background: #f0ede4; }
+  .store-settings-method-field select{
+    font-family: inherit;
+    font-size: 0.9rem;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    padding: 7px 10px;
+    background: #fff;
+    color: var(--ink);
+  }
+  .store-settings-method-fixed-note{
+    font-size: 0.82rem;
+    color: #777;
+    align-self: center;
+  }
+  .store-settings-method-note{
+    font-size: 0.78rem;
+    color: #777;
+    margin: 6px 0 0;
   }
 
 </style>
@@ -1806,27 +1818,28 @@ function buildDays(daily, hourlyByDate){
 
     const holidayName = (state.holidaysByIso && state.holidaysByIso[iso]) || null;
     const nsDisruptions = (state.nsDisruptionsByDate && state.nsDisruptionsByDate[iso]) || null;
-    let zuid = calcZuid(dow, salesWeather, getStoreWeekdayBase(state.storeSettings, "Zuid", dow));
-    let uva = calcUvA(dow, salesWeather, getStoreWeekdayBase(state.storeSettings, "UvA", dow));
-    // 「店舗の営業設定」による営業期間・営業曜日の制限を、各店舗自身の計算（calcZuid/calcUvA）の
-    // 上にさらに重ねて適用する（設定が無ければisStoreOperatingOnは常にtrueを返すため、
-    // 未設定のZuid・UvAはこれまでの動きと変わらない）
-    if(zuid && !isStoreOperatingOn(getStoreConfig(state.storeSettings, "Zuid"), iso, dow)) zuid = null;
-    if(uva && !isStoreOperatingOn(getStoreConfig(state.storeSettings, "UvA"), iso, dow)) uva = null;
-    // Rozengracht：天気等による自動計算は行わず、「店舗の営業設定」の平日・土日基本数を
-    // そのまま使う（営業期間・営業曜日の対象外の日はnull＝休業扱いになる）
-    const rozen = calcRozen(state.storeSettings, iso, dow);
+    // 営業期間・営業曜日の判定、予測の方法（天気で自動計算／固定数）の呼び分けは
+    // resolveStoreForecast()（store-settings.js）に一本化されている。各店舗で同じ関数を
+    // 呼ぶため、admin.html・index.htmlで判定が食い違うことが無い。
+    const zuid = resolveStoreForecast(state.storeSettings, "Zuid", iso, dow, salesWeather);
+    const uva = resolveStoreForecast(state.storeSettings, "UvA", iso, dow, salesWeather);
+    const rozen = resolveStoreForecast(state.storeSettings, "Rozengracht", iso, dow, salesWeather);
+    // 祝日・NSスト補正は「天気で自動計算」の店舗にのみ適用する（「固定数」は他の調整と同じく
+    // 入力した数をそのまま予測数にするため）
+    const zuidIsWeather = getStoreForecastMethod(state.storeSettings, "Zuid") === "weather";
+    const uvaIsWeather = getStoreForecastMethod(state.storeSettings, "UvA") === "weather";
     if(holidayName){
-      applyHolidayPenalty(zuid, ZUID_MIN_GUARANTEE);
-      applyHolidayPenalty(uva, UVA_MIN_GUARANTEE);
+      if(zuidIsWeather) applyHolidayPenalty(zuid, ZUID_MIN_GUARANTEE);
+      if(uvaIsWeather) applyHolidayPenalty(uva, UVA_MIN_GUARANTEE);
     }
     if(nsDisruptions && nsDisruptions.length){
-      applyNsPenalty(zuid, ZUID_MIN_GUARANTEE);
-      applyNsPenalty(uva, UVA_MIN_GUARANTEE);
+      if(zuidIsWeather) applyNsPenalty(zuid, ZUID_MIN_GUARANTEE);
+      if(uvaIsWeather) applyNsPenalty(uva, UVA_MIN_GUARANTEE);
     }
     // UvA学事暦による補正：Zuid・チセには反映しない（UvAのみ）。
-    // 授業週は係数1.0のため計算・表示とも何もしない。
-    if(uva){
+    // 授業週は係数1.0のため計算・表示とも何もしない。UvAが「固定数」の場合は、固定数を
+    // そのまま予測数にするため（他の調整と同様）この補正もかけない。
+    if(uva && getStoreForecastMethod(state.storeSettings, "UvA") === "weather"){
       const weekInfo = getUvaAcademicWeekInfo(iso);
       if(weekInfo.category !== "授業"){
         uva.total = Math.round(uva.total * weekInfo.coefficient);
@@ -2234,6 +2247,7 @@ function compactReason(str){
   if(str.includes("天気補正なし")) return "補正なし";
   if((m = str.match(/^最低保証 (\d+)個/))) return `保証 ${m[1]}`;
   if((m = str.match(/^基本 (\d+)個$/))) return `基本 ${m[1]}`;
+  if((m = str.match(/^固定数 (\d+)個$/))) return `固定数 ${m[1]}`;
   return str;
 }
 
@@ -4441,9 +4455,6 @@ function initMonthlyOnigiriSection(){
 
 // 管理対象の店舗一覧（表示順）。新しい店舗を増やす場合はここに追加する
 const MANAGED_STORES = ["Zuid", "UvA", "Rozengracht"];
-// 天気等で自動計算する店舗（calcZuid/calcUvAで曜日ごとの基準値に気温・天気・保証の数の
-// 調整を行う）。Rozengrachtはここに含めない＝平日・土日の基本数をそのまま使う
-const AUTO_FORECAST_STORES = ["Zuid", "UvA"];
 // 画面での短い表示名（指定が無い店舗は店舗名をそのまま使う）
 const STORE_SHORT_LABELS = { Rozengracht: "Rozen" };
 function storeShortLabel(store){ return STORE_SHORT_LABELS[store] || store; }
@@ -4473,6 +4484,11 @@ function renderStoreSettingsWarning(){
   el.style.display = "";
 }
 
+const FORECAST_METHOD_NOTES = {
+  weather: "天気で自動計算：この数を出発点に、気温・天気で増減し、保証の数を下回らないように調整します。",
+  fixed: "固定数：この数がそのまま、その曜日の販売予測数になります。",
+};
+
 function renderStoreSettingsList(){
   renderStoreSettingsWarning();
   const area = document.getElementById("storeSettingsList");
@@ -4489,28 +4505,43 @@ function renderStoreSettingsList(){
         </label>`;
     }).join("");
     const shortLabel = storeShortLabel(store);
-    // Zuid・UvAは天気等で自動計算するため、平日・土日の基本数ではなく曜日ごとの基準値を使う
-    // （その基準値に対して気温・天気・保証の数などの調整を行う）。Rozengrachtは自動計算を
-    // 行わないため、従来どおり平日・土日の基本数のみを使う
-    const usesWeekdayBase = AUTO_FORECAST_STORES.includes(store);
+
+    // 「予測の方法」：天気の調整式を持つ店舗（Zuid・UvA）だけが選べる。それ以外の店舗
+    // （Rozengracht等）は常に「固定数」（天気による自動計算の式を持たないため）
+    const canUseWeather = FORECAST_METHOD_CAPABLE_STORES.includes(store);
+    const method = getStoreForecastMethod(state.storeSettings, store);
+    const methodFieldHtml = canUseWeather ? `
+          <label class="shift-config-field store-settings-method-field">
+            予測の方法
+            <select class="store-settings-method">
+              <option value="weather" ${method === "weather" ? "selected" : ""}>天気で自動計算</option>
+              <option value="fixed" ${method === "fixed" ? "selected" : ""}>固定数</option>
+            </select>
+          </label>` : `
+          <div class="store-settings-method-fixed-note">予測の方法：固定数（この店舗は天気による自動計算に対応していません）</div>`;
+
+    // 曜日ごとの基準値（天気で自動計算）／固定数（固定数）は、どちらの方法でも同じ7つの
+    // 入力欄を使う（方法によって意味が変わるだけ）。空欄の曜日はコードの元の基準値
+    // （DEFAULT_STORE_SETTINGS）を使うため、その値をplaceholderに表示しておく
     const weekdayBase = config.weekdayBase || {};
-    const qtyFieldsHtml = usesWeekdayBase ? `
-          <div class="store-settings-weekday-base-row">
-            ${STORE_SETTINGS_WEEKDAYS.map(wd => `
-              <label class="store-settings-weekday-base-label">
-                ${wd.label}曜
-                <input type="number" class="store-settings-weekday-base" data-key="${wd.key}" min="0"
-                  value="${weekdayBase[wd.key] !== null && weekdayBase[wd.key] !== undefined ? weekdayBase[wd.key] : ""}">
-              </label>`).join("")}
-          </div>` : `
-          <label class="shift-config-field store-settings-qty-field">
-            平日基本数
-            <input type="number" class="store-settings-weekday-qty" min="0" value="${config.weekdayQty !== null && config.weekdayQty !== undefined ? config.weekdayQty : ""}">
-          </label>
-          <label class="shift-config-field store-settings-qty-field">
-            土日基本数
-            <input type="number" class="store-settings-weekend-qty" min="0" value="${config.weekendQty !== null && config.weekendQty !== undefined ? config.weekendQty : ""}">
-          </label>`;
+    const defaults = (DEFAULT_STORE_SETTINGS[store] && DEFAULT_STORE_SETTINGS[store].weekdayBase) || {};
+    const weekdayBaseRowHtml = `
+      <div class="store-settings-weekday-base-row">
+        ${STORE_SETTINGS_WEEKDAYS.map(wd => {
+          const v = weekdayBase[wd.key];
+          const isClosed = weekdays[wd.key] === false;
+          const defaultV = defaults[wd.key];
+          const placeholder = (defaultV !== null && defaultV !== undefined) ? `未設定:${defaultV}` : "休業";
+          return `
+            <label class="store-settings-weekday-base-label${isClosed ? " is-closed" : ""}" data-weekday-base-label="${wd.key}">
+              ${wd.label}曜
+              <input type="number" class="store-settings-weekday-base" data-key="${wd.key}" min="0"
+                placeholder="${placeholder}"
+                value="${v !== null && v !== undefined ? v : ""}">
+            </label>`;
+        }).join("")}
+      </div>`;
+
     return `
       <div class="store-settings-card" data-store="${store}">
         <div class="store-settings-name">${store}${shortLabel !== store ? `<span class="badge">表示名：${shortLabel}</span>` : ""}</div>
@@ -4523,15 +4554,36 @@ function renderStoreSettingsList(){
             営業終了日
             <input type="date" class="store-settings-end" value="${config.endDate || ""}">
           </label>
-          ${usesWeekdayBase ? "" : qtyFieldsHtml}
+          ${methodFieldHtml}
         </div>
         <div class="store-settings-weekday-row">${weekdayChecks}</div>
-        ${usesWeekdayBase ? `<p class="store-settings-base-note">曜日ごとの基準値（気温・天気・保証の数の調整はこの値に対して行われます）</p>${qtyFieldsHtml}` : ""}
+        <p class="store-settings-method-note">${FORECAST_METHOD_NOTES[method]}空欄の曜日は、コードの元の基準値（入力欄に薄く表示されている数）を使います。設定が無ければ休業になります。</p>
+        ${weekdayBaseRowHtml}
         <button type="button" class="shift-config-save-btn store-settings-save-btn">設定を保存</button>
         <p class="shift-config-status"></p>
       </div>
     `;
   }).join("");
+
+  area.querySelectorAll(".store-settings-card").forEach(card => {
+    // 営業曜日のチェックを外した曜日は、販売数の欄をグレーにする
+    const syncWeekdayBaseGreyOut = () => {
+      card.querySelectorAll(".store-settings-weekday").forEach(cb => {
+        const label = card.querySelector(`[data-weekday-base-label="${cb.dataset.key}"]`);
+        if(label) label.classList.toggle("is-closed", !cb.checked);
+      });
+    };
+    card.querySelectorAll(".store-settings-weekday").forEach(cb => cb.addEventListener("change", syncWeekdayBaseGreyOut));
+
+    // 予測の方法を切り替えたら、説明文だけその場で更新する（入力中の他の欄は保持したまま）
+    const methodSelect = card.querySelector(".store-settings-method");
+    const noteEl = card.querySelector(".store-settings-method-note");
+    if(methodSelect && noteEl){
+      methodSelect.addEventListener("change", () => {
+        noteEl.textContent = `${FORECAST_METHOD_NOTES[methodSelect.value]}空欄の曜日は、コードの元の基準値（入力欄に薄く表示されている数）を使います。設定が無ければ休業になります。`;
+      });
+    }
+  });
 
   area.querySelectorAll(".store-settings-save-btn").forEach(btn => {
     btn.addEventListener("click", async () => {
@@ -4548,24 +4600,17 @@ function renderStoreSettingsList(){
       const weekdays = {};
       card.querySelectorAll(".store-settings-weekday").forEach(cb => { weekdays[cb.dataset.key] = cb.checked; });
 
-      const usesWeekdayBase = AUTO_FORECAST_STORES.includes(store);
-      const payload = { startDate: startVal, endDate: endVal, weekdays };
-      const settingsEntry = { startDate: startVal, endDate: endVal, weekdays };
-      if(usesWeekdayBase){
-        const weekdayBase = {};
-        card.querySelectorAll(".store-settings-weekday-base").forEach(inp => {
-          weekdayBase[inp.dataset.key] = inp.value !== "" ? Number(inp.value) : null;
-        });
-        payload.weekdayBase = weekdayBase;
-        settingsEntry.weekdayBase = weekdayBase;
-      } else {
-        const weekdayQtyVal = card.querySelector(".store-settings-weekday-qty").value;
-        const weekendQtyVal = card.querySelector(".store-settings-weekend-qty").value;
-        payload.weekdayQty = weekdayQtyVal;
-        payload.weekendQty = weekendQtyVal;
-        settingsEntry.weekdayQty = weekdayQtyVal !== "" ? Number(weekdayQtyVal) : null;
-        settingsEntry.weekendQty = weekendQtyVal !== "" ? Number(weekendQtyVal) : null;
-      }
+      const methodSelect = card.querySelector(".store-settings-method");
+      // 天気の調整式を持たない店舗（methodSelectが無い）は常に固定数
+      const forecastMethod = methodSelect ? methodSelect.value : "fixed";
+
+      const weekdayBase = {};
+      card.querySelectorAll(".store-settings-weekday-base").forEach(inp => {
+        weekdayBase[inp.dataset.key] = inp.value !== "" ? Number(inp.value) : null;
+      });
+
+      const payload = { startDate: startVal, endDate: endVal, weekdays, forecastMethod, weekdayBase };
+      const settingsEntry = { startDate: startVal, endDate: endVal, weekdays, forecastMethod, weekdayBase };
 
       statusEl.classList.remove("error");
       btn.disabled = true;

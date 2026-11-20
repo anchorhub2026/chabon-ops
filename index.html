@@ -1103,21 +1103,23 @@ function buildDailyResults(daily, hourlyByDate, holidaysByIso, nsDisruptionsByDa
     const salesWeather = computeSalesWeather(hourlyByDate, dateStr);
     const holidayName = (holidaysByIso && holidaysByIso[dateStr]) || null;
     const nsDisruptions = (nsDisruptionsByDate && nsDisruptionsByDate[dateStr]) || null;
-    let zuid = calcZuid(dow, salesWeather, getStoreWeekdayBase(state.storeSettings, "Zuid", dow));
-    let uva = calcUvA(dow, salesWeather, getStoreWeekdayBase(state.storeSettings, "UvA", dow));
-    // 「店舗の営業設定」による営業期間・営業曜日の制限を、各店舗自身の計算（calcZuid/calcUvA）の
-    // 上にさらに重ねて適用する（admin.html側のbuildDaysと同じ扱い。以前はこのチェックが
-    // index.html側に無く、admin.htmlとindex.htmlで営業の判定が食い違う一因になっていた）
-    if(zuid && !isStoreOperatingOn(getStoreConfig(state.storeSettings, "Zuid"), dateStr, dow)) zuid = null;
-    if(uva && !isStoreOperatingOn(getStoreConfig(state.storeSettings, "UvA"), dateStr, dow)) uva = null;
-    const rozen = calcRozen(state.storeSettings, dateStr, dow);
+    // 営業期間・営業曜日の判定、予測の方法（天気で自動計算／固定数）の呼び分けは
+    // resolveStoreForecast()（store-settings.js）に一本化されている。admin.htmlと同じ関数を
+    // 呼ぶため、判定が食い違うことが無い。
+    const zuid = resolveStoreForecast(state.storeSettings, "Zuid", dateStr, dow, salesWeather);
+    const uva = resolveStoreForecast(state.storeSettings, "UvA", dateStr, dow, salesWeather);
+    const rozen = resolveStoreForecast(state.storeSettings, "Rozengracht", dateStr, dow, salesWeather);
+    // 祝日・NSスト補正は「天気で自動計算」の店舗にのみ適用する（「固定数」は他の調整と同じく
+    // 入力した数をそのまま予測数にするため）
+    const zuidIsWeather = getStoreForecastMethod(state.storeSettings, "Zuid") === "weather";
+    const uvaIsWeather = getStoreForecastMethod(state.storeSettings, "UvA") === "weather";
     if(holidayName){
-      applyHolidayPenalty(zuid, ZUID_MIN_GUARANTEE);
-      applyHolidayPenalty(uva, UVA_MIN_GUARANTEE);
+      if(zuidIsWeather) applyHolidayPenalty(zuid, ZUID_MIN_GUARANTEE);
+      if(uvaIsWeather) applyHolidayPenalty(uva, UVA_MIN_GUARANTEE);
     }
     if(nsDisruptions && nsDisruptions.length){
-      applyNsPenalty(zuid, ZUID_MIN_GUARANTEE);
-      applyNsPenalty(uva, UVA_MIN_GUARANTEE);
+      if(zuidIsWeather) applyNsPenalty(zuid, ZUID_MIN_GUARANTEE);
+      if(uvaIsWeather) applyNsPenalty(uva, UVA_MIN_GUARANTEE);
     }
     return {
       dateStr, dow, maxTemp, minTemp, code, salesWeather, holidayName, nsDisruptions,

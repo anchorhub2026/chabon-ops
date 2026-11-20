@@ -546,9 +546,8 @@ function handleGetMonthlyOnigiri(ss) {
     .setMimeType(ContentService.MimeType.JSON);
 }
 
-// 店舗（Zuid・UvA・Rozengracht等）ごとの営業期間・営業曜日・基本販売数（天気等による自動計算を
-// 使わない店舗向け）・曜日ごとの基準値（天気等による自動計算を使う店舗向け）を「店舗名」で
-// 1店舗1行（店舗名キーでupsert）保存する。
+// 店舗（Zuid・UvA・Rozengracht等）ごとの営業期間・営業曜日・予測の方法（天気で自動計算／
+// 固定数）・曜日ごとの基準値/固定数を「店舗名」で1店舗1行（店舗名キーでupsert）保存する。
 // 設定行が無い店舗は、クライアント側で「期間制限なし・曜日すべて営業」として扱う＝既存店舗
 // （Zuid・UvA）は設定するまでこれまでの動きと完全に同じになる（この関数は保存のみ行い、
 // 未設定時の既定値の解釈はクライアント側の責務）。
@@ -560,8 +559,13 @@ function handleGetMonthlyOnigiri(ss) {
 // （チセさん/今月のおにぎり担当シートと同種の問題）。
 // 保存側も同じ理由で、日付・曜日・数値をすべて明示的に書式なしテキスト（setNumberFormat("@")）
 // としてから文字列で書き込み、Googleスプレッドシートによる自動型変換を防ぐ。
+//
+// 「平日基本数」「土日基本数」列（Rozengracht専用の固定数だった）は廃止し、「予測の方法」列
+// （「天気で自動計算」「固定数」）と、全店舗共通の「月曜基準値」〜「日曜基準値」列（天気で
+// 自動計算の店舗は気温・天気の調整前の基準値、固定数の店舗は曜日ごとの販売数そのもの）に
+// 統合した。
 var STORE_SETTINGS_SHEET_NAME = "店舗設定";
-var STORE_SETTINGS_HEADER = ["店舗名", "開始日", "終了日", "月", "火", "水", "木", "金", "土", "日", "平日基本数", "土日基本数",
+var STORE_SETTINGS_HEADER = ["店舗名", "開始日", "終了日", "月", "火", "水", "木", "金", "土", "日", "予測の方法",
   "月曜基準値", "火曜基準値", "水曜基準値", "木曜基準値", "金曜基準値", "土曜基準値", "日曜基準値", "更新日時"];
 
 function storeSettingsRowValues(store, data) {
@@ -572,6 +576,7 @@ function storeSettingsRowValues(store, data) {
     return (v !== undefined && v !== null && v !== "" && isFinite(Number(v))) ? String(Number(v)) : "";
   };
   var baseStr = function(key) { return numStr(weekdayBase[key]); };
+  var methodStr = data.forecastMethod === "weather" ? "天気で自動計算" : data.forecastMethod === "fixed" ? "固定数" : "";
   var updatedAtStr = Utilities.formatDate(new Date(), "Etc/UTC", "yyyy-MM-dd HH:mm:ss");
 
   return [
@@ -579,8 +584,7 @@ function storeSettingsRowValues(store, data) {
     String(data.startDate || ""),
     String(data.endDate || ""),
     flagStr("mon"), flagStr("tue"), flagStr("wed"), flagStr("thu"), flagStr("fri"), flagStr("sat"), flagStr("sun"),
-    numStr(data.weekdayQty),
-    numStr(data.weekendQty),
+    methodStr,
     baseStr("mon"), baseStr("tue"), baseStr("wed"), baseStr("thu"), baseStr("fri"), baseStr("sat"), baseStr("sun"),
     updatedAtStr
   ];

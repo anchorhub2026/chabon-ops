@@ -1,7 +1,11 @@
-// 「店舗設定」シート（営業期間・営業曜日・曜日ごとの基準値・Rozengrachtの平日/土日基本数）の
+// 「店舗設定」シート（営業期間・営業曜日・予測の方法・曜日ごとの基準値/固定数）の
 // 共通読み込み・判定・予測計算処理。admin.html・index.html・uva.html・rozen.html・
 // cooking.html・production.htmlのすべてで、この1つの実装を使う（ページごとに別々の実装を
 // 持たない）。
+//
+// 各店舗は「予測の方法」として「天気で自動計算」（曜日ごとの基準値に気温・天気・保証の数の
+// 調整をかける。Zuid・UvAのみ選択可）か「固定数」（曜日ごとの販売数をそのまま予測数にする）
+// のどちらかを選べる。resolveStoreForecast()がこの呼び分けを一括して行う。
 //
 // 読み込みはgvizではなく、Code.gsのtype=storeSettingsエンドポイント（handleGetStoreSettings）
 // 経由で行う。getDisplayValues()でシート上の表示文字列をそのまま取得するため、gvizの
@@ -25,12 +29,17 @@ const STORE_SETTINGS_WEEKDAYS = [
   { key: "sun", label: "日", dow: 0, flagHeader: "日", baseHeader: "日曜基準値" },
 ];
 
+// 「予測の方法」のうち「天気で自動計算」が選べる店舗（天気・気温による調整式がコードに
+// 用意されている店舗）。それ以外の店舗（Rozengracht等）は「固定数」のみ選べる。
+const FORECAST_METHOD_CAPABLE_STORES = ["Zuid", "UvA"];
+
 // 「店舗設定」シートに値が無い（店舗の行自体が無い、またはその曜日のセルだけ空欄）場合に
 // 使う既定値。Zuid・UvAはこれまでコードに埋め込まれていた固定値（旧ZUID_SEASON_BASE.autumnの
-// 値／UvAの旧固定35個）、Rozengrachtはオープン時点の初期値。管理画面から一度でも保存すれば、
+// 値／UvAの旧固定35個）、Rozengrachtはオープン時点の初期値（旧「平日基本数100・土日基本数150」を
+// 月〜金100・土日150の曜日ごとの値に置き換えたもの）。管理画面から一度でも保存すれば、
 // 以降はスプレッドシート側の値が優先される。
 // getStoreWeekdayBase()は、店舗の行自体が無い場合だけでなく、行はあっても特定の曜日の
-// 基準値だけが空欄の場合にも、その曜日だけこの既定値にフォールバックする
+// 基準値・販売数だけが空欄の場合にも、その曜日だけこの既定値にフォールバックする
 // （店舗ごとまるごとではなく、曜日ごとに細かくフォールバックする）。
 const DEFAULT_STORE_SETTINGS = {
   Zuid: {
@@ -43,8 +52,8 @@ const DEFAULT_STORE_SETTINGS = {
     startDate: "2026-11-09",
     endDate: "2027-04-30",
     weekdays: { mon: true, tue: true, wed: true, thu: true, fri: true, sat: true, sun: true },
-    weekdayQty: 100,
-    weekendQty: 150,
+    forecastMethod: "fixed",
+    weekdayBase: { mon: 100, tue: 100, wed: 100, thu: 100, fri: 100, sat: 150, sun: 150 },
   },
 };
 
@@ -128,12 +137,17 @@ function parseStoreSettingsRows(rows){
       weekdayBase[wd.key] = numOrNull(cell(wd.baseHeader), wd.baseHeader);
     });
 
+    // 「予測の方法」：「固定数」「天気で自動計算」のどちらでもない値（空欄含む）は
+    // 未設定として扱い、getStoreForecastMethod()が店舗ごとの既定（Zuid/UvAは天気で
+    // 自動計算、それ以外は固定数）にフォールバックする。
+    const methodText = cell("予測の方法");
+    const forecastMethod = methodText === "固定数" ? "fixed" : methodText === "天気で自動計算" ? "weather" : "";
+
     settings[store] = {
       startDate: startDate || "",
       endDate: endDate || "",
       weekdays,
-      weekdayQty: numOrNull(cell("平日基本数"), "平日基本数"),
-      weekendQty: numOrNull(cell("土日基本数"), "土日基本数"),
+      forecastMethod,
       weekdayBase,
     };
   }
@@ -159,12 +173,13 @@ function isStoreOperatingOn(config, iso, dow){
   return true;
 }
 
-// 天気等で自動計算する店舗（Zuid・UvA）の、指定した曜日の基準値を返す。
+// 指定した店舗・曜日の「曜日ごとの基準値／固定数」を返す（「予測の方法」が天気で自動計算の
+// 店舗ではこの値に気温・天気による調整をかけ、固定数の店舗ではこの値をそのまま予測数にする）。
 // 「店舗設定」シートにその曜日の値が無い場合は、既定値（DEFAULT_STORE_SETTINGS）の同じ曜日の
 // 値にフォールバックする（店舗の行自体が無い場合だけでなく、行はあっても特定の曜日だけ
 // 空欄の場合も、その曜日だけ既定値を使う）。既定値も無ければその曜日は休業扱い（null）。
 // 読み取った値・既定値のどちらについても、数値として不正（非有限）な場合は必ずnullを返す
-// （呼び出し側（calcZuid/calcUvA）にNaNを一切渡さないための最終防御）。
+// （呼び出し側にNaNを一切渡さないための最終防御）。
 function getStoreWeekdayBase(storeSettings, store, dow){
   const wdEntry = STORE_SETTINGS_WEEKDAYS.find(wd => wd.dow === dow);
   if(!wdEntry) return null;
@@ -262,15 +277,39 @@ function calcUvA(dow, salesWeather, baseOverride){
   return { total, reasons };
 }
 
-// Rozengracht：天気等による自動計算は行わず、「店舗の営業設定」の平日・土日基本数を
-// そのまま使う。営業期間・営業曜日の対象外の日、基本数が未設定の日はnull（休業扱い）。
-function calcRozen(storeSettings, iso, dow){
-  const config = getStoreConfig(storeSettings, "Rozengracht");
+// 店舗の「予測の方法」を返す（"weather"=天気で自動計算 / "fixed"=固定数）。
+// 店舗設定シートに明示的な保存値が無い場合は、店舗ごとの既定にフォールバックする
+// （Zuid・UvAは天気で自動計算、天気の調整式を持たないそれ以外の店舗は固定数）。
+function getStoreForecastMethod(storeSettings, store){
+  const config = storeSettings && storeSettings[store];
+  if(config && (config.forecastMethod === "weather" || config.forecastMethod === "fixed")){
+    // 天気の調整式が無い店舗では「天気で自動計算」を選べない（UIでも選択肢を出さない）ため、
+    // 保存データが古い・手動編集などで"weather"になっていても、安全に固定数として扱う
+    if(config.forecastMethod === "weather" && !FORECAST_METHOD_CAPABLE_STORES.includes(store)) return "fixed";
+    return config.forecastMethod;
+  }
+  return FORECAST_METHOD_CAPABLE_STORES.includes(store) ? "weather" : "fixed";
+}
+
+// 店舗・日付・曜日・（天気で自動計算の店舗向けに）販売時間帯の天気から、その日の予測数を
+// 1つの関数で算出する。admin.html・index.htmlはどちらもこの関数だけを呼べばよく、
+// 店舗ごとの計算式の呼び分け・営業設定の重ね適用を個別に書く必要が無い
+// （以前はこれらをページごとに別々に組み立てていたため、判定が食い違う不具合があった）。
+// 休業（null）：営業期間・営業曜日の対象外の日、またはその曜日の基準値/固定数が
+// 読み取れない（既定値も無い）日。
+function resolveStoreForecast(storeSettings, store, iso, dow, salesWeather){
+  const config = getStoreConfig(storeSettings, store);
   if(!isStoreOperatingOn(config, iso, dow)) return null;
-  const isWeekend = (dow === 0 || dow === 6);
-  const baseQty = config ? (isWeekend ? config.weekendQty : config.weekdayQty) : null;
-  if(baseQty === null || baseQty === undefined || baseQty === "") return null;
-  const n = Number(baseQty);
-  if(!Number.isFinite(n)) return null;
-  return { total: n, reasons: [`${isWeekend ? "土日" : "平日"}基本数 ${n}個`] };
+  const base = getStoreWeekdayBase(storeSettings, store, dow);
+  if(base === null) return null;
+
+  const method = getStoreForecastMethod(storeSettings, store);
+  if(method === "fixed"){
+    return { total: base, reasons: [`固定数 ${base}個`] };
+  }
+  if(store === "Zuid") return calcZuid(dow, salesWeather, base);
+  if(store === "UvA") return calcUvA(dow, salesWeather, base);
+  // 天気の調整式を持たない店舗が誤って"weather"になっていた場合の最終防御（通常は
+  // getStoreForecastMethod()側で"fixed"に落とされるため、ここには来ない）
+  return { total: base, reasons: [`固定数 ${base}個`] };
 }
