@@ -271,6 +271,47 @@
     word-break: break-word;
     min-height: 2.8em;
   }
+  .store-manual-adjust-row{
+    display: flex;
+    align-items: center;
+    gap: 3px;
+    margin-top: 4px;
+  }
+  .store-manual-adjust-label{
+    font-size: 0.6rem;
+    color: #888;
+  }
+  .manual-adjust-step-btn{
+    width: 18px;
+    height: 18px;
+    border: 1px solid var(--line);
+    background: #fff;
+    color: var(--main-dark);
+    border-radius: 3px;
+    font-size: 0.7rem;
+    line-height: 1;
+    cursor: pointer;
+  }
+  .manual-adjust-step-btn:hover{ background: var(--main-light); border-color: var(--main); }
+  .store-manual-adjust-input{
+    width: 40px;
+    font-size: 0.68rem;
+    text-align: center;
+    border: 1px solid var(--line);
+    border-radius: 3px;
+    padding: 1px 2px;
+  }
+  .reset-manual-adjust-btn{
+    border: 1px solid var(--line);
+    background: #fff;
+    color: var(--main-dark);
+    font-size: 0.6rem;
+    font-weight: bold;
+    padding: 1px 5px;
+    border-radius: 3px;
+    cursor: pointer;
+  }
+  .reset-manual-adjust-btn:hover{ background: var(--main-light); border-color: var(--main); }
   /* シフト一覧の備考・必要物品 */
   .shift-note{
     font-size: 0.72rem;
@@ -1335,6 +1376,45 @@
     color: #777;
     margin: 6px 0 0;
   }
+  .store-settings-trend-fields{
+    margin: 10px 0;
+    padding: 10px;
+    background: #f7f4ea;
+    border-radius: 8px;
+  }
+  .store-settings-trend-current-note{
+    font-size: 0.78rem;
+    color: var(--main-dark);
+    margin: 0 0 8px;
+  }
+  .store-settings-trend-adj-row{
+    display: flex;
+    gap: 10px;
+    flex-wrap: wrap;
+    margin-top: 8px;
+  }
+  .store-settings-trend-adj-label{
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 4px;
+    font-size: 0.76rem;
+    color: var(--ink);
+  }
+  .store-settings-trend-adj-label input[type="number"]{
+    font-family: inherit;
+    font-size: 0.85rem;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    padding: 5px 4px;
+    width: 52px;
+    text-align: center;
+  }
+  .store-settings-trend-adj-hint{
+    font-size: 0.74rem;
+    color: #888;
+    margin: 8px 0 0;
+  }
 
 </style>
 </head>
@@ -1474,6 +1554,7 @@
 <script src="active-members.js"></script>
 <script src="chise-sheet.js"></script>
 <script src="store-settings.js"></script>
+<script src="hourly-actuals.js"></script>
 <script>
 const LAT = 52.3676, LON = 4.9041;
 const SHIFT_SPREADSHEET_ID = "1PHf1o3smqIQdeFkhBHjBZUEub7VtRcynQLllmSR7w-s"; // シフト回答／確定プラン
@@ -1850,7 +1931,7 @@ function parseShiftSheet(json){
 
 /* ---------- データ構築 ---------- */
 
-function buildDays(daily, hourlyByDate){
+function buildDays(daily, hourlyByDate, zuidTrendInfo){
   // 週は常に月〜日の7日（Rozengrachtが土日も営業するため、土日も標準の対象日として扱う。
   // Zuid・UvAの自動計算式(calcZuid/calcUvA)は月〜金専用のため、土日はそのまま休業状態になる
   // ＝「店舗の営業設定」に従う今までの動きと変わらない）
@@ -1877,7 +1958,7 @@ function buildDays(daily, hourlyByDate){
     // 営業期間・営業曜日の判定、予測の方法（天気で自動計算／固定数）の呼び分けは
     // resolveStoreForecast()（store-settings.js）に一本化されている。各店舗で同じ関数を
     // 呼ぶため、admin.html・index.htmlで判定が食い違うことが無い。
-    const zuid = resolveStoreForecast(state.storeSettings, "Zuid", iso, dow, salesWeather);
+    const zuid = resolveStoreForecast(state.storeSettings, "Zuid", iso, dow, salesWeather, zuidTrendInfo);
     const uva = resolveStoreForecast(state.storeSettings, "UvA", iso, dow, salesWeather);
     const rozen = resolveStoreForecast(state.storeSettings, "Rozengracht", iso, dow, salesWeather);
     // 祝日・NSスト補正は「天気で自動計算」の店舗にのみ適用する（「固定数」は他の調整と同じく
@@ -1939,9 +2020,18 @@ function buildFillingDefaults(total){
 }
 
 // 保存済みのweatherDaily/hourlyByDate/draftDataから、外部データの再取得なしにstate.daysを
+// 「店舗の営業設定」が保存された直後など、state.hourlyHistoryRowsの再取得なしに
+// state.zuidTrendInfo（Zuidの「売れ行き＋天気」のL）を最新の設定（売れ行き開始日等）で
+// 再計算する。
+function recomputeZuidTrendInfo(){
+  const trendSettings = getStoreTrendSettings(state.storeSettings, "Zuid");
+  state.zuidTrendInfo = computeSalesTrendL(state.hourlyHistoryRows || [], "Zuid", isoDate(new Date()), trendSettings.startDate);
+}
+
 // 作り直して再描画する（店舗の営業設定変更時などに使う）
 function rebuildDaysAndRender(){
-  state.days = buildDays(state.weatherDaily, state.hourlyByDate);
+  recomputeZuidTrendInfo();
+  state.days = buildDays(state.weatherDaily, state.hourlyByDate, state.zuidTrendInfo);
   state.days.forEach(day => {
     loadForecastData(day);
     loadProdAllocData(day);
@@ -1953,6 +2043,9 @@ function rebuildDaysAndRender(){
       if(draft) applyDraftToDay(day, draft);
     });
   }
+  // 手調整は、localStorage・作業中プランのどちらから復元された後の最終的な
+  // day.manualAdjustに対して、ここで1回だけ適用する（二重に加算しないため）
+  state.days.forEach(day => applyManualAdjust(day));
   renderCombined();
   renderCellStatusTable();
 }
@@ -2296,12 +2389,17 @@ function getManualQty(day, name){
 function compactReason(str){
   let m;
   if((m = str.match(/^(.)曜ベース (\d+)個$/))) return `${m[1]}曜 ${m[2]}`;
+  if((m = str.match(/^売れ行き L=([\d.]+)×([\d.]+)\((\d+)日分\)=(\d+)個$/))) return `売れ行き ${m[4]}(L${m[1]}×${m[2]}・${m[3]}日分)`;
+  if((m = str.match(/^気温.*?([+\-±]\d+(?:\.\d+)?)%$/))) return `気温 ${m[1]}%`;
   if((m = str.match(/^気温.*?([+\-±]\d+)$/))) return `気温 ${m[1]}`;
+  if((m = str.match(/^雨\s*([+\-±]\d+(?:\.\d+)?)%$/))) return `雨 ${m[1]}%`;
   if((m = str.match(/^晴れ\s*([+\-±]\d+)$/))) return `晴 ${m[1]}`;
   if((m = str.match(/^曇り\s*([+\-±]\d+)$/))) return `曇 ${m[1]}`;
   if((m = str.match(/^販売時間帯.*に雨 (-?\d+)$/))) return `雨 ${m[1]}`;
-  if(str.includes("天気補正なし")) return "補正なし";
+  if(str.includes("直近の売れ行きデータが無い")) return "データ不足";
+  if(str.includes("補正なし")) return "補正なし";
   if((m = str.match(/^最低保証 (\d+)個/))) return `保証 ${m[1]}`;
+  if((m = str.match(/^手調整 ([+\-]\d+)$/))) return `手調整 ${m[1]}`;
   if((m = str.match(/^基本 (\d+)個$/))) return `基本 ${m[1]}`;
   if((m = str.match(/^固定数 (\d+)個$/))) return `固定数 ${m[1]}`;
   return str;
@@ -2564,6 +2662,29 @@ function bindForecastTableEvents(day){
       renderDayBlock(day);
       refreshProductionCellDerived(day);
     });
+  });
+
+  // 店舗の合計を調整する手調整（＋−・直接入力）。合計を変えると、具材別の数には
+  // 今の構成比（redistributeProportionally）で配分し直す。具材ごとの個別の＋−は、
+  // cell-inputの既存ハンドラ（このすぐ上のブロック）がそのまま使えるので変更しない
+  container.querySelectorAll(".manual-adjust-step-btn").forEach(btn => {
+    btn.addEventListener("click", () => {
+      const store = btn.dataset.store;
+      const input = container.querySelector(`.store-manual-adjust-input[data-store="${store}"]`);
+      if(!input) return;
+      const delta = btn.dataset.action === "inc" ? 1 : -1;
+      setManualAdjust(day, store, (parseInt(input.value, 10) || 0) + delta);
+    });
+  });
+
+  container.querySelectorAll(".store-manual-adjust-input").forEach(input => {
+    input.addEventListener("change", () => {
+      setManualAdjust(day, input.dataset.store, parseInt(input.value, 10) || 0);
+    });
+  });
+
+  container.querySelectorAll(".reset-manual-adjust-btn").forEach(btn => {
+    btn.addEventListener("click", () => setManualAdjust(day, btn.dataset.store, 0));
   });
 
   container.querySelectorAll(".store-toggle-btn").forEach(btn => {
@@ -3015,6 +3136,18 @@ function storeBoxWithToggleHtml(day, store, label, result, isConfirmed, confirme
   const toggleBtn = `<button class="store-toggle-btn ${isOpen ? "on" : "off"}" data-key="${day.dateKey}" data-store="${store}">${isOpen ? "営業" : "休み"}</button>`;
   const resetBtn = result
     ? `<button type="button" class="reset-recommend-btn" data-key="${day.dateKey}" data-store="${store}" title="推奨に戻す">↺</button>` : "";
+  // 店舗の合計を調整する手調整（＋−）。合計を変えると、具材別の数には今の構成比で配分する
+  // （具材ごとの個別の＋−は従来どおり使える）。計算し直されても手調整分は残るよう、
+  // day.manualAdjustに保存する（手調整が0の日は↺ボタンを出さない）
+  const manualAdjustVal = (day.manualAdjust && day.manualAdjust[store]) || 0;
+  const manualAdjustHtml = result ? `
+      <div class="store-manual-adjust-row">
+        <span class="store-manual-adjust-label">手調整</span>
+        <button type="button" class="manual-adjust-step-btn" data-action="dec" data-key="${day.dateKey}" data-store="${store}" title="手調整を-1する">−</button>
+        <input type="number" class="store-manual-adjust-input" data-key="${day.dateKey}" data-store="${store}" value="${manualAdjustVal}" title="店舗の合計をこの分だけ調整する">
+        <button type="button" class="manual-adjust-step-btn" data-action="inc" data-key="${day.dateKey}" data-store="${store}" title="手調整を+1する">＋</button>
+        ${manualAdjustVal ? `<button type="button" class="reset-manual-adjust-btn" data-key="${day.dateKey}" data-store="${store}" title="手調整を0に戻す">↺</button>` : ""}
+      </div>` : "";
   // result（天気等による推奨計算）が無い（＝休業扱い）でも、修正中に確定プランの数があるため
   // isOpenだけ強制的にtrueになっている場合（day.isRevising）は、「—」ではなく実際の値
   // （day.XFillingQtyの合計、確定プランの内訳からそのまま複製した値）を表示する。
@@ -3027,6 +3160,7 @@ function storeBoxWithToggleHtml(day, store, label, result, isConfirmed, confirme
           <span class="store-item-num">${result.total}個</span>
         </div>
         ${result.reasons.map(r => compactReason(r)).join(" / ") ? `<div class="store-item-reasons">${result.reasons.map(r => compactReason(r)).join(" / ")}</div>` : ""}
+        ${manualAdjustHtml}
       </div>`
     : (isOpen && day.isRevising)
       ? `<div class="store-item">
@@ -4175,6 +4309,7 @@ async function saveDraftToSheet(day){
     prod: day.memberFillingQty || {},
     prodStore: day.memberStoreFillingQty || {},
     chisePriorityAssignee: day.chisePriorityAssignee || "自動",
+    manualAdjust: { ...(day.manualAdjust || {}) },
     expectedUpdatedAt: day.draftUpdatedAtRaw || undefined,
   };
   try{
@@ -4309,6 +4444,9 @@ function applyDraftToDay(day, draft){
   if(fc.zuidOpen !== undefined) day.zuidOpen = fc.zuidOpen;
   if(fc.uvaOpen  !== undefined) day.uvaOpen  = fc.uvaOpen;
   if(draft.chisePriorityAssignee) day.chisePriorityAssignee = draft.chisePriorityAssignee;
+  // 手調整（店舗ごとの合計を手で調整した分）：作業中プラン（サーバー側）の値を
+  // localStorageより優先する（他端末での変更が反映されるようにする）
+  if(draft.manualAdjust && Object.keys(draft.manualAdjust).length > 0) day.manualAdjust = { ...draft.manualAdjust };
   if(draft.prod && Object.keys(draft.prod).length > 0){
     if(isProdSnapshotConsistent(day, draft.prod)){
       day.memberFillingQty = { ...draft.prod };
@@ -4577,9 +4715,17 @@ function renderStoreSettingsWarning(){
 }
 
 const FORECAST_METHOD_NOTES = {
+  trend: "売れ行き＋天気：直近の売れ行き（直近営業日の14時累計の中央値×係数）を出発点に、気温・雨で増減し、保証の数を下回らないように調整します。",
   weather: "天気で自動計算：この数を出発点に、気温・天気で増減し、保証の数を下回らないように調整します。",
   fixed: "固定数：この数がそのまま、その曜日の販売予測数になります。",
 };
+
+// 曜日ごとの基準値欄の説明文（方法によって役割が変わるため、末尾に付け加える）。
+// 「売れ行き＋天気」では通常使わず、直近の売れ行きデータが無い場合だけのフォールバックになる
+function weekdayBaseNoteSuffix(method){
+  if(method === "trend") return "直近の売れ行きデータが無い場合のフォールバックとして使う曜日ごとの基準値です（通常の予測には使いません）。空欄の曜日は、コードの元の基準値（入力欄に薄く表示されている数）を使います。";
+  return "空欄の曜日は、コードの元の基準値（入力欄に薄く表示されている数）を使います。設定が無ければ休業になります。";
+}
 
 function renderStoreSettingsList(){
   renderStoreSettingsWarning();
@@ -4598,19 +4744,58 @@ function renderStoreSettingsList(){
     }).join("");
     const shortLabel = storeShortLabel(store);
 
-    // 「予測の方法」：天気の調整式を持つ店舗（Zuid・UvA）だけが選べる。それ以外の店舗
-    // （Rozengracht等）は常に「固定数」（天気による自動計算の式を持たないため）
+    // 「予測の方法」：天気の調整式を持つ店舗（Zuid・UvA）・売れ行き＋天気に対応する店舗
+    // （Zuidのみ）だけがそれぞれ選べる。それ以外の店舗（Rozengracht等）は常に「固定数」
     const canUseWeather = FORECAST_METHOD_CAPABLE_STORES.includes(store);
+    const canUseTrend = TREND_METHOD_CAPABLE_STORES.includes(store);
     const method = getStoreForecastMethod(state.storeSettings, store);
-    const methodFieldHtml = canUseWeather ? `
+    const methodFieldHtml = (canUseWeather || canUseTrend) ? `
           <label class="shift-config-field store-settings-method-field">
             予測の方法
             <select class="store-settings-method">
-              <option value="weather" ${method === "weather" ? "selected" : ""}>天気で自動計算</option>
+              ${canUseTrend ? `<option value="trend" ${method === "trend" ? "selected" : ""}>売れ行き＋天気</option>` : ""}
+              ${canUseWeather ? `<option value="weather" ${method === "weather" ? "selected" : ""}>天気で自動計算</option>` : ""}
               <option value="fixed" ${method === "fixed" ? "selected" : ""}>固定数</option>
             </select>
           </label>` : `
           <div class="store-settings-method-fixed-note">予測の方法：固定数（この店舗は天気による自動計算に対応していません）</div>`;
+
+    // 「売れ行き＋天気」専用の設定（売れ行き係数・売れ行き開始日・気温調整%・雨調整%・保証最低数）。
+    // method==="trend"のときだけ表示する（他の方法に切り替えると非表示になる）
+    const trendSettings = getStoreTrendSettings(state.storeSettings, store);
+    const trendInfoNote = (store === "Zuid" && state.zuidTrendInfo)
+      ? `<p class="store-settings-trend-current-note">現在のL（直近営業日の14時累計の中央値）：${state.zuidTrendInfo.L}（${state.zuidTrendInfo.n}日分：${state.zuidTrendInfo.usedDates.join("、")}）</p>`
+      : (store === "Zuid" ? `<p class="store-settings-trend-current-note">現在、直近の売れ行きデータがありません（曜日基準値にフォールバックします）</p>` : "");
+    const trendFieldsHtml = canUseTrend ? `
+      <div class="store-settings-trend-fields" data-trend-fields style="${method === "trend" ? "" : "display:none;"}">
+        ${trendInfoNote}
+        <div class="shift-config-controls">
+          <label class="shift-config-field">
+            売れ行き係数
+            <input type="number" class="store-settings-trend-coef" min="0" step="0.01" value="${trendSettings.coefficient}">
+          </label>
+          <label class="shift-config-field">
+            売れ行きの計算に使うデータの開始日
+            <input type="date" class="store-settings-trend-start" value="${trendSettings.startDate || ""}">
+          </label>
+          <label class="shift-config-field">
+            保証の最低数（0=保証なし）
+            <input type="number" class="store-settings-trend-guarantee" min="0" value="${trendSettings.minGuarantee}">
+          </label>
+        </div>
+        <div class="store-settings-trend-adj-row">
+          ${TREND_TEMP_BINS.map(b => `
+            <label class="store-settings-trend-adj-label" data-trend-temp-key="${b.key}">
+              気温${b.label}
+              <input type="number" class="store-settings-trend-temp-adj" data-key="${b.key}" step="1" value="${trendSettings.tempAdjPct[b.key]}">%
+            </label>`).join("")}
+          <label class="store-settings-trend-adj-label">
+            雨（販売時間帯）
+            <input type="number" class="store-settings-trend-rain-adj" step="1" value="${trendSettings.rainAdjPct}">%
+          </label>
+        </div>
+        <p class="store-settings-trend-adj-hint">気温・雨の調整%は「売れ行きの目安」に対する増減率です（例：-10%なら売れ行きの目安を10%減らす）。マイナスの値も入力できます。</p>
+      </div>` : "";
 
     // 曜日ごとの基準値（天気で自動計算）／固定数（固定数）は、どちらの方法でも同じ7つの
     // 入力欄を使う（方法によって意味が変わるだけ）。空欄の曜日はコードの元の基準値
@@ -4649,7 +4834,8 @@ function renderStoreSettingsList(){
           ${methodFieldHtml}
         </div>
         <div class="store-settings-weekday-row">${weekdayChecks}</div>
-        <p class="store-settings-method-note">${FORECAST_METHOD_NOTES[method]}空欄の曜日は、コードの元の基準値（入力欄に薄く表示されている数）を使います。設定が無ければ休業になります。</p>
+        <p class="store-settings-method-note">${FORECAST_METHOD_NOTES[method]}${weekdayBaseNoteSuffix(method)}</p>
+        ${trendFieldsHtml}
         ${weekdayBaseRowHtml}
         <button type="button" class="shift-config-save-btn store-settings-save-btn">設定を保存</button>
         <p class="shift-config-status"></p>
@@ -4667,12 +4853,15 @@ function renderStoreSettingsList(){
     };
     card.querySelectorAll(".store-settings-weekday").forEach(cb => cb.addEventListener("change", syncWeekdayBaseGreyOut));
 
-    // 予測の方法を切り替えたら、説明文だけその場で更新する（入力中の他の欄は保持したまま）
+    // 予測の方法を切り替えたら、説明文・売れ行き＋天気専用欄の表示をその場で更新する
+    // （入力中の他の欄は保持したまま）
     const methodSelect = card.querySelector(".store-settings-method");
     const noteEl = card.querySelector(".store-settings-method-note");
+    const trendFieldsEl = card.querySelector("[data-trend-fields]");
     if(methodSelect && noteEl){
       methodSelect.addEventListener("change", () => {
-        noteEl.textContent = `${FORECAST_METHOD_NOTES[methodSelect.value]}空欄の曜日は、コードの元の基準値（入力欄に薄く表示されている数）を使います。設定が無ければ休業になります。`;
+        noteEl.textContent = `${FORECAST_METHOD_NOTES[methodSelect.value]}${weekdayBaseNoteSuffix(methodSelect.value)}`;
+        if(trendFieldsEl) trendFieldsEl.style.display = methodSelect.value === "trend" ? "" : "none";
       });
     }
   });
@@ -4701,8 +4890,29 @@ function renderStoreSettingsList(){
         weekdayBase[inp.dataset.key] = inp.value !== "" ? Number(inp.value) : null;
       });
 
-      const payload = { startDate: startVal, endDate: endVal, weekdays, forecastMethod, weekdayBase };
-      const settingsEntry = { startDate: startVal, endDate: endVal, weekdays, forecastMethod, weekdayBase };
+      // 「売れ行き＋天気」専用フィールド（この店舗が対応していない場合は要素が無いため、
+      // 既定値（店舗設定が無い場合と同じ扱い）のまま送る）
+      const trendCoefInp = card.querySelector(".store-settings-trend-coef");
+      const trendStartInp = card.querySelector(".store-settings-trend-start");
+      const trendGuaranteeInp = card.querySelector(".store-settings-trend-guarantee");
+      const trendRainInp = card.querySelector(".store-settings-trend-rain-adj");
+      const salesTrendCoefficient = trendCoefInp && trendCoefInp.value !== "" ? Number(trendCoefInp.value) : null;
+      const salesTrendStartDate = trendStartInp ? trendStartInp.value : "";
+      const minGuarantee = trendGuaranteeInp && trendGuaranteeInp.value !== "" ? Number(trendGuaranteeInp.value) : null;
+      const rainAdjPct = trendRainInp && trendRainInp.value !== "" ? Number(trendRainInp.value) : null;
+      const tempAdjPct = {};
+      card.querySelectorAll(".store-settings-trend-temp-adj").forEach(inp => {
+        tempAdjPct[inp.dataset.key] = inp.value !== "" ? Number(inp.value) : null;
+      });
+
+      const payload = {
+        startDate: startVal, endDate: endVal, weekdays, forecastMethod, weekdayBase,
+        salesTrendCoefficient, salesTrendStartDate, minGuarantee, rainAdjPct, tempAdjPct,
+      };
+      const settingsEntry = {
+        startDate: startVal, endDate: endVal, weekdays, forecastMethod, weekdayBase,
+        salesTrendCoefficient, salesTrendStartDate, minGuarantee, rainAdjPct, tempAdjPct,
+      };
 
       statusEl.classList.remove("error");
       btn.disabled = true;
@@ -4713,6 +4923,8 @@ function renderStoreSettingsList(){
         statusEl.textContent = "✓ 保存しました";
         btn.textContent = "設定を保存";
         rebuildDaysAndRender();
+        // 「現在のL」の表示（売れ行き開始日を変えた場合など）を最新化する
+        renderStoreSettingsList();
       }catch(e){
         console.error("店舗の営業設定の保存に失敗しました", e);
         statusEl.textContent = "保存に失敗しました。";
@@ -4812,15 +5024,82 @@ function saveForecast(day){
     uvaOpen:  day.uvaOpen,
     rozenOpen: day.rozenOpen,
     chisePriorityAssignee: day.chisePriorityAssignee || "自動",
+    manualAdjust: { ...(day.manualAdjust || {}) },
   };
   try{ localStorage.setItem(`chabon_forecast_${mdLabel(day.dateObj)}`, JSON.stringify(data)); }catch(e){}
   scheduleDraftSave(day);
 }
 
+// 店舗の予測総数に対する手調整（{zuid,uva,rozen}。保存されていない店舗は0）を
+// day.manualAdjustに常に揃える（未初期化のままreasons表示等で参照されるのを防ぐ）
+function ensureManualAdjust(day){
+  if(!day.manualAdjust) day.manualAdjust = {};
+  ["zuid", "uva", "rozen"].forEach(store => { if(!Number.isFinite(day.manualAdjust[store])) day.manualAdjust[store] = 0; });
+  return day.manualAdjust;
+}
+
+// buildDays()が計算した各店舗の予測数（day.zuid/uva/rozen）に、保存済みの手調整分を
+// 上乗せする。手調整があった場合は「手調整 ±N」をreasonsに追加し、画面の内訳表示
+// （compactReason経由）で分かるようにする。loadForecastData()の直後に呼ぶこと
+// （manualAdjustが復元された後でなければ正しく反映できないため）。
+function applyManualAdjust(day){
+  ensureManualAdjust(day);
+  ["zuid", "uva", "rozen"].forEach(resultKey => {
+    const adjust = day.manualAdjust[resultKey];
+    const result = day[resultKey];
+    if(!result) return;
+    // baseTotal：手調整前の計算値（売れ行き・天気・保証等を反映した値）。
+    // 「推奨に戻す」「手調整を0に戻す」でこの値に戻せるよう、調整の有無にかかわらず保持する
+    if(result.baseTotal === undefined) result.baseTotal = result.total;
+    if(!adjust) return;
+    result.total = Math.max(0, result.baseTotal + adjust);
+    result.reasons = [...result.reasons, `手調整 ${adjust >= 0 ? "+" : ""}${adjust}`];
+  });
+}
+
+// qtyMap（具材名→個数）を、今の構成比を保ったままnewTotalの合計になるよう再配分する。
+// 既存の構成比が無い（合計0）場合はFILLING_RATIOSの既定配分にフォールバックする。
+// 最大剰余法で丸める（四捨五入の合計がnewTotalからずれないようにする）。
+function redistributeProportionally(qtyMap, newTotal){
+  const fillings = Object.keys(qtyMap);
+  const currentSum = fillings.reduce((s, f) => s + (qtyMap[f] || 0), 0);
+  if(currentSum <= 0 || newTotal <= 0) return buildFillingDefaults(Math.max(0, newTotal));
+  const parts = fillings.map(f => {
+    const exact = (qtyMap[f] || 0) * newTotal / currentSum;
+    return { f, base: Math.floor(exact), rem: exact - Math.floor(exact) };
+  });
+  let remaining = newTotal - parts.reduce((s, p) => s + p.base, 0);
+  parts.sort((a, b) => b.rem - a.rem);
+  const result = {};
+  parts.forEach(p => { result[p.f] = p.base; });
+  for(let i = 0; i < parts.length && remaining > 0; i++){ result[parts[i].f]++; remaining--; }
+  return result;
+}
+
+// 店舗の合計に対する手調整を設定する。day.manualAdjust[store]に保存し、具材別の数
+// （day.{store}FillingQty）を今の構成比でnewTotal（baseTotal＋手調整）に再配分する。
+function setManualAdjust(day, store, newAdjust){
+  const result = day[store];
+  if(!result) return;
+  ensureManualAdjust(day);
+  if(result.baseTotal === undefined) result.baseTotal = result.total;
+  const clamped = Math.round(newAdjust);
+  day.manualAdjust[store] = clamped;
+  const newTotal = Math.max(0, result.baseTotal + clamped);
+  result.total = newTotal;
+  result.reasons = result.reasons.filter(r => !r.startsWith("手調整 "));
+  if(clamped) result.reasons.push(`手調整 ${clamped >= 0 ? "+" : ""}${clamped}`);
+  const qtyMapKey = `${store}FillingQty`;
+  day[qtyMapKey] = redistributeProportionally(day[qtyMapKey], newTotal);
+  saveForecast(day);
+  renderDayBlock(day);
+  refreshProductionCellDerived(day);
+}
+
 function loadForecastData(day){
   try{
     const raw = localStorage.getItem(`chabon_forecast_${mdLabel(day.dateObj)}`);
-    if(!raw) return false;
+    if(!raw){ ensureManualAdjust(day); return false; }
     const data = JSON.parse(raw);
     if(data.zuidFillingQty) day.zuidFillingQty = { ...buildFillingDefaults(0), ...data.zuidFillingQty };
     if(data.uvaFillingQty)  day.uvaFillingQty  = { ...buildFillingDefaults(0), ...data.uvaFillingQty };
@@ -4829,8 +5108,10 @@ function loadForecastData(day){
     if(data.uvaOpen  !== undefined) day.uvaOpen  = data.uvaOpen;
     if(data.rozenOpen !== undefined) day.rozenOpen = data.rozenOpen;
     if(data.chisePriorityAssignee) day.chisePriorityAssignee = data.chisePriorityAssignee;
+    if(data.manualAdjust) day.manualAdjust = { ...data.manualAdjust };
+    ensureManualAdjust(day);
     return true;
-  }catch(e){ return false; }
+  }catch(e){ ensureManualAdjust(day); return false; }
 }
 
 // memberStoreFillingQty（店舗別内訳）はday.memberFillingQtyと店舗の必要数から毎回
@@ -4865,6 +5146,14 @@ function resetDayData(day){
   try{ localStorage.removeItem(`chabon_forecast_${dateStr}`); }catch(e){}
   try{ localStorage.removeItem(`chabon_prod_${dateStr}`); }catch(e){}
   try{ localStorage.removeItem(`chabon_prodStore_${dateStr}`); }catch(e){}
+  // 全リセットでは手調整も0に戻す（baseTotal＝手調整前の計算値に戻す）
+  day.manualAdjust = { zuid: 0, uva: 0, rozen: 0 };
+  ["zuid", "uva", "rozen"].forEach(key => {
+    if(day[key] && day[key].baseTotal !== undefined){
+      day[key].total = day[key].baseTotal;
+      day[key].reasons = day[key].reasons.filter(r => !r.startsWith("手調整 "));
+    }
+  });
   day.zuidOpen = day.zuid !== null;
   day.zuidFillingQty = day.zuid ? buildFillingDefaults(day.zuid.total) : buildFillingDefaults(0);
   day.uvaOpen = day.uva !== null;
@@ -5341,7 +5630,7 @@ async function refreshAllData(){
     const thisYear = new Date().getFullYear();
     state.cellStatus = {};
     resetFetchFailureTracking();
-    const [weatherRes, chiseRows, shiftJson, holidaysByIso, nsDisruptionsByDate, bootstrap, monthlyOnigiriData, uvaCalendarJson, uvaCoefficientsJson, confirmedPlanJson, storeSettingsRows] = await Promise.all([
+    const [weatherRes, chiseRows, shiftJson, holidaysByIso, nsDisruptionsByDate, bootstrap, monthlyOnigiriData, uvaCalendarJson, uvaCoefficientsJson, confirmedPlanJson, storeSettingsRows, hourlyHistoryRows] = await Promise.all([
       fetch(weatherUrl).then(r => r.json()),
       fetchChiseSheetRows(SCRIPT_URL).catch(e => { console.error("チセさんシート取得失敗", e); return null; }).then(v => trackFetchResult("チセさんシート", true, v)),
       fetchSheetJson("シフト回答", SHIFT_SPREADSHEET_ID).catch(e => { console.error("シフト回答シート取得失敗", e); return null; }).then(v => trackFetchResult("シフト回答", true, v)),
@@ -5356,6 +5645,10 @@ async function refreshAllData(){
       // 「店舗設定」シートはまだ一度も保存されていない場合は存在しないため、
       // 取得失敗時もfetchStoreSettingsRows側で空配列（＝全店舗「期間制限なし」）として扱う
       fetchStoreSettingsRows(SCRIPT_URL),
+      // Zuidの「売れ行き＋天気」でL（直近営業日の14時累計の中央値）を計算するための、
+      // 直近45日分の時間帯別実績（全件取得だと実績が増えるほど重くなるため、Apps Script側で
+      // 絞り込んでもらう。45日あれば、Zuidが週4営業日(月〜木)でも直近4営業日に十分足りる）
+      fetchHourlyData(SCRIPT_URL, null, isoDate(new Date(Date.now() - 45 * 86400000))).catch(e => { console.error("時間帯別実績（直近分）取得失敗", e); return []; }),
     ]);
     const draftData = bootstrap.drafts;
     state.draftData = draftData;
@@ -5385,10 +5678,16 @@ async function refreshAllData(){
     state.storeSettingsWarnings = storeSettingsParsed.warnings;
     renderStoreSettingsList();
 
+    // Zuidの「売れ行き＋天気」のL（直近営業日の14時累計の中央値）を計算する。
+    // 直近45日分の実績から、売れ行き開始日（設定されていれば）以降・当日より前の
+    // 直近4営業日を使う（buildDays()より前に反映しておく）
+    state.hourlyHistoryRows = hourlyHistoryRows;
+    recomputeZuidTrendInfo();
+
     const hourlyByDate = buildHourlyByDate(weatherRes.hourly);
     state.weatherDaily = weatherRes.daily;
     state.hourlyByDate = hourlyByDate;
-    state.days = buildDays(weatherRes.daily, hourlyByDate);
+    state.days = buildDays(weatherRes.daily, hourlyByDate, state.zuidTrendInfo);
     state.days.forEach(day => {
       // 確定済みの日は、作業中プラン・localStorageのドラフトを一切反映しない
       // （確定プランをそのまま表示する。ライブ再計算・古いドラフトでの上書きを防ぐ）
@@ -5414,6 +5713,9 @@ async function refreshAllData(){
     } else {
       console.warn("ドラフトデータが取得できませんでした（null）");
     }
+    // 手調整は、localStorage・作業中プランのどちらから復元された後の最終的な
+    // day.manualAdjustに対して、ここで1回だけ適用する（二重に加算しないため）
+    state.days.forEach(day => { if(!getConfirmedPlanForDay(day)) applyManualAdjust(day); });
     const shiftParsed = shiftJson ? parseShiftSheet(shiftJson) : { byDate: {}, notesByName: {} };
     state.shiftByDate  = shiftParsed.byDate;
     state.notesByName  = shiftParsed.notesByName;
@@ -5671,11 +5973,11 @@ async function init(){
 
     const thisYear = new Date().getFullYear();
     initProgressDone = 0;
-    setInitProgress(0, 11);
-    const track = p => p.then(v => { setInitProgress(++initProgressDone, 11); return v; });
+    setInitProgress(0, 12);
+    const track = p => p.then(v => { setInitProgress(++initProgressDone, 12); return v; });
     state.cellStatus = {};
     resetFetchFailureTracking();
-    const [weatherRes, chiseRows, shiftJson, holidaysByIso, nsDisruptionsByDate, bootstrap, paymentPlanJson, monthlyOnigiriData, uvaCalendarJson, uvaCoefficientsJson, storeSettingsRows] = await Promise.all([
+    const [weatherRes, chiseRows, shiftJson, holidaysByIso, nsDisruptionsByDate, bootstrap, paymentPlanJson, monthlyOnigiriData, uvaCalendarJson, uvaCoefficientsJson, storeSettingsRows, hourlyHistoryRows] = await Promise.all([
       track(fetch(weatherUrl).then(r => r.json())),
       track(fetchChiseSheetRows(SCRIPT_URL).catch(e => { console.error("チセさんシート取得失敗", e); return null; }).then(v => trackFetchResult("チセさんシート", true, v))),
       track(fetchSheetJson("シフト回答", SHIFT_SPREADSHEET_ID).catch(e => { console.error("シフト回答シート取得失敗", e); return null; }).then(v => trackFetchResult("シフト回答", true, v))),
@@ -5695,6 +5997,9 @@ async function init(){
       // 「店舗設定」シートはまだ一度も保存されていない場合は存在しないため、
       // 取得失敗時もfetchStoreSettingsRows側で空配列（＝全店舗「期間制限なし」）として扱う
       track(fetchStoreSettingsRows(SCRIPT_URL)),
+      // Zuidの「売れ行き＋天気」でL（直近営業日の14時累計の中央値）を計算するための、
+      // 直近45日分の時間帯別実績
+      track(fetchHourlyData(SCRIPT_URL, null, isoDate(new Date(Date.now() - 45 * 86400000))).catch(e => { console.error("時間帯別実績（直近分）取得失敗", e); return []; })),
     ]);
     const draftData = bootstrap.drafts;
     state.draftData = draftData;
@@ -5723,10 +6028,14 @@ async function init(){
     const storeSettingsParsed2 = parseStoreSettingsRows(storeSettingsRows);
     state.storeSettings = storeSettingsParsed2.settings;
     state.storeSettingsWarnings = storeSettingsParsed2.warnings;
+    // Zuidの「売れ行き＋天気」のL（直近営業日の14時累計の中央値）を計算する
+    // （buildDays()より前に反映しておく）
+    state.hourlyHistoryRows = hourlyHistoryRows;
+    recomputeZuidTrendInfo();
     const hourlyByDate = buildHourlyByDate(weatherRes.hourly);
     state.weatherDaily = weatherRes.daily;
     state.hourlyByDate = hourlyByDate;
-    state.days = buildDays(weatherRes.daily, hourlyByDate);
+    state.days = buildDays(weatherRes.daily, hourlyByDate, state.zuidTrendInfo);
     // localStorageから復元（オフライン時フォールバック）→ シートのドラフトで上書き
     // 確定済みの日は、作業中プラン・localStorageのドラフトを一切反映しない
     // （確定プランをそのまま表示する。ライブ再計算・古いドラフトでの上書きを防ぐ）
@@ -5743,6 +6052,9 @@ async function init(){
         if(draft) applyDraftToDay(day, draft);
       });
     }
+    // 手調整は、localStorage・作業中プランのどちらから復元された後の最終的な
+    // day.manualAdjustに対して、ここで1回だけ適用する（二重に加算しないため）
+    state.days.forEach(day => { if(!getConfirmedPlanForDay(day)) applyManualAdjust(day); });
     const shiftParsed = shiftJson ? parseShiftSheet(shiftJson) : { byDate: {}, notesByName: {} };
     state.shiftByDate  = shiftParsed.byDate;
     state.notesByName  = shiftParsed.notesByName;

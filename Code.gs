@@ -388,7 +388,7 @@ function handleSaveDraft(ss, data) {
   var sheet = ss.getSheetByName("作業中プラン");
   if (!sheet) {
     sheet = ss.insertSheet("作業中プラン");
-    sheet.appendRow(["日付", "forecast", "prod", "更新日時", "prodStore", "チセ優先担当"]);
+    sheet.appendRow(["日付", "forecast", "prod", "更新日時", "prodStore", "チセ優先担当", "手調整"]);
   } else if (sheet.getLastColumn() < 5) {
     // prodStore（ニギニギ隊内訳の店舗別の下書き）は後から追加した列。既存データの列位置は変えない
     sheet.getRange(1, 5).setValue("prodStore");
@@ -396,6 +396,9 @@ function handleSaveDraft(ss, data) {
     // チセ優先担当（その日のチセ分を最優先で担当するメンバー）も後から追加した列。
     // 既存データの列位置は変えない
     sheet.getRange(1, 6).setValue("チセ優先担当");
+  } else if (sheet.getLastColumn() < 7) {
+    // 手調整（店舗ごとの合計を手で調整した分。{zuid,uva,rozen}のJSON）も後から追加した列
+    sheet.getRange(1, 7).setValue("手調整");
   }
   var values = sheet.getDataRange().getValues();
   var foundRow = -1;
@@ -427,10 +430,11 @@ function handleSaveDraft(ss, data) {
     JSON.stringify(data.prod || {}),
     new Date(),
     JSON.stringify(data.prodStore || {}),
-    data.chisePriorityAssignee || "自動"
+    data.chisePriorityAssignee || "自動",
+    JSON.stringify(data.manualAdjust || {})
   ];
   if (foundRow > 0) {
-    sheet.getRange(foundRow, 1, 1, 6).setValues([row]);
+    sheet.getRange(foundRow, 1, 1, 7).setValues([row]);
   } else {
     sheet.appendRow(row);
   }
@@ -464,6 +468,8 @@ function getDraftsData(ss, startIso, endIso) {
         prod: JSON.parse(rows[i][2] || "{}"),
         // prodStore（ニギニギ隊内訳の店舗別）は後から追加した列のため、無い行は{}になる
         prodStore: JSON.parse(rows[i][4] || "{}"),
+        // 手調整（店舗ごとの合計を手で調整した分）も後から追加した列のため、無い行は{}になる
+        manualAdjust: JSON.parse(rows[i][6] || "{}"),
       });
     } catch (err) {}
   }
@@ -642,7 +648,16 @@ function handleGetMonthlyOnigiri(ss) {
 // 統合した。
 var STORE_SETTINGS_SHEET_NAME = "店舗設定";
 var STORE_SETTINGS_HEADER = ["店舗名", "開始日", "終了日", "月", "火", "水", "木", "金", "土", "日", "予測の方法",
-  "月曜基準値", "火曜基準値", "水曜基準値", "木曜基準値", "金曜基準値", "土曜基準値", "日曜基準値", "更新日時"];
+  "月曜基準値", "火曜基準値", "水曜基準値", "木曜基準値", "金曜基準値", "土曜基準値", "日曜基準値",
+  "売れ行き係数", "売れ行き開始日",
+  "気温調整15℃以下%", "気温調整16-17℃%", "気温調整18-24℃%", "気温調整25-28℃%", "気温調整29℃以上%",
+  "雨調整%", "保証最低数",
+  "更新日時"];
+// 「売れ行き係数」〜「保証最低数」（19〜26列目）は、「売れ行き＋天気」予測方式
+// （store-settings.jsのresolveStoreForecast/calcSalesTrendForecast参照）のために追加した列。
+// 既存の列（1〜18列目・更新日時）の位置・意味は変えていない。これより前に保存された行は
+// これらの列が空になり、store-settings.jsのgetStoreTrendSettings()がDEFAULT_STORE_SETTINGSの
+// 既定値にフォールバックする。
 
 function storeSettingsRowValues(store, data) {
   var weekdays = data.weekdays || {};
@@ -652,7 +667,11 @@ function storeSettingsRowValues(store, data) {
     return (v !== undefined && v !== null && v !== "" && isFinite(Number(v))) ? String(Number(v)) : "";
   };
   var baseStr = function(key) { return numStr(weekdayBase[key]); };
-  var methodStr = data.forecastMethod === "weather" ? "天気で自動計算" : data.forecastMethod === "fixed" ? "固定数" : "";
+  var methodStr = data.forecastMethod === "trend" ? "売れ行き＋天気"
+    : data.forecastMethod === "weather" ? "天気で自動計算"
+    : data.forecastMethod === "fixed" ? "固定数" : "";
+  var tempAdjPct = data.tempAdjPct || {};
+  var tempStr = function(key) { return numStr(tempAdjPct[key]); };
   var updatedAtStr = Utilities.formatDate(new Date(), "Etc/UTC", "yyyy-MM-dd HH:mm:ss");
 
   return [
@@ -662,6 +681,11 @@ function storeSettingsRowValues(store, data) {
     flagStr("mon"), flagStr("tue"), flagStr("wed"), flagStr("thu"), flagStr("fri"), flagStr("sat"), flagStr("sun"),
     methodStr,
     baseStr("mon"), baseStr("tue"), baseStr("wed"), baseStr("thu"), baseStr("fri"), baseStr("sat"), baseStr("sun"),
+    numStr(data.salesTrendCoefficient),
+    String(data.salesTrendStartDate || ""),
+    tempStr("le15"), tempStr("b16_17"), tempStr("b18_24"), tempStr("b25_28"), tempStr("ge29"),
+    numStr(data.rainAdjPct),
+    numStr(data.minGuarantee),
     updatedAtStr
   ];
 }
@@ -1179,8 +1203,11 @@ function givenOrLegacySum(newVal, legacyLunch, legacyStamp) {
 // フルフィールドのオブジェクト配列として返す（handleGetHourly / handleGetAnalytics 共通）。
 // dateFilter（yyyy-MM-dd）を指定すると、実績シートの行数が増えても影響を受けにくいよう
 // まずA列（日付）だけを読んで該当行番号を特定し、一致した行だけを読み込む。
-// dateFilterを指定しない場合（analytics.html向け）は従来通り全行を読み取る。
-function getHourlySheetRows(ss, dateFilter) {
+// sinceFilter（yyyy-MM-dd）を指定すると、その日付以降の行だけを読み込む（dateFilterより
+// 優先度低：Zuidの「売れ行き＋天気」で直近の売れ行き(L)を計算するためだけに、全件より
+// 軽い範囲で最近のデータを取得したいindex.html・admin.html向け）。
+// どちらも指定しない場合（analytics.html向け）は従来通り全行を読み取る。
+function getHourlySheetRows(ss, dateFilter, sinceFilter) {
   var sheet = ss.getSheetByName("時間帯別実績");
   if (!sheet) return [];
   var lastRow = sheet.getLastRow();
@@ -1195,6 +1222,15 @@ function getHourlySheetRows(ss, dateFilter) {
       if (dateCol[i][0] && normalizeDateCell(dateCol[i][0]) === dateFilter) matchedRowNumbers.push(i + 2);
     }
     dataRows = matchedRowNumbers.map(function(rowNum) {
+      return sheet.getRange(rowNum, 1, 1, lastCol).getValues()[0];
+    });
+  } else if (sinceFilter) {
+    var dateCol2 = sheet.getRange(2, 1, lastRow - 1, 1).getValues();
+    var matchedRowNumbers2 = [];
+    for (var j = 0; j < dateCol2.length; j++) {
+      if (dateCol2[j][0] && normalizeDateCell(dateCol2[j][0]) >= sinceFilter) matchedRowNumbers2.push(j + 2);
+    }
+    dataRows = matchedRowNumbers2.map(function(rowNum) {
       return sheet.getRange(rowNum, 1, 1, lastCol).getValues()[0];
     });
   } else {
@@ -1250,8 +1286,8 @@ function getHourlySheetRows(ss, dateFilter) {
   return result;
 }
 
-function handleGetHourly(ss, dateFilter) {
-  return ContentService.createTextOutput(JSON.stringify({ rows: getHourlySheetRows(ss, dateFilter) }))
+function handleGetHourly(ss, dateFilter, sinceFilter) {
+  return ContentService.createTextOutput(JSON.stringify({ rows: getHourlySheetRows(ss, dateFilter, sinceFilter) }))
     .setMimeType(ContentService.MimeType.JSON);
 }
 
@@ -1333,8 +1369,11 @@ function doGetInner(e) {
   if (e.parameter && e.parameter.type === "hourly") {
     // dateパラメータ（yyyy-MM-dd）が指定された場合はその日付の行だけを返す。
     // 実績シートは行数が増え続けるため、当日分の表示だけが目的のindex.htmlは
-    // dateを指定して読み取り範囲を絞る（analytics.htmlは全件が必要なので指定しない）
-    return handleGetHourly(ss, e.parameter.date);
+    // dateを指定して読み取り範囲を絞る（analytics.htmlは全件が必要なので指定しない）。
+    // sinceパラメータ（yyyy-MM-dd）は、Zuidの「売れ行き＋天気」で直近の売れ行き(L)を
+    // 計算するためだけに最近のデータを取得したいadmin.html・index.html向け
+    // （dateが指定されていればdateを優先する）。
+    return handleGetHourly(ss, e.parameter.date, e.parameter.since);
   }
 
   if (e.parameter && e.parameter.type === "analytics") {
