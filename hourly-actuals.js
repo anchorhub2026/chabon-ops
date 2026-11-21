@@ -314,10 +314,14 @@ function updateSoldDisplay(storeKeys, fillings, slotsByStore){
 }
 
 // dateIso（yyyy-MM-dd）を指定すると、Apps Script側でその日付の行だけに絞って
-// 返すため、実績シートの行数が増えてもレスポンスが肥大化しない
-async function fetchHourlyData(scriptUrl, dateIso){
+// 返すため、実績シートの行数が増えてもレスポンスが肥大化しない。
+// sinceIso（yyyy-MM-dd）を指定すると、その日付以降の行だけを返す（dateIsoと同時指定時は
+// dateIsoが優先される）。Zuidの「売れ行き＋天気」の直近売れ行き(L)計算用に、全件より
+// 軽い範囲で最近のデータだけを取得したい場合に使う。
+async function fetchHourlyData(scriptUrl, dateIso, sinceIso){
   try{
-    const url = `${scriptUrl}?type=hourly${dateIso ? `&date=${encodeURIComponent(dateIso)}` : ""}`;
+    const params = dateIso ? `&date=${encodeURIComponent(dateIso)}` : (sinceIso ? `&since=${encodeURIComponent(sinceIso)}` : "");
+    const url = `${scriptUrl}?type=hourly${params}`;
     const res = await fetch(url, { cache: "no-store" });
     const json = await res.json();
     return json.rows || [];

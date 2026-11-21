@@ -33,6 +33,20 @@ const STORE_SETTINGS_WEEKDAYS = [
 // 用意されている店舗）。それ以外の店舗（Rozengracht等）は「固定数」のみ選べる。
 const FORECAST_METHOD_CAPABLE_STORES = ["Zuid", "UvA"];
 
+// 「売れ行き＋天気」（直近の実績からの売れ行きの中央値×係数＋天気補正）が選べる店舗。
+// v1.1ルールではZuidのみ対応（UvAは学事暦係数込みの既存の「天気で自動計算」のまま、
+// Rozengrachtは「固定数」のまま＝今回変更しない）。
+const TREND_METHOD_CAPABLE_STORES = ["Zuid"];
+
+// 「売れ行き＋天気」の気温帯ビン。既存のtempAdjustment()と同じ境界を使う（比較・継続性のため）。
+const TREND_TEMP_BINS = [
+  { key: "le15", label: "15℃以下", header: "気温調整15℃以下%" },
+  { key: "b16_17", label: "16〜17℃", header: "気温調整16-17℃%" },
+  { key: "b18_24", label: "18〜24℃", header: "気温調整18-24℃%" },
+  { key: "b25_28", label: "25〜28℃", header: "気温調整25-28℃%" },
+  { key: "ge29", label: "29℃以上", header: "気温調整29℃以上%" },
+];
+
 // 「店舗設定」シートに値が無い（店舗の行自体が無い、またはその曜日のセルだけ空欄）場合に
 // 使う既定値。Zuid・UvAはこれまでコードに埋め込まれていた固定値（旧ZUID_SEASON_BASE.autumnの
 // 値／UvAの旧固定35個）、Rozengrachtはオープン時点の初期値（旧「平日基本数100・土日基本数150」を
@@ -43,7 +57,24 @@ const FORECAST_METHOD_CAPABLE_STORES = ["Zuid", "UvA"];
 // （店舗ごとまるごとではなく、曜日ごとに細かくフォールバックする）。
 const DEFAULT_STORE_SETTINGS = {
   Zuid: {
+    forecastMethod: "trend",
+    // weekdayBaseは「売れ行き＋天気」では使わないが、直近の実績データが無い（例：開店直後・
+    // 売れ行きの計算に使うデータの開始日を直近に設定した直後）場合のフォールバック用に残す
     weekdayBase: { mon: 95, tue: 120, wed: 110, thu: 120, fri: 95, sat: null, sun: null },
+    // 売れ行き係数（L×この値＝売れ行きの目安）。v1.1ルールの初期値
+    salesTrendCoefficient: 1.53,
+    // 売れ行きの計算に使うデータの開始日（未設定＝全期間のデータを使う）
+    salesTrendStartDate: "",
+    // 気温調整%：2026-07-01〜2026-11-19の実績とOpen-Meteo過去天気から分析した結果。
+    // 15℃以下のみ、直前7営業日中央値からの残差が一貫して負（データ21日、平均-10.3%）だったため
+    // -10%を初期値にする。他の気温帯・雨の有無は、データ不足または符号が不安定だったため0%
+    // （推測で数字を作らないため）。詳細は実装時の報告を参照。
+    tempAdjPct: { le15: -10, b16_17: 0, b18_24: 0, b25_28: 0, ge29: 0 },
+    rainAdjPct: 0,
+    // 保証の最低数（0=保証なし）。直近2週間の実績（44〜60個、平均51個）が既存の保証100を
+    // 大きく下回っているため、「売れ行き＋天気」の初期値は0（保証なし）とする
+    // （ユーザー指示に基づく初期値。既存の「天気で自動計算」のZUID_MIN(100)は変更しない）
+    minGuarantee: 0,
   },
   UvA: {
     weekdayBase: { mon: 35, tue: 35, wed: null, thu: 35, fri: null, sat: null, sun: null },
@@ -137,11 +168,24 @@ function parseStoreSettingsRows(rows){
       weekdayBase[wd.key] = numOrNull(cell(wd.baseHeader), wd.baseHeader);
     });
 
-    // 「予測の方法」：「固定数」「天気で自動計算」のどちらでもない値（空欄含む）は
-    // 未設定として扱い、getStoreForecastMethod()が店舗ごとの既定（Zuid/UvAは天気で
-    // 自動計算、それ以外は固定数）にフォールバックする。
+    // 「予測の方法」：「固定数」「天気で自動計算」「売れ行き＋天気」のどれでもない値
+    // （空欄含む）は未設定として扱い、getStoreForecastMethod()が店舗ごとの既定
+    // （Zuidは売れ行き＋天気、UvAは天気で自動計算、それ以外は固定数）にフォールバックする。
     const methodText = cell("予測の方法");
-    const forecastMethod = methodText === "固定数" ? "fixed" : methodText === "天気で自動計算" ? "weather" : "";
+    const forecastMethod = methodText === "固定数" ? "fixed"
+      : methodText === "天気で自動計算" ? "weather"
+      : methodText === "売れ行き＋天気" ? "trend"
+      : "";
+
+    const salesTrendCoefficientText = cell("売れ行き係数");
+    const salesTrendCoefficient = salesTrendCoefficientText === "" ? null : numOrNull(salesTrendCoefficientText, "売れ行き係数");
+    const salesTrendStartDate = parseStoreSettingsDateText(cell("売れ行き開始日"));
+    if(salesTrendStartDate === null) warnings.push(`${store}の「売れ行き開始日」の値を読み取れませんでした（店舗の営業設定を確認してください）`);
+
+    const tempAdjPct = {};
+    TREND_TEMP_BINS.forEach(b => { tempAdjPct[b.key] = numOrNull(cell(b.header), b.header); });
+    const rainAdjPct = numOrNull(cell("雨調整%"), "雨調整%");
+    const minGuarantee = numOrNull(cell("保証最低数"), "保証最低数");
 
     settings[store] = {
       startDate: startDate || "",
@@ -149,6 +193,11 @@ function parseStoreSettingsRows(rows){
       weekdays,
       forecastMethod,
       weekdayBase,
+      salesTrendCoefficient,
+      salesTrendStartDate: salesTrendStartDate || "",
+      tempAdjPct,
+      rainAdjPct,
+      minGuarantee,
     };
   }
   return { settings, warnings };
@@ -277,33 +326,176 @@ function calcUvA(dow, salesWeather, baseOverride){
   return { total, reasons };
 }
 
-// 店舗の「予測の方法」を返す（"weather"=天気で自動計算 / "fixed"=固定数）。
-// 店舗設定シートに明示的な保存値が無い場合は、店舗ごとの既定にフォールバックする
-// （Zuid・UvAは天気で自動計算、天気の調整式を持たないそれ以外の店舗は固定数）。
+// 店舗の「予測の方法」を返す（"trend"=売れ行き＋天気 / "weather"=天気で自動計算（基準値） /
+// "fixed"=固定数）。店舗設定シートに明示的な保存値が無い場合は、店舗ごとの既定にフォールバック
+// する（Zuidは売れ行き＋天気、UvAは天気で自動計算、それ以外（天気の調整式を持たない店舗）は
+// 固定数）。
 function getStoreForecastMethod(storeSettings, store){
   const config = storeSettings && storeSettings[store];
-  if(config && (config.forecastMethod === "weather" || config.forecastMethod === "fixed")){
-    // 天気の調整式が無い店舗では「天気で自動計算」を選べない（UIでも選択肢を出さない）ため、
-    // 保存データが古い・手動編集などで"weather"になっていても、安全に固定数として扱う
-    if(config.forecastMethod === "weather" && !FORECAST_METHOD_CAPABLE_STORES.includes(store)) return "fixed";
-    return config.forecastMethod;
+  const saved = config && config.forecastMethod;
+  if(saved === "trend" || saved === "weather" || saved === "fixed"){
+    // その方式に対応していない店舗では選べない（UIでも選択肢を出さない）ため、保存データが
+    // 古い・手動編集などで対応外の方式になっていても、安全な方式にフォールバックする
+    if(saved === "trend" && !TREND_METHOD_CAPABLE_STORES.includes(store)){
+      return FORECAST_METHOD_CAPABLE_STORES.includes(store) ? "weather" : "fixed";
+    }
+    if(saved === "weather" && !FORECAST_METHOD_CAPABLE_STORES.includes(store)) return "fixed";
+    return saved;
   }
+  if(TREND_METHOD_CAPABLE_STORES.includes(store)) return "trend";
   return FORECAST_METHOD_CAPABLE_STORES.includes(store) ? "weather" : "fixed";
 }
 
-// 店舗・日付・曜日・（天気で自動計算の店舗向けに）販売時間帯の天気から、その日の予測数を
-// 1つの関数で算出する。admin.html・index.htmlはどちらもこの関数だけを呼べばよく、
-// 店舗ごとの計算式の呼び分け・営業設定の重ね適用を個別に書く必要が無い
+// 店舗の「売れ行き＋天気」関連の設定値を、保存値→既定値（DEFAULT_STORE_SETTINGS）→
+// コード内フォールバックの順で解決して返す。数値として不正な値は既定にフォールバックする
+// （NaNを一切後段に渡さないための防御。store-settings.js全体の方針と同じ）。
+function getStoreTrendSettings(storeSettings, store){
+  const config = storeSettings && storeSettings[store];
+  const def = DEFAULT_STORE_SETTINGS[store] || {};
+
+  const numOr = (v, fallback) => {
+    if(v === null || v === undefined || v === "") return fallback;
+    const n = Number(v);
+    return Number.isFinite(n) ? n : fallback;
+  };
+
+  const coefficient = numOr(config && config.salesTrendCoefficient, numOr(def.salesTrendCoefficient, 1.53));
+  const startDate = (config && config.salesTrendStartDate) || def.salesTrendStartDate || "";
+  const minGuarantee = numOr(config && config.minGuarantee, numOr(def.minGuarantee, 0));
+  const rainAdjPct = numOr(config && config.rainAdjPct, numOr(def.rainAdjPct, 0));
+
+  const tempAdjPct = {};
+  TREND_TEMP_BINS.forEach(b => {
+    const saved = (config && config.tempAdjPct) ? config.tempAdjPct[b.key] : null;
+    const fallback = numOr((def.tempAdjPct) ? def.tempAdjPct[b.key] : null, 0);
+    tempAdjPct[b.key] = numOr(saved, fallback);
+  });
+
+  return { coefficient, startDate, minGuarantee, tempAdjPct, rainAdjPct };
+}
+
+// 時間帯別実績の行配列（fetchHourlyData/getHourlySheetRowsの結果）から、指定店舗の
+// 「14時累計」（受け取り・移動を加味した、保存時点で計算済みの値）を日付ごとに合算する
+// （具材ごとの行を1日分にまとめる）。
+function sumHourlyCum14ByDate(hourlyRows, store){
+  const byDate = {};
+  (hourlyRows || []).forEach(r => {
+    if(!r || r.store !== store) return;
+    const v = r.cum14;
+    if(v === "" || v === null || v === undefined) return;
+    const n = Number(v);
+    if(!Number.isFinite(n)) return;
+    byDate[r.date] = (byDate[r.date] || 0) + n;
+  });
+  return byDate;
+}
+
+function median(arr){
+  if(!arr || arr.length === 0) return null;
+  const s = [...arr].sort((a, b) => a - b);
+  const n = s.length;
+  return n % 2 === 1 ? s[(n - 1) / 2] : (s[n / 2 - 1] + s[n / 2]) / 2;
+}
+
+// 売れ行きの目安のL（直近営業日の14時累計の中央値）を計算する。
+// asOfIso（当日）より前の日だけを対象にする（当日はまだ積算中のため使わない）。
+// startDate（売れ行きの計算に使うデータの開始日）が指定されていれば、それより前の日は除く。
+// 時間帯別実績が入っていない日・営業していない日は、そもそもcum14の記録が無いため
+// 自然に除外される（その分、さらに前の日にさかのぼる）。
+// 対象日数は最大4日。1日も無ければnullを返す（呼び出し側は基準値へのフォールバックを判断する）。
+function computeSalesTrendL(hourlyRows, store, asOfIso, startDate){
+  const byDate = sumHourlyCum14ByDate(hourlyRows, store);
+  let dates = Object.keys(byDate).filter(d => d < asOfIso);
+  if(startDate) dates = dates.filter(d => d >= startDate);
+  dates.sort();
+  const usedDates = dates.slice(-4);
+  if(usedDates.length === 0) return null;
+  return { L: median(usedDates.map(d => byDate[d])), n: usedDates.length, usedDates };
+}
+
+// 気温(11-15時平均)がどの調整%ビンに該当するかを返す（既存のtempAdjustment()と同じ境界）。
+function tempAdjPctBinFor(tempAdjPct, temp){
+  if(temp <= 15) return { pct: tempAdjPct.le15, label: "15℃以下" };
+  if(temp <= 17) return { pct: tempAdjPct.b16_17, label: "16〜17℃" };
+  if(temp <= 24) return { pct: tempAdjPct.b18_24, label: "18〜24℃" };
+  if(temp <= 28) return { pct: tempAdjPct.b25_28, label: "25〜28℃" };
+  return { pct: tempAdjPct.ge29, label: "29℃以上" };
+}
+
+// 「売れ行き＋天気」の予測数を計算する。trendInfo（computeSalesTrendLの戻り値）がnull
+// （直近の売れ行きデータが無い）場合はnullを返し、呼び出し側（resolveStoreForecast）が
+// 曜日基準値へのフォールバックを行う。
+function calcSalesTrendForecast(trendInfo, salesWeather, trendSettings){
+  if(!trendInfo || trendInfo.L === null || trendInfo.L === undefined) return null;
+
+  const { coefficient, minGuarantee, tempAdjPct, rainAdjPct } = trendSettings;
+  const trendVal = trendInfo.L * coefficient;
+  let total = trendVal;
+  const lLabel = Number.isInteger(trendInfo.L) ? String(trendInfo.L) : trendInfo.L.toFixed(1);
+  const reasons = [`売れ行き L=${lLabel}×${coefficient}(${trendInfo.n}日分)=${Math.round(trendVal)}個`];
+
+  if(salesWeather){
+    const { pct: tPct, label: tLabel } = tempAdjPctBinFor(tempAdjPct, salesWeather.avgTemp);
+    if(tPct){
+      total += trendVal * (tPct / 100);
+      reasons.push(`気温${tLabel} ${tPct >= 0 ? "+" : ""}${tPct}%`);
+    } else {
+      reasons.push(`気温${tLabel} 補正なし`);
+    }
+    if(salesWeather.hasRainGeneral){
+      if(rainAdjPct){
+        total += trendVal * (rainAdjPct / 100);
+        reasons.push(`雨 ${rainAdjPct >= 0 ? "+" : ""}${rainAdjPct}%`);
+      } else {
+        reasons.push("雨 補正なし");
+      }
+    }
+  } else {
+    reasons.push("予報範囲外のため気温・天気補正なし");
+  }
+
+  total = Math.round(total);
+  if(minGuarantee > 0 && total < minGuarantee){
+    total = minGuarantee;
+    reasons.push(`最低保証 ${minGuarantee}個 を適用`);
+  }
+  return { total, reasons, trendInfo };
+}
+
+// 店舗・日付・曜日・（天気で自動計算／売れ行き＋天気の店舗向けに）販売時間帯の天気から、
+// その日の予測数を1つの関数で算出する。admin.html・index.htmlはどちらもこの関数だけを
+// 呼べばよく、店舗ごとの計算式の呼び分け・営業設定の重ね適用を個別に書く必要が無い
 // （以前はこれらをページごとに別々に組み立てていたため、判定が食い違う不具合があった）。
+// trendInfo（売れ行き＋天気の店舗向け。computeSalesTrendLの戻り値）は、method="trend"
+// でない店舗・直近データが不要な場合は省略してよい（undefinedのまま渡しても問題ない）。
 // 休業（null）：営業期間・営業曜日の対象外の日、またはその曜日の基準値/固定数が
 // 読み取れない（既定値も無い）日。
-function resolveStoreForecast(storeSettings, store, iso, dow, salesWeather){
+function resolveStoreForecast(storeSettings, store, iso, dow, salesWeather, trendInfo){
   const config = getStoreConfig(storeSettings, store);
   if(!isStoreOperatingOn(config, iso, dow)) return null;
+
+  const method = getStoreForecastMethod(storeSettings, store);
+
+  if(method === "trend"){
+    const trendSettings = getStoreTrendSettings(storeSettings, store);
+    const result = calcSalesTrendForecast(trendInfo, salesWeather, trendSettings);
+    if(result) return result;
+    // 直近の売れ行きデータが無い（開店直後、または売れ行きの計算に使うデータの開始日を
+    // 直近に設定した直後など）場合は、曜日基準値（既定値）にフォールバックする
+    const fallbackBase = getStoreWeekdayBase(storeSettings, store, dow);
+    if(fallbackBase === null) return null;
+    let total = fallbackBase;
+    const reasons = [`${DAY_NAMES[dow]}曜ベース ${fallbackBase}個`, "直近の売れ行きデータが無いため基準値を使用"];
+    if(trendSettings.minGuarantee > 0 && total < trendSettings.minGuarantee){
+      total = trendSettings.minGuarantee;
+      reasons.push(`最低保証 ${trendSettings.minGuarantee}個 を適用`);
+    }
+    return { total, reasons };
+  }
+
   const base = getStoreWeekdayBase(storeSettings, store, dow);
   if(base === null) return null;
 
-  const method = getStoreForecastMethod(storeSettings, store);
   if(method === "fixed"){
     return { total: base, reasons: [`固定数 ${base}個`] };
   }
