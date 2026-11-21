@@ -38,9 +38,14 @@ const FORECAST_METHOD_CAPABLE_STORES = ["Zuid", "UvA"];
 // Rozengrachtは「固定数」のまま＝今回変更しない）。
 const TREND_METHOD_CAPABLE_STORES = ["Zuid"];
 
-// 「売れ行き＋天気」の気温帯ビン。既存のtempAdjustment()と同じ境界を使う（比較・継続性のため）。
+// 「売れ行き＋天気」の気温帯ビン。16℃以上は既存のtempAdjustment()と同じ境界
+// （比較・継続性のため）。15℃以下は、冬の気温帯（最近は7〜14℃付近に集中）で
+// 体感の差をより細かく反映できるよう4段階に分けている（0℃以下・0〜5℃・5〜10℃・10〜15℃）。
 const TREND_TEMP_BINS = [
-  { key: "le15", label: "15℃以下", header: "気温調整15℃以下%" },
+  { key: "le0", label: "0℃以下", header: "気温調整0℃以下%" },
+  { key: "b0_5", label: "0〜5℃", header: "気温調整0-5℃%" },
+  { key: "b5_10", label: "5〜10℃", header: "気温調整5-10℃%" },
+  { key: "b10_15", label: "10〜15℃", header: "気温調整10-15℃%" },
   { key: "b16_17", label: "16〜17℃", header: "気温調整16-17℃%" },
   { key: "b18_24", label: "18〜24℃", header: "気温調整18-24℃%" },
   { key: "b25_28", label: "25〜28℃", header: "気温調整25-28℃%" },
@@ -66,10 +71,14 @@ const DEFAULT_STORE_SETTINGS = {
     // 売れ行きの計算に使うデータの開始日（未設定＝全期間のデータを使う）
     salesTrendStartDate: "",
     // 気温調整%：2026-07-01〜2026-11-19の実績とOpen-Meteo過去天気から分析した結果。
-    // 15℃以下のみ、直前7営業日中央値からの残差が一貫して負（データ21日、平均-10.3%）だったため
-    // -10%を初期値にする。他の気温帯・雨の有無は、データ不足または符号が不安定だったため0%
-    // （推測で数字を作らないため）。詳細は実装時の報告を参照。
-    tempAdjPct: { le15: -10, b16_17: 0, b18_24: 0, b25_28: 0, ge29: 0 },
+    // 冬の気温帯（最近は7〜14℃付近）をより細かく見るため、旧「15℃以下」ビンを4段階
+    // （0℃以下・0〜5℃・5〜10℃・10〜15℃）に分けて再分析した：
+    //   5〜10℃  : 直前7営業日中央値からの残差の中央値-11.3%（データ11日）→ -11%
+    //   10〜15℃ : 同-7.6%（データ10日）→ -8%
+    //   0℃以下・0〜5℃ : 該当する実績データが無いため0%のまま（推測で数字を作らないため。
+    //     このビンに当たる日の実績がたまったら、店舗設定画面で数値を入力して補ってください）
+    // 他の気温帯・雨の有無は、データ不足または符号が不安定だったため0%。詳細は実装時の報告を参照。
+    tempAdjPct: { le0: 0, b0_5: 0, b5_10: -11, b10_15: -8, b16_17: 0, b18_24: 0, b25_28: 0, ge29: 0 },
     rainAdjPct: 0,
     // 保証の最低数（0=保証なし）。直近2週間の実績（44〜60個、平均51個）が既存の保証100を
     // 大きく下回っているため、「売れ行き＋天気」の初期値は0（保証なし）とする
@@ -415,7 +424,10 @@ function computeSalesTrendL(hourlyRows, store, asOfIso, startDate){
 
 // 気温(11-15時平均)がどの調整%ビンに該当するかを返す（既存のtempAdjustment()と同じ境界）。
 function tempAdjPctBinFor(tempAdjPct, temp){
-  if(temp <= 15) return { pct: tempAdjPct.le15, label: "15℃以下" };
+  if(temp <= 0) return { pct: tempAdjPct.le0, label: "0℃以下" };
+  if(temp <= 5) return { pct: tempAdjPct.b0_5, label: "0〜5℃" };
+  if(temp <= 10) return { pct: tempAdjPct.b5_10, label: "5〜10℃" };
+  if(temp <= 15) return { pct: tempAdjPct.b10_15, label: "10〜15℃" };
   if(temp <= 17) return { pct: tempAdjPct.b16_17, label: "16〜17℃" };
   if(temp <= 24) return { pct: tempAdjPct.b18_24, label: "18〜24℃" };
   if(temp <= 28) return { pct: tempAdjPct.b25_28, label: "25〜28℃" };

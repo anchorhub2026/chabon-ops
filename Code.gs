@@ -650,14 +650,18 @@ var STORE_SETTINGS_SHEET_NAME = "店舗設定";
 var STORE_SETTINGS_HEADER = ["店舗名", "開始日", "終了日", "月", "火", "水", "木", "金", "土", "日", "予測の方法",
   "月曜基準値", "火曜基準値", "水曜基準値", "木曜基準値", "金曜基準値", "土曜基準値", "日曜基準値",
   "売れ行き係数", "売れ行き開始日",
-  "気温調整15℃以下%", "気温調整16-17℃%", "気温調整18-24℃%", "気温調整25-28℃%", "気温調整29℃以上%",
+  "気温調整0℃以下%", "気温調整0-5℃%", "気温調整5-10℃%", "気温調整10-15℃%",
+  "気温調整16-17℃%", "気温調整18-24℃%", "気温調整25-28℃%", "気温調整29℃以上%",
   "雨調整%", "保証最低数",
   "更新日時"];
-// 「売れ行き係数」〜「保証最低数」（19〜26列目）は、「売れ行き＋天気」予測方式
+// 「売れ行き係数」〜「保証最低数」（19〜29列目）は、「売れ行き＋天気」予測方式
 // （store-settings.jsのresolveStoreForecast/calcSalesTrendForecast参照）のために追加した列。
 // 既存の列（1〜18列目・更新日時）の位置・意味は変えていない。これより前に保存された行は
 // これらの列が空になり、store-settings.jsのgetStoreTrendSettings()がDEFAULT_STORE_SETTINGSの
 // 既定値にフォールバックする。
+// 気温調整列は、冬の気温帯（15℃以下）をより細かく見るため「0℃以下」「0-5℃」「5-10℃」
+// 「10-15℃」の4列に分けている（旧「気温調整15℃以下%」1列から変更。この機能はまだ
+// 保存されたことが無いため、既存データへの影響は無い）。
 
 function storeSettingsRowValues(store, data) {
   var weekdays = data.weekdays || {};
@@ -683,7 +687,8 @@ function storeSettingsRowValues(store, data) {
     baseStr("mon"), baseStr("tue"), baseStr("wed"), baseStr("thu"), baseStr("fri"), baseStr("sat"), baseStr("sun"),
     numStr(data.salesTrendCoefficient),
     String(data.salesTrendStartDate || ""),
-    tempStr("le15"), tempStr("b16_17"), tempStr("b18_24"), tempStr("b25_28"), tempStr("ge29"),
+    tempStr("le0"), tempStr("b0_5"), tempStr("b5_10"), tempStr("b10_15"),
+    tempStr("b16_17"), tempStr("b18_24"), tempStr("b25_28"), tempStr("ge29"),
     numStr(data.rainAdjPct),
     numStr(data.minGuarantee),
     updatedAtStr
