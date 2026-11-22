@@ -1415,6 +1415,16 @@
     color: #888;
     margin: 8px 0 0;
   }
+  .store-settings-trend-temp-accum-notice{
+    flex-basis: 100%;
+    font-size: 0.74rem;
+    color: #1a7a3c;
+    background: #eaf7ee;
+    border: 1px solid #bfe6cb;
+    border-radius: 8px;
+    padding: 4px 8px;
+    margin: 2px 0 0;
+  }
 
 </style>
 </head>
@@ -1794,6 +1804,22 @@ async function fetchNsDisruptions(){
   }catch(e){
     console.error("NS運休・スト情報の取得に失敗しました", e);
     return {};
+  }
+}
+
+// Zuidの気温調整%の各帯（TREND_TEMP_BINS、store-settings.js）について、実績データが
+// 何日分たまっているかを取得する（type=tempBinDayCounts、Code.gsのcountZuidTempBinDays_）。
+// 表示専用で自動で調整値を変えることはしない。過去気象の取得を伴うため重め・かつ表示に
+// 必須ではないため、祝日・NS運休情報と同様に非ブロッキングで取得する。
+async function fetchTempBinDayCounts(){
+  try{
+    const res = await fetch(`${SCRIPT_URL}?type=tempBinDayCounts`, { cache: "no-store" });
+    const json = await res.json();
+    if(json.error) console.warn("気温帯ごとのデータ日数の取得で警告:", json.error);
+    return json.counts || null;
+  }catch(e){
+    console.error("気温帯ごとのデータ日数の取得に失敗しました", e);
+    return null;
   }
 }
 
@@ -4772,6 +4798,21 @@ function weekdayBaseNoteSuffix(method){
   return "空欄の曜日は、コードの元の基準値（入力欄に薄く表示されている数）を使います。設定が無ければ休業になります。";
 }
 
+// 気温調整%が未設定（0%のまま）の気温帯について、実績データが一定日数以上たまったら
+// 「調整値を計算できます」と知らせる表示を返す（0〜5℃・0℃以下は、データ不足のため
+// 2026-11時点では調整値を0%にしたまま。表示のみで、自動で値を変えることは一切しない）。
+// state.tempBinDayCounts（type=tempBinDayCounts、Zuid専用。Code.gsのcountZuidTempBinDays_）
+// が未取得（非ブロッキングで取得中・取得失敗）の間は何も表示しない。
+const TEMP_BIN_DATA_ACCUMULATION_THRESHOLD_DAYS = 10;
+function tempBinDataAccumulationNoticeHtml(store, bin, trendSettings){
+  if(store !== "Zuid" || !state.tempBinDayCounts) return "";
+  const currentPct = trendSettings.tempAdjPct[bin.key];
+  if(currentPct !== 0) return ""; // 既に調整値が設定済みの気温帯には表示しない
+  const days = state.tempBinDayCounts[bin.key] || 0;
+  if(days < TEMP_BIN_DATA_ACCUMULATION_THRESHOLD_DAYS) return "";
+  return `<p class="store-settings-trend-temp-accum-notice">${bin.label}の実績が${days}日分たまりました。調整値を計算できます。</p>`;
+}
+
 function renderStoreSettingsList(){
   renderStoreSettingsWarning();
   const area = document.getElementById("storeSettingsList");
@@ -4833,7 +4874,7 @@ function renderStoreSettingsList(){
             <label class="store-settings-trend-adj-label" data-trend-temp-key="${b.key}">
               気温${b.label}
               <input type="number" class="store-settings-trend-temp-adj" data-key="${b.key}" step="1" value="${trendSettings.tempAdjPct[b.key]}">%
-            </label>`).join("")}
+            </label>${tempBinDataAccumulationNoticeHtml(store, b, trendSettings)}`).join("")}
           <label class="store-settings-trend-adj-label">
             雨（販売時間帯）
             <input type="number" class="store-settings-trend-rain-adj" step="1" value="${trendSettings.rainAdjPct}">%
@@ -5724,6 +5765,7 @@ async function refreshAllData(){
     // 下の必須データ取得（Promise.all）とは完全に切り離して並行に走らせる
     const holidaysPromise = fetchDutchHolidays([thisYear, thisYear + 1]);
     const nsDisruptionsPromise = fetchNsDisruptions();
+    const tempBinDayCountsPromise = fetchTempBinDayCounts();
 
     const [weatherRes, smallSheets, shiftJson, bootstrap, uvaCalendarJson, uvaCoefficientsJson, confirmedPlanJson, hourlyHistoryRows] = await Promise.all([
       withTimeout(fetch(weatherUrl).then(r => r.json()), "天気予報"),
@@ -5834,6 +5876,11 @@ async function refreshAllData(){
       state.holidaysByIso = resolvedHolidaysByIso;
       state.nsDisruptionsByDate = resolvedNsDisruptionsByDate;
       rebuildDaysAndRender();
+    });
+    tempBinDayCountsPromise.then(counts => {
+      if(!counts) return;
+      state.tempBinDayCounts = counts;
+      renderStoreSettingsList();
     });
   }catch(e){
     console.error("データ更新失敗", e);
@@ -6092,6 +6139,9 @@ async function init(){
     state.nsDisruptionsByDate = {};
     const holidaysPromise = fetchDutchHolidays([thisYear, thisYear + 1]);
     const nsDisruptionsPromise = fetchNsDisruptions();
+    // Zuidの気温帯ごとのデータ蓄積日数も、店舗設定画面の表示専用（計算には使わない）のため
+    // 同様に非ブロッキングで取得する
+    const tempBinDayCountsPromise = fetchTempBinDayCounts();
 
     // 各取得にどんな名前を付けて進捗表示するか（まだ取得中のものの名前が分かるようにする）
     const pendingLabels = new Set([
@@ -6229,6 +6279,12 @@ async function init(){
       state.holidaysByIso = resolvedHolidaysByIso;
       state.nsDisruptionsByDate = resolvedNsDisruptionsByDate;
       rebuildDaysAndRender();
+    });
+    // Zuidの気温帯ごとのデータ蓄積日数も、取得できたら店舗設定画面に反映する（表示専用）
+    tempBinDayCountsPromise.then(counts => {
+      if(!counts) return;
+      state.tempBinDayCounts = counts;
+      renderStoreSettingsList();
     });
   }catch(e){
     console.error(e);
