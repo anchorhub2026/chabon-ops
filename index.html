@@ -492,6 +492,18 @@
   #actualSalesArea .hourly-table th:nth-child(2), #actualSalesArea .hourly-table td:nth-child(2){ left: 118px; }
   .store-section{ margin-bottom: 20px; }
   .store-heading{ font-size: 1rem; font-weight: bold; color: var(--main-dark); margin: 12px 0 6px; }
+  .rozen-closing-estimate-card{
+    background: var(--card); border: 2px solid var(--main); border-radius: 10px;
+    padding: 14px; margin-bottom: 10px;
+  }
+  .rozen-closing-estimate-card.past-deadline{ border-color: var(--accent); }
+  .rozen-estimate-headline{
+    margin: 0 0 8px; font-size: 1.1rem; font-weight: bold; color: var(--main-dark); line-height: 1.4;
+  }
+  .rozen-closing-estimate-card.past-deadline .rozen-estimate-headline{ color: var(--accent); }
+  .rozen-estimate-detail{ margin: 0; padding-left: 18px; font-size: 0.86rem; color: #555; }
+  .rozen-estimate-detail li{ margin-bottom: 2px; }
+  .rozen-estimate-insufficient{ margin: 0; color: #777; font-size: 0.9rem; }
   .location-input-row{ margin-bottom: 6px; font-size: 0.88rem; }
   .location-input-row input{ border: 1px solid #ccc; border-radius: 4px; padding: 3px 6px; font-size: 0.88rem; width: 140px; margin-left: 4px; }
   .soldout-time-row{ margin-bottom: 6px; font-size: 0.88rem; }
@@ -1331,6 +1343,7 @@ function renderActualSales(){
     </div>
     <div class="store-section">
       <div class="store-heading">🏪 Rozengracht</div>
+      <div class="rozen-closing-estimate-card" id="rozenClosingEstimateCard"></div>
       <div class="table-scroll table-scroll--bounded">${buildStoreTable("Rozengracht", fillings, rozenTotals)}</div>
       <div class="soldout-time-row">
         販売終了時間：<input type="time" id="soldoutTime-Rozengracht">
@@ -1342,7 +1355,10 @@ function renderActualSales(){
   `;
 
   area.querySelectorAll(".hourly-input, .made-input, .given-input, .received-input, .moved-input, .moved-uva-input, .moved-rozen-input").forEach(inp =>
-    inp.addEventListener("input", () => updateSoldDisplay(["Zuid", "UvA", "Rozengracht"], fillings))
+    inp.addEventListener("input", () => {
+      updateSoldDisplay(["Zuid", "UvA", "Rozengracht"], fillings);
+      refreshRozenClosingEstimateCard(state.storeSettings);
+    })
   );
   ["Zuid", "UvA", "Rozengracht"].forEach(wireNoteLengthWarning);
   const saveBtns = {
@@ -1383,6 +1399,7 @@ async function refreshHourlyRecords(){
   const rows = await fetchHourlyData(SCRIPT_URL, today.dateStr);
   restoreHourlyInputs(rows, today.dateStr);
   updateSoldDisplay(["Zuid", "UvA", "Rozengracht"], fillings);
+  refreshRozenClosingEstimateCard(state.storeSettings);
 
   // 楽観的ロックの基準値（保存前チェック用）を、店舗ごとに最新の更新日時で更新しておく
   if(!state.hourlyUpdatedAtByStore) state.hourlyUpdatedAtByStore = {};
@@ -1742,6 +1759,10 @@ async function loadWeather(){
 }
 
 document.getElementById("refreshHourlyBtn").addEventListener("click", handleRefreshHourlyClick);
+
+// Rozengrachtの「見込み」カードは判断の締め切り前後で表示を切り替えるため、
+// 入力が無くても時間経過だけで反映されるよう1分おきに更新する
+setInterval(() => refreshRozenClosingEstimateCard(state.storeSettings), 60000);
 
 renderFillings();
 loadWeather();
