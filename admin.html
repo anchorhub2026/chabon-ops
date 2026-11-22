@@ -2704,10 +2704,15 @@ function bindForecastTableEvents(day){
     });
   });
 
-  // この日の全データをリセット（forecast + production 両方）
+  // この日の全データをリセット（forecast + production 両方）。修正中は「予測を最新にする」＋
+  // 「割り振りリセット」をまとめて行う（resetDayDataはday.zuid等の現在の値から予測を
+  // 組み立て直すため、修正中かどうかに関わらず同じ関数でよい）
   container.querySelectorAll(".reset-day-btn:not(.reset-prod-btn)").forEach(btn => {
     btn.addEventListener("click", () => {
-      showConfirm(`${day.label}の販売予測数・生産割り振りを全てリセットしますか？`, () => {
+      const message = day.isRevising
+        ? `${day.label}の販売予測を最新の値に置き換え、生産割り振りを今の予測で振り分け直します。手で調整した分は消えます。よろしいですか？`
+        : `${day.label}の販売予測数・生産割り振りを全てリセットしますか？`;
+      showConfirm(message, () => {
         resetDayData(day);
       });
     });
@@ -3235,6 +3240,7 @@ function dayBlockHtml(day){
     const willStayPublished = hasConfirmedPlan && confirmedData.publishState === "公開";
     revisionActionsHtml = `
       <span class="revise-status-msg" id="reviseStatus-${day.dateKey}"></span>
+      <button type="button" class="refresh-forecast-btn" data-key="${day.dateKey}" title="販売予測数を、確定時の値から最新の値に置き換えます">予測を最新にする</button>
       <button type="button" class="publish-revision-btn" data-key="${day.dateKey}">${willStayPublished ? "修正を確定（シフト表にも反映）" : "修正を確定"}</button>
       <button type="button" class="cancel-revision-btn" data-key="${day.dateKey}">修正をやめる</button>
     `;
@@ -3318,8 +3324,8 @@ function dayBlockHtml(day){
       ${hasSavedForecast ? `<span class="saved-indicator">💾 予測保存済み</span>` : ""}
       ${hasSavedProd ? `<span class="saved-indicator">💾 割り振り保存済み</span>` : ""}
       <span class="draft-conflict-msg" id="draftConflict-${day.dateKey}"></span>
-      <button type="button" class="reset-day-btn" data-key="${day.dateKey}" ${(lockReason || isRevising) ? "disabled" : ""}>🗑 全リセット</button>
-      <button type="button" class="reset-prod-btn" data-key="${day.dateKey}" ${(lockReason || isRevising) ? "disabled" : ""}>🗑 割り振りリセット</button>
+      <button type="button" class="reset-day-btn" data-key="${day.dateKey}" ${lockReason ? "disabled" : ""}>${isRevising ? "🗑 全リセット（予測も最新にする）" : "🗑 全リセット"}</button>
+      <button type="button" class="reset-prod-btn" data-key="${day.dateKey}" ${lockReason ? "disabled" : ""}>🗑 割り振りリセット</button>
       ${revisionActionsHtml}
     </div>
   `;
@@ -3953,13 +3959,17 @@ function bindProductionDayEvents(day){
     });
   });
 
-  // 生産割り振りのみリセット
+  // 生産割り振りのみリセット（今の販売予測数・最新のシフト回答の希望数で自動割り振りをやり直す）
   container.querySelectorAll(".reset-prod-btn").forEach(btn => {
     btn.addEventListener("click", () => {
-      showConfirm(`${day.label}の生産割り振りをリセットしますか？`, () => {
+      const message = day.isRevising
+        ? `${day.label}の割り振りを、今の予測で振り分け直します。手で調整した分は消えます。よろしいですか？`
+        : `${day.label}の生産割り振りをリセットしますか？`;
+      showConfirm(message, () => {
         const dateStr = mdLabel(day.dateObj);
         try{ localStorage.removeItem(`chabon_prod_${dateStr}`); }catch(e){}
         try{ localStorage.removeItem(`chabon_prodStore_${dateStr}`); }catch(e){}
+        refreshRevisingMemberCaps(day);
         day.memberFillingQty = {};
         day.memberStoreFillingQty = {};
         day.prodManuallyEdited = {};
@@ -3978,6 +3988,15 @@ function bindProductionDayEvents(day){
 
   const cancelRevisionBtn = container.querySelector(".cancel-revision-btn");
   if(cancelRevisionBtn) cancelRevisionBtn.addEventListener("click", () => cancelRevisingDay(day));
+
+  const refreshForecastBtn = container.querySelector(".refresh-forecast-btn");
+  if(refreshForecastBtn){
+    refreshForecastBtn.addEventListener("click", () => {
+      showConfirm(`${day.label}の販売予測を最新の値に置き換えます。確定時の内訳は消えます。よろしいですか？`, () => {
+        refreshRevisingForecast(day);
+      });
+    });
+  }
 
   // 日ごとの確定・公開・公開取り消し
   const confirmDayBtn = container.querySelector(".confirm-day-btn");
@@ -5141,6 +5160,49 @@ function loadProdAllocData(day){
   }catch(e){ return false; }
 }
 
+// 修正中の日の各メンバーの希望数（割り振りの上限として使われるday.revisingMemberCaps）を、
+// 最新のシフト回答で更新する。startRevisingDay()が確定プランの内容から一度だけ作成した
+// revisingMemberCapsは、修正を始めた後にシフト回答が変わっても自動では更新されないため、
+// このままだと「割り振りリセット」を押しても、確定時点で凍結された古い希望数のままにしか
+// 振り分けられず、予測数（必要数）が確定時より増えた具材があると「割り当て先がありません」
+// 「超過」が解消しない（希望数の合計が必要数に足りない状態が残る）。
+// 「割り振りリセット」「全リセット」が呼ばれるたびに、ここで希望数を最新化してから
+// 自動割り振り（buildProductionPlan）をやり直す。
+function refreshRevisingMemberCaps(day){
+  if(!day.isRevising || !day.revisingWorking) return;
+  const caps = {};
+  day.revisingWorking.forEach(name => {
+    caps[name] = name === CHISE_MEMBER ? 0 : getManualQty(day, name);
+  });
+  day.revisingMemberCaps = caps;
+}
+
+// 修正中の日の販売予測だけを、確定時の値から最新の値（day.zuid/uva/rozen。チセさんシートの
+// 最新の注文・店舗の営業設定・予測の方法を反映した、buildDays()が計算した現在の値）に
+// 置き換える。生産割り振り（memberFillingQty）には触れない（必要なら別途「割り振りリセット」
+// で振り分け直す）。手調整も0に戻す（baseTotal＝手調整前の計算値に戻す）。
+// day.zuid等はstartRevisingDay()で書き換えられないため、この時点でも既に最新の計算値を
+// 保持している（修正中に表示・編集していたのはday.zuidFillingQty等の確定時スナップショットの
+// 方だけ）。
+function refreshRevisingForecast(day){
+  if(!day.isRevising) return;
+  day.manualAdjust = { zuid: 0, uva: 0, rozen: 0 };
+  ["zuid", "uva", "rozen"].forEach(key => {
+    if(day[key] && day[key].baseTotal !== undefined){
+      day[key].total = day[key].baseTotal;
+      day[key].reasons = day[key].reasons.filter(r => !r.startsWith("手調整 "));
+    }
+  });
+  day.zuidOpen = day.zuid !== null;
+  day.zuidFillingQty = day.zuid ? buildFillingDefaults(day.zuid.total) : buildFillingDefaults(0);
+  day.uvaOpen = day.uva !== null;
+  day.uvaFillingQty = day.uva ? buildFillingDefaults(day.uva.total) : buildFillingDefaults(0);
+  day.rozenOpen = day.rozen !== null;
+  day.rozenFillingQty = day.rozen ? buildFillingDefaults(day.rozen.total) : buildFillingDefaults(0);
+  renderDayBlock(day);
+  refreshProductionCellDerived(day);
+}
+
 function resetDayData(day){
   const dateStr = mdLabel(day.dateObj);
   try{ localStorage.removeItem(`chabon_forecast_${dateStr}`); }catch(e){}
@@ -5161,6 +5223,7 @@ function resetDayData(day){
   day.rozenOpen = day.rozen !== null;
   day.rozenFillingQty = day.rozen ? buildFillingDefaults(day.rozen.total) : buildFillingDefaults(0);
   day.chisePriorityAssignee = "自動";
+  refreshRevisingMemberCaps(day);
   day.memberFillingQty = {};
   day.memberStoreFillingQty = {};
   day.prodManuallyEdited = {};
