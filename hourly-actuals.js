@@ -539,6 +539,71 @@ function wireNoteLengthWarning(storeKey){
   check();
 }
 
+// ---------- Rozengrachtの「見込み」（炊飯の目安）カード ----------
+// index.html・rozen.htmlの両方で、Rozengrachtの実績入力欄の近くに表示する。
+// 具材別の個数ではなく、updateStoreSoldDisplay()が書き込む「全具材合計」の
+// total-cum-Rozengracht-{si}／total-remain-Rozengracht-{si}（si=時間帯スロットの
+// 配列インデックス）を読み、store-settings.jsのcomputeRozenClosingEstimate()に渡す。
+// 係数・累計売上のどちらかが無ければ目安を一切表示しない（自動で値を作らない）。
+
+// 全具材合計の累計売上・残数（updateStoreSoldDisplayが書き込むDOM）から、
+// 指定した店舗・時間（hour）の値を読む。該当スロットが無い、またはまだ未入力ならnull。
+function readStoreTotalAtHour(storeKey, hour, slots){
+  const hourlySlots = slots || HOURLY_SLOTS;
+  const si = hourlySlots.indexOf(hour);
+  if(si === -1) return { cum: null, remain: null };
+  const cumEl = document.getElementById(`total-cum-${storeKey}-${si}`);
+  const remainEl = document.getElementById(`total-remain-${storeKey}-${si}`);
+  const cum = cumEl && cumEl.textContent !== "" ? Number(cumEl.textContent) : null;
+  const remain = remainEl && remainEl.textContent !== "" ? Number(remainEl.textContent) : null;
+  return { cum, remain };
+}
+
+// 現在時刻・Rozengrachtの今の累計売上/残数（DOM）・店舗設定から「見込み」を計算し、
+// #rozenClosingEstimateCard（無ければ何もしない）に反映する。
+// index.html/rozen.htmlの両方から、updateStoreSoldDisplay("Rozengracht", fillings)の
+// 直後（読み込み直後・入力変更時の両方）に呼ぶ。
+function refreshRozenClosingEstimateCard(storeSettings, slots){
+  if(!document.getElementById("rozenClosingEstimateCard")) return;
+  const settings = getRozenClosingSettings(storeSettings);
+  const now = new Date();
+  const checkpointHour = latestHourlyCheckpoint(ROZEN_CLOSING_ESTIMATE_HOURS, now);
+  const totals = checkpointHour !== null ? readStoreTotalAtHour("Rozengracht", checkpointHour, slots) : { cum: null, remain: null };
+  const estimate = computeRozenClosingEstimate(settings, now, now.getDay(), totals.cum, totals.remain);
+  renderRozenClosingEstimateCard(estimate);
+}
+
+// estimate（computeRozenClosingEstimateの戻り値）からカードのHTMLを組み立てて反映する。
+function renderRozenClosingEstimateCard(estimate){
+  const el = document.getElementById("rozenClosingEstimateCard");
+  if(!el) return;
+  if(!estimate || estimate.insufficient){
+    el.classList.remove("past-deadline");
+    el.innerHTML = `<p class="rozen-estimate-insufficient">まだ見込みを計算できません（実績データがまだ無い、または見込み係数が未設定です。管理画面の店舗設定で入力してください）。</p>`;
+    return;
+  }
+
+  const pad2 = n => String(n).padStart(2, "0");
+  const readyLabel = `${pad2(estimate.readyDate.getHours())}:${pad2(estimate.readyDate.getMinutes())}`;
+  const hoursLabel = estimate.hoursUntilClose !== null ? `${estimate.hoursUntilClose.toFixed(1)}時間` : "—";
+
+  el.classList.toggle("past-deadline", estimate.pastDeadline);
+  const headline = estimate.pastDeadline
+    ? `⚠️ 判断の締め切り（${estimate.deadlineLabel}）を過ぎています。以下は参考値です<br><strong>${estimate.goCount}合炊く目安（参考）</strong>`
+    : `<strong>${estimate.deadlineLabel}までに判断：${estimate.goCount}合炊く目安</strong>`;
+
+  el.innerHTML = `
+    <p class="rozen-estimate-headline">${headline}</p>
+    <ul class="rozen-estimate-detail">
+      <li>今の累計売上（${estimate.checkpointHour}時時点）：${estimate.cumNow}個</li>
+      <li>残り（在庫）：${estimate.stockNow}個</li>
+      <li>最終合計の見込み：${estimate.estimatedFinalTotal}個（累計×係数${estimate.coefficient}）</li>
+      <li>見込み（閉店までの売れ行き）：${estimate.remainingDemand}個</li>
+      <li>不足見込み：${estimate.shortfall}個（1合${estimate.piecesPerGo}個）</li>
+      <li>炊いたお米が並ぶ時刻：${readyLabel}ごろ（閉店${estimate.closingLabel}まで残り${hoursLabel}）</li>
+    </ul>`;
+}
+
 // ---------- 入力中セルの強調（どこに入力しているか分からなくなる・誤タップを防ぐ） ----------
 // buildStoreTable()の入力欄にフォーカスが当たったら、その入力欄自体（hourly-table.cssの
 // :focus）に加えて、同じ行（具材＝tr）・同じ列（時間帯＝data-slotが一致するtd）に薄い色を

@@ -38,6 +38,10 @@ const FORECAST_METHOD_CAPABLE_STORES = ["Zuid", "UvA"];
 // Rozengrachtは「固定数」のまま＝今回変更しない）。
 const TREND_METHOD_CAPABLE_STORES = ["Zuid"];
 
+// Rozengrachtの「見込み」（炊飯の目安）で、係数を判定するチェックポイント時刻
+// （時間帯別実績シートの時間帯と同じ12〜17時。18時は閉店間際のため対象外）。
+const ROZEN_CLOSING_ESTIMATE_HOURS = [12, 13, 14, 15, 16, 17];
+
 // 「売れ行き＋天気」の気温帯ビン。16℃以上は既存のtempAdjustment()と同じ境界
 // （比較・継続性のため）。15℃以下は、冬の気温帯（最近は7〜14℃付近に集中）で
 // 体感の差をより細かく反映できるよう4段階に分けている（0℃以下・0〜5℃・5〜10℃・10〜15℃）。
@@ -94,6 +98,22 @@ const DEFAULT_STORE_SETTINGS = {
     weekdays: { mon: true, tue: true, wed: true, thu: true, fri: true, sat: true, sun: true },
     forecastMethod: "fixed",
     weekdayBase: { mon: 100, tue: 100, wed: 100, thu: 100, fri: 100, sat: 150, sun: 150 },
+    // 「見込み」（炊飯の目安）の設定。ユーザー指示の初期値：
+    // 閉店時刻17:00（平日・土日とも）・炊飯45分・下準備（炊けてから店頭に並ぶまで）15分・
+    // 判断の締め切り14:30・1合あたり3個。
+    closingTimeWeekday: "17:00",
+    closingTimeWeekend: "17:00",
+    riceCookMinutes: 45,
+    prepMinutes: 15,
+    decisionDeadline: "14:30",
+    piecesPerGo: 3,
+    // 見込み係数（チェックポイント時刻ごとの「最終合計÷その時点の累計売上」）：
+    // 2026-11-22時点ではRozengrachtの営業開始からまだ15日分しかデータが無く、特に12〜14時台は
+    // 日によって係数が0.06〜15倍とばらついて信頼できる値が出なかった（16・17時台は中央値
+    // 約1.0で安定）。推測で数字を作らず、0（未設定）のまま管理者が手入力する運用とする
+    // （店舗設定画面で、チェックポイントごとの実績データが5日分たまったら知らせる表示を出す）。
+    riceCoefWeekday: { 12: 0, 13: 0, 14: 0, 15: 0, 16: 0, 17: 0 },
+    riceCoefWeekend: { 12: 0, 13: 0, 14: 0, 15: 0, 16: 0, 17: 0 },
   },
 };
 
@@ -196,6 +216,21 @@ function parseStoreSettingsRows(rows){
     const rainAdjPct = numOrNull(cell("雨調整%"), "雨調整%");
     const minGuarantee = numOrNull(cell("保証最低数"), "保証最低数");
 
+    // Rozengrachtの「見込み」（炊飯の目安）用の列。他店舗の行では空欄のままになる
+    // （getRozenClosingSettings()がDEFAULT_STORE_SETTINGS.Rozengrachtにフォールバックする）。
+    const closingTimeWeekday = cell("閉店時刻(平日)");
+    const closingTimeWeekend = cell("閉店時刻(土日)");
+    const riceCookMinutes = numOrNull(cell("炊飯時間(分)"), "炊飯時間(分)");
+    const prepMinutes = numOrNull(cell("下準備時間(分)"), "下準備時間(分)");
+    const decisionDeadline = cell("判断締切時刻");
+    const piecesPerGo = numOrNull(cell("1合あたりの個数"), "1合あたりの個数");
+    const riceCoefWeekday = {};
+    const riceCoefWeekend = {};
+    ROZEN_CLOSING_ESTIMATE_HOURS.forEach(h => {
+      riceCoefWeekday[h] = numOrNull(cell(`見込み係数(平日)${h}時`), `見込み係数(平日)${h}時`);
+      riceCoefWeekend[h] = numOrNull(cell(`見込み係数(土日)${h}時`), `見込み係数(土日)${h}時`);
+    });
+
     settings[store] = {
       startDate: startDate || "",
       endDate: endDate || "",
@@ -207,6 +242,14 @@ function parseStoreSettingsRows(rows){
       tempAdjPct,
       rainAdjPct,
       minGuarantee,
+      closingTimeWeekday: closingTimeWeekday || "",
+      closingTimeWeekend: closingTimeWeekend || "",
+      riceCookMinutes,
+      prepMinutes,
+      decisionDeadline: decisionDeadline || "",
+      piecesPerGo,
+      riceCoefWeekday,
+      riceCoefWeekend,
     };
   }
   return { settings, warnings };
@@ -432,6 +475,146 @@ function tempAdjPctBinFor(tempAdjPct, temp){
   if(temp <= 24) return { pct: tempAdjPct.b18_24, label: "18〜24℃" };
   if(temp <= 28) return { pct: tempAdjPct.b25_28, label: "25〜28℃" };
   return { pct: tempAdjPct.ge29, label: "29℃以上" };
+}
+
+/* ---------- Rozengrachtの「見込み」（炊飯の目安） ---------- */
+// 「今日の累計売上×見込み係数＝今日の最終合計の見込み」から、閉店までに追加で必要な
+// 個数・炊く合数を計算する。係数は推測で作らず、管理者が店舗設定画面で手入力する
+// （データが少ない間は0=未設定のまま。この場合は目安を一切表示しない）。
+
+// 時間帯別実績の行配列（fetchHourlyData/getHourlySheetRowsの結果）から、指定店舗・
+// 指定時間（ROZEN_CLOSING_ESTIMATE_HOURS内）の累計売上／残数を日付ごとに合算する
+// （sumHourlyCum14ByDateの時間を指定できる一般化版。残数(r{hour})も同じ形で合算する）。
+function sumHourlyFieldByDate(hourlyRows, store, field){
+  const byDate = {};
+  (hourlyRows || []).forEach(r => {
+    if(!r || r.store !== store) return;
+    const v = r[field];
+    if(v === "" || v === null || v === undefined) return;
+    const n = Number(v);
+    if(!Number.isFinite(n)) return;
+    byDate[r.date] = (byDate[r.date] || 0) + n;
+  });
+  return byDate;
+}
+function sumHourlyCumByDate(hourlyRows, store, hour){ return sumHourlyFieldByDate(hourlyRows, store, `cum${hour}`); }
+function sumHourlyRemainByDate(hourlyRows, store, hour){ return sumHourlyFieldByDate(hourlyRows, store, `r${hour}`); }
+
+// ISO日付("yyyy-MM-dd")から平日/土日を判定する（シートの「曜日」列の表記揺れに
+// 影響されないよう、日付から直接計算する）。
+function weekdayGroupForIso(iso){
+  const d = new Date(`${iso}T00:00:00`);
+  const dow = d.getDay();
+  return (dow === 0 || dow === 6) ? "weekend" : "weekday";
+}
+
+// Rozengrachtの見込み係数（平日/土日×12〜17時）それぞれについて、実績データが
+// 何日分たまっているかを数える（admin.htmlの店舗設定画面の「データ蓄積」通知に使う。
+// 自動で係数を計算・保存することは一切しない）。0（未入力扱い）の日は、まだ売れていない
+// だけで信頼できるデータとはみなさず数えない。
+function countRozenCoefficientDays(hourlyRows){
+  const counts = { weekday: {}, weekend: {} };
+  ROZEN_CLOSING_ESTIMATE_HOURS.forEach(h => { counts.weekday[h] = 0; counts.weekend[h] = 0; });
+  ROZEN_CLOSING_ESTIMATE_HOURS.forEach(h => {
+    const byDate = sumHourlyCumByDate(hourlyRows, "Rozengracht", h);
+    Object.keys(byDate).forEach(iso => {
+      if(byDate[iso] <= 0) return;
+      counts[weekdayGroupForIso(iso)][h]++;
+    });
+  });
+  return counts;
+}
+
+// Rozengrachtの「見込み」の設定を返す（店舗設定シートの保存値、無ければ既定値
+// DEFAULT_STORE_SETTINGS.Rozengrachtにフォールバック）。
+function getRozenClosingSettings(storeSettings){
+  const config = storeSettings && storeSettings["Rozengracht"];
+  const def = DEFAULT_STORE_SETTINGS.Rozengracht;
+  const strOr = (v, fallback) => (v !== null && v !== undefined && v !== "") ? v : fallback;
+  const numOr = (v, fallback) => {
+    if(v === null || v === undefined || v === "") return fallback;
+    const n = Number(v);
+    return Number.isFinite(n) ? n : fallback;
+  };
+  const coefMapOr = (saved, fallback) => {
+    const out = {};
+    ROZEN_CLOSING_ESTIMATE_HOURS.forEach(h => { out[h] = numOr(saved ? saved[h] : null, (fallback && fallback[h]) || 0); });
+    return out;
+  };
+  return {
+    closingTimeWeekday: strOr(config && config.closingTimeWeekday, def.closingTimeWeekday),
+    closingTimeWeekend: strOr(config && config.closingTimeWeekend, def.closingTimeWeekend),
+    riceCookMinutes: numOr(config && config.riceCookMinutes, def.riceCookMinutes),
+    prepMinutes: numOr(config && config.prepMinutes, def.prepMinutes),
+    decisionDeadline: strOr(config && config.decisionDeadline, def.decisionDeadline),
+    piecesPerGo: numOr(config && config.piecesPerGo, def.piecesPerGo),
+    riceCoefWeekday: coefMapOr(config && config.riceCoefWeekday, def.riceCoefWeekday),
+    riceCoefWeekend: coefMapOr(config && config.riceCoefWeekend, def.riceCoefWeekend),
+  };
+}
+
+// "HH:mm"形式の文字列を{h,m}に変換する。不正な形式ならnull。
+function parseHHMM(str){
+  const m = String(str || "").match(/^(\d{1,2}):(\d{2})$/);
+  if(!m) return null;
+  return { h: Number(m[1]), m: Number(m[2]) };
+}
+
+// hours（ROZEN_CLOSING_ESTIMATE_HOURS）の中から、nowDateの直前（その時刻を含む）の
+// チェックポイント時刻を返す。まだ最初のチェックポイントにも達していなければnull。
+function latestHourlyCheckpoint(hours, nowDate){
+  const nowMinutes = nowDate.getHours() * 60 + nowDate.getMinutes();
+  let result = null;
+  hours.forEach(h => { if(h * 60 <= nowMinutes) result = h; });
+  return result;
+}
+
+// Rozengrachtの「見込み」（炊飯の目安）を計算する。
+// nowDate: 現在時刻。dow: 曜日(0=日,...,6=土)。cumNow: 直近チェックポイント時点の
+// 全具材合計の累計売上（まだ記録が無ければnull）。stockNow: 同時点の残数（在庫。無ければ0扱い）。
+// settings: getRozenClosingSettings()の戻り値。
+// 係数が未設定(0)・累計売上がまだ記録されていない場合はinsufficient:trueを返し、目安を
+// 一切表示しない（自動で係数を決めたり書き換えたりしない）。
+// 戻り値には、ユーザーへの表示・報告に使う計算の途中の値を全て含める。
+function computeRozenClosingEstimate(settings, nowDate, dow, cumNow, stockNow){
+  const isWeekend = dow === 0 || dow === 6;
+  const checkpointHour = latestHourlyCheckpoint(ROZEN_CLOSING_ESTIMATE_HOURS, nowDate);
+  const coefMap = isWeekend ? settings.riceCoefWeekend : settings.riceCoefWeekday;
+  const coefficient = (checkpointHour !== null && coefMap) ? (coefMap[checkpointHour] || 0) : 0;
+
+  const deadline = parseHHMM(settings.decisionDeadline);
+  const closingLabel = isWeekend ? settings.closingTimeWeekend : settings.closingTimeWeekday;
+  const closing = parseHHMM(closingLabel);
+
+  const nowMinutes = nowDate.getHours() * 60 + nowDate.getMinutes();
+  const deadlineMinutes = deadline ? deadline.h * 60 + deadline.m : null;
+  const pastDeadline = deadlineMinutes !== null && nowMinutes > deadlineMinutes;
+
+  const readyDate = new Date(nowDate.getTime() + ((settings.riceCookMinutes || 0) + (settings.prepMinutes || 0)) * 60000);
+  const closingDate = closing ? new Date(nowDate.getFullYear(), nowDate.getMonth(), nowDate.getDate(), closing.h, closing.m) : null;
+  const hoursUntilClose = closingDate ? Math.max(0, (closingDate - readyDate) / 3600000) : null;
+
+  const base = {
+    checkpointHour, coefficient, isWeekend, pastDeadline,
+    deadlineLabel: settings.decisionDeadline, closingLabel,
+    readyDate, hoursUntilClose, cumNow,
+    stockNow: (stockNow === null || stockNow === undefined) ? 0 : stockNow,
+    piecesPerGo: settings.piecesPerGo || 3,
+  };
+
+  if(!coefficient || cumNow === null || cumNow === undefined || checkpointHour === null){
+    return Object.assign(base, { insufficient: true });
+  }
+
+  const estimatedFinalTotal = Math.round(cumNow * coefficient);
+  const remainingDemand = Math.max(0, estimatedFinalTotal - cumNow);
+  const shortfall = Math.max(0, remainingDemand - base.stockNow);
+  const goCount = Math.ceil(shortfall / base.piecesPerGo);
+
+  return Object.assign(base, {
+    insufficient: false,
+    estimatedFinalTotal, remainingDemand, shortfall, goCount,
+  });
 }
 
 // 「売れ行き＋天気」の予測数を計算する。trendInfo（computeSalesTrendLの戻り値）がnull

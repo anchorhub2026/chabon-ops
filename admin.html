@@ -1415,6 +1415,13 @@
     color: #888;
     margin: 8px 0 0;
   }
+  .rozen-coef-group-label{
+    flex-basis: 100%;
+    font-size: 0.78rem;
+    font-weight: bold;
+    color: var(--main-dark);
+    margin-top: 4px;
+  }
   .store-settings-trend-temp-accum-notice{
     flex-basis: 100%;
     font-size: 0.74rem;
@@ -2071,9 +2078,18 @@ function recomputeZuidTrendInfo(){
   state.zuidTrendInfo = computeSalesTrendL(state.hourlyHistoryRows || [], "Zuid", isoDate(new Date()), trendSettings.startDate);
 }
 
+// Rozengrachtの「見込み」（炊飯の目安）の係数ごとのデータ蓄積日数を再計算する
+// （store-settings.jsのcountRozenCoefficientDays参照。店舗設定画面の通知表示に使う。
+// 自動で係数を計算・保存することは一切しない）。state.hourlyHistoryRowsが変わるたび、
+// recomputeZuidTrendInfo()と同じタイミングで呼ぶ。
+function recomputeRozenCoefDayCounts(){
+  state.rozenCoefDayCounts = countRozenCoefficientDays(state.hourlyHistoryRows || []);
+}
+
 // 作り直して再描画する（店舗の営業設定変更時などに使う）
 function rebuildDaysAndRender(){
   recomputeZuidTrendInfo();
+  recomputeRozenCoefDayCounts();
   state.days = buildDays(state.weatherDaily, state.hourlyByDate, state.zuidTrendInfo);
   state.days.forEach(day => {
     loadForecastData(day);
@@ -4813,6 +4829,69 @@ function tempBinDataAccumulationNoticeHtml(store, bin, trendSettings){
   return `<p class="store-settings-trend-temp-accum-notice">${bin.label}の実績が${days}日分たまりました。調整値を計算できます。</p>`;
 }
 
+// Rozengrachtの「見込み」（炊飯の目安）係数が未設定（0%のまま）のチェックポイントについて、
+// 実績データが一定日数以上たまったら「調整値を計算できます」と知らせる表示を返す
+// （2026-11時点では全て未設定。表示のみで、自動で値を変えることは一切しない）。
+// state.rozenCoefDayCounts（state.hourlyHistoryRowsから計算、countRozenCoefficientDays参照）
+// が無い間は何も表示しない。
+const ROZEN_COEF_DATA_ACCUMULATION_THRESHOLD_DAYS = 5;
+function rozenCoefAccumulationNoticeHtml(groupKey, groupLabel, hour, coefMap){
+  if(!state.rozenCoefDayCounts) return "";
+  if((coefMap[hour] || 0) !== 0) return ""; // 既に係数が設定済みのチェックポイントには表示しない
+  const days = (state.rozenCoefDayCounts[groupKey] && state.rozenCoefDayCounts[groupKey][hour]) || 0;
+  if(days < ROZEN_COEF_DATA_ACCUMULATION_THRESHOLD_DAYS) return "";
+  return `<p class="store-settings-trend-temp-accum-notice">${groupLabel}${hour}時の実績が${days}日分たまりました。調整値を計算できます。</p>`;
+}
+
+// Rozengracht専用：「見込み」（炊飯の目安）の設定欄（閉店時刻・炊飯/下準備時間・
+// 判断締切時刻・1合あたりの個数・チェックポイントごとの見込み係数）。
+// method（予測の方法）とは独立（Rozengrachtは常に固定数のまま）、常に表示する。
+function rozenClosingEstimateFieldsHtml(store){
+  if(store !== "Rozengracht") return "";
+  const s = getRozenClosingSettings(state.storeSettings);
+  const coefRowHtml = (groupKey, groupLabel, coefMap) => `
+    <div class="store-settings-trend-adj-row">
+      <span class="rozen-coef-group-label">${groupLabel}の見込み係数</span>
+      ${ROZEN_CLOSING_ESTIMATE_HOURS.map(h => `
+        <label class="store-settings-trend-adj-label" data-rozen-coef-key="${groupKey}-${h}">
+          ${h}時
+          <input type="number" class="store-settings-rozen-coef" data-group="${groupKey}" data-hour="${h}" step="0.01" min="0" value="${coefMap[h]}">
+        </label>${rozenCoefAccumulationNoticeHtml(groupKey, groupLabel, h, coefMap)}`).join("")}
+    </div>`;
+  return `
+    <div class="store-settings-trend-fields" data-rozen-closing-fields>
+      <p class="store-settings-trend-adj-hint">「見込み」（炊飯の目安）：今の累計売上×見込み係数＝最終合計の見込み。見込み－累計売上－在庫（残数）＝不足見込み。不足見込み÷1合あたりの個数（切り上げ）＝炊く合数。係数は推測で埋めず、データがたまってから手入力してください（下の各チェックポイントが0のままの間は、見込みカードに目安を表示しません）。</p>
+      <div class="shift-config-controls">
+        <label class="shift-config-field">
+          閉店時刻（平日）
+          <input type="time" class="store-settings-rozen-closing-weekday" value="${s.closingTimeWeekday}">
+        </label>
+        <label class="shift-config-field">
+          閉店時刻（土日）
+          <input type="time" class="store-settings-rozen-closing-weekend" value="${s.closingTimeWeekend}">
+        </label>
+        <label class="shift-config-field">
+          炊飯時間（分）
+          <input type="number" class="store-settings-rozen-cook-min" min="0" value="${s.riceCookMinutes}">
+        </label>
+        <label class="shift-config-field">
+          下準備時間（分）
+          <input type="number" class="store-settings-rozen-prep-min" min="0" value="${s.prepMinutes}">
+        </label>
+        <label class="shift-config-field">
+          判断の締め切り時刻
+          <input type="time" class="store-settings-rozen-deadline" value="${s.decisionDeadline}">
+        </label>
+        <label class="shift-config-field">
+          1合あたりの個数
+          <input type="number" class="store-settings-rozen-pieces-per-go" min="1" value="${s.piecesPerGo}">
+        </label>
+      </div>
+      ${coefRowHtml("weekday", "平日", s.riceCoefWeekday)}
+      ${coefRowHtml("weekend", "土日", s.riceCoefWeekend)}
+    </div>`;
+}
+
 function renderStoreSettingsList(){
   renderStoreSettingsWarning();
   const area = document.getElementById("storeSettingsList");
@@ -4922,6 +5001,7 @@ function renderStoreSettingsList(){
         <div class="store-settings-weekday-row">${weekdayChecks}</div>
         <p class="store-settings-method-note">${FORECAST_METHOD_NOTES[method]}${weekdayBaseNoteSuffix(method)}</p>
         ${trendFieldsHtml}
+        ${rozenClosingEstimateFieldsHtml(store)}
         ${weekdayBaseRowHtml}
         <button type="button" class="shift-config-save-btn store-settings-save-btn">設定を保存</button>
         <p class="shift-config-status"></p>
@@ -4991,13 +5071,40 @@ function renderStoreSettingsList(){
         tempAdjPct[inp.dataset.key] = inp.value !== "" ? Number(inp.value) : null;
       });
 
+      // Rozengracht「見込み」（炊飯の目安）専用フィールド（この店舗以外は要素が無いため、
+      // 既定値（店舗設定が無い場合と同じ扱い）のまま送る）
+      const rozenClosingWeekdayInp = card.querySelector(".store-settings-rozen-closing-weekday");
+      const rozenClosingWeekendInp = card.querySelector(".store-settings-rozen-closing-weekend");
+      const rozenCookMinInp = card.querySelector(".store-settings-rozen-cook-min");
+      const rozenPrepMinInp = card.querySelector(".store-settings-rozen-prep-min");
+      const rozenDeadlineInp = card.querySelector(".store-settings-rozen-deadline");
+      const rozenPiecesPerGoInp = card.querySelector(".store-settings-rozen-pieces-per-go");
+      const closingTimeWeekday = rozenClosingWeekdayInp ? rozenClosingWeekdayInp.value : "";
+      const closingTimeWeekend = rozenClosingWeekendInp ? rozenClosingWeekendInp.value : "";
+      const riceCookMinutes = rozenCookMinInp && rozenCookMinInp.value !== "" ? Number(rozenCookMinInp.value) : null;
+      const prepMinutes = rozenPrepMinInp && rozenPrepMinInp.value !== "" ? Number(rozenPrepMinInp.value) : null;
+      const decisionDeadline = rozenDeadlineInp ? rozenDeadlineInp.value : "";
+      const piecesPerGo = rozenPiecesPerGoInp && rozenPiecesPerGoInp.value !== "" ? Number(rozenPiecesPerGoInp.value) : null;
+      const riceCoefWeekday = {};
+      const riceCoefWeekend = {};
+      card.querySelectorAll(".store-settings-rozen-coef").forEach(inp => {
+        const target = inp.dataset.group === "weekend" ? riceCoefWeekend : riceCoefWeekday;
+        target[inp.dataset.hour] = inp.value !== "" ? Number(inp.value) : null;
+      });
+
+      const rozenFields = {
+        closingTimeWeekday, closingTimeWeekend, riceCookMinutes, prepMinutes, decisionDeadline, piecesPerGo,
+        riceCoefWeekday, riceCoefWeekend,
+      };
       const payload = {
         startDate: startVal, endDate: endVal, weekdays, forecastMethod, weekdayBase,
         salesTrendCoefficient, salesTrendStartDate, minGuarantee, rainAdjPct, tempAdjPct,
+        ...rozenFields,
       };
       const settingsEntry = {
         startDate: startVal, endDate: endVal, weekdays, forecastMethod, weekdayBase,
         salesTrendCoefficient, salesTrendStartDate, minGuarantee, rainAdjPct, tempAdjPct,
+        ...rozenFields,
       };
 
       statusEl.classList.remove("error");
@@ -5823,6 +5930,7 @@ async function refreshAllData(){
     // 直近4営業日を使う（buildDays()より前に反映しておく）
     state.hourlyHistoryRows = hourlyHistoryRows;
     recomputeZuidTrendInfo();
+    recomputeRozenCoefDayCounts();
 
     const hourlyByDate = buildHourlyByDate(weatherRes.hourly);
     state.weatherDaily = weatherRes.daily;
@@ -6227,6 +6335,7 @@ async function init(){
     // （buildDays()より前に反映しておく）
     state.hourlyHistoryRows = hourlyHistoryRows;
     recomputeZuidTrendInfo();
+    recomputeRozenCoefDayCounts();
     const hourlyByDate = buildHourlyByDate(weatherRes.hourly);
     state.weatherDaily = weatherRes.daily;
     state.hourlyByDate = hourlyByDate;

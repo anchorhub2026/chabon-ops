@@ -681,6 +681,9 @@ var STORE_SETTINGS_HEADER = ["店舗名", "開始日", "終了日", "月", "火"
   "気温調整0℃以下%", "気温調整0-5℃%", "気温調整5-10℃%", "気温調整10-15℃%",
   "気温調整16-17℃%", "気温調整18-24℃%", "気温調整25-28℃%", "気温調整29℃以上%",
   "雨調整%", "保証最低数",
+  "閉店時刻(平日)", "閉店時刻(土日)", "炊飯時間(分)", "下準備時間(分)", "判断締切時刻", "1合あたりの個数",
+  "見込み係数(平日)12時", "見込み係数(平日)13時", "見込み係数(平日)14時", "見込み係数(平日)15時", "見込み係数(平日)16時", "見込み係数(平日)17時",
+  "見込み係数(土日)12時", "見込み係数(土日)13時", "見込み係数(土日)14時", "見込み係数(土日)15時", "見込み係数(土日)16時", "見込み係数(土日)17時",
   "更新日時"];
 // 「売れ行き係数」〜「保証最低数」（19〜29列目）は、「売れ行き＋天気」予測方式
 // （store-settings.jsのresolveStoreForecast/calcSalesTrendForecast参照）のために追加した列。
@@ -690,6 +693,11 @@ var STORE_SETTINGS_HEADER = ["店舗名", "開始日", "終了日", "月", "火"
 // 気温調整列は、冬の気温帯（15℃以下）をより細かく見るため「0℃以下」「0-5℃」「5-10℃」
 // 「10-15℃」の4列に分けている（旧「気温調整15℃以下%」1列から変更。この機能はまだ
 // 保存されたことが無いため、既存データへの影響は無い）。
+// 「閉店時刻(平日)」〜「見込み係数(土日)17時」（31〜42列目）は、Rozengrachtの「見込み」
+// （炊飯の目安）機能（store-settings.jsのcomputeRozenClosingEstimate参照）のために追加した列。
+// 見込み係数は、実績データが少ない間は入力せず空欄（0扱い）のままにしておく運用を想定している
+// （自動では計算しない。管理画面に表示される「データ蓄積」の通知を見て、admin.htmlの
+// 　店舗設定画面で管理者が手入力する）。
 
 function storeSettingsRowValues(store, data) {
   var weekdays = data.weekdays || {};
@@ -704,6 +712,9 @@ function storeSettingsRowValues(store, data) {
     : data.forecastMethod === "fixed" ? "固定数" : "";
   var tempAdjPct = data.tempAdjPct || {};
   var tempStr = function(key) { return numStr(tempAdjPct[key]); };
+  var riceCoefWeekday = data.riceCoefWeekday || {};
+  var riceCoefWeekend = data.riceCoefWeekend || {};
+  var coefStr = function(map, hour) { return numStr(map[hour]); };
   var updatedAtStr = Utilities.formatDate(new Date(), "Etc/UTC", "yyyy-MM-dd HH:mm:ss");
 
   return [
@@ -719,6 +730,16 @@ function storeSettingsRowValues(store, data) {
     tempStr("b16_17"), tempStr("b18_24"), tempStr("b25_28"), tempStr("ge29"),
     numStr(data.rainAdjPct),
     numStr(data.minGuarantee),
+    String(data.closingTimeWeekday || ""),
+    String(data.closingTimeWeekend || ""),
+    numStr(data.riceCookMinutes),
+    numStr(data.prepMinutes),
+    String(data.decisionDeadline || ""),
+    numStr(data.piecesPerGo),
+    coefStr(riceCoefWeekday, 12), coefStr(riceCoefWeekday, 13), coefStr(riceCoefWeekday, 14),
+    coefStr(riceCoefWeekday, 15), coefStr(riceCoefWeekday, 16), coefStr(riceCoefWeekday, 17),
+    coefStr(riceCoefWeekend, 12), coefStr(riceCoefWeekend, 13), coefStr(riceCoefWeekend, 14),
+    coefStr(riceCoefWeekend, 15), coefStr(riceCoefWeekend, 16), coefStr(riceCoefWeekend, 17),
     updatedAtStr
   ];
 }

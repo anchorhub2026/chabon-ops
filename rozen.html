@@ -67,6 +67,19 @@
   .status-msg.show{ display: block; }
   .status-msg.success{ background: #e4f3e8; color: var(--main-dark); border: 1px solid #b9ddc3; }
   .status-msg.error{ background: #fbe6e3; color: #a3362a; border: 1px solid #f0bdb5; font-weight: bold; }
+
+  .rozen-closing-estimate-card{
+    background: var(--card); border: 2px solid var(--main); border-radius: 10px;
+    padding: 14px; margin-bottom: 14px;
+  }
+  .rozen-closing-estimate-card.past-deadline{ border-color: var(--accent); }
+  .rozen-estimate-headline{
+    margin: 0 0 8px; font-size: 1.15rem; font-weight: bold; color: var(--main-dark); line-height: 1.4;
+  }
+  .rozen-closing-estimate-card.past-deadline .rozen-estimate-headline{ color: var(--accent); }
+  .rozen-estimate-detail{ margin: 0; padding-left: 18px; font-size: 0.88rem; color: #555; }
+  .rozen-estimate-detail li{ margin-bottom: 2px; }
+  .rozen-estimate-insufficient{ margin: 0; color: #777; font-size: 0.92rem; }
 </style>
 </head>
 <body>
@@ -181,7 +194,12 @@ async function loadForSelectedDate(){
   state.fillings = fillings;
   state.totals = totals;
 
+  // 「見込み」（炊飯の目安）カードは、今日の実績入力のときだけ表示する
+  // （過去日の入力し忘れの修正時には、炊く判断には使わないため表示しない）
+  const isToday = state.selectedIso === isoDateLocal(new Date());
+
   area.innerHTML = `
+    ${isToday ? `<div class="rozen-closing-estimate-card" id="rozenClosingEstimateCard"></div>` : ""}
     <div class="table-scroll">${buildStoreTable(STORE_KEY, fillings, totals, HOURLY_SLOTS, true)}</div>
     ${buildNotesAreaHtml(STORE_KEY)}
   `;
@@ -192,7 +210,10 @@ async function loadForSelectedDate(){
   `);
 
   area.querySelectorAll(".hourly-input, .given-input, .received-input, .moved-input, .moved-uva-input, .moved-rozen-input").forEach(inp =>
-    inp.addEventListener("input", () => updateStoreSoldDisplay(STORE_KEY, fillings))
+    inp.addEventListener("input", () => {
+      updateStoreSoldDisplay(STORE_KEY, fillings);
+      if(isToday) refreshRozenClosingEstimateCard(state.storeSettings);
+    })
   );
   wireNoteLengthWarning(STORE_KEY);
 
@@ -202,6 +223,7 @@ async function loadForSelectedDate(){
   const rows = await fetchHourlyData(SCRIPT_URL, state.selectedIso);
   restoreHourlyInputs(rows, state.selectedIso);
   updateStoreSoldDisplay(STORE_KEY, fillings);
+  if(isToday) refreshRozenClosingEstimateCard(state.storeSettings);
   state.expectedUpdatedAt = maxUpdatedAtForStore(rows, STORE_KEY);
 
   const btn = document.getElementById("saveBtn");
@@ -238,7 +260,13 @@ async function handleSaveClick(){
 async function init(){
   renderDateOptions();
   state.confirmedPlanByDate = await fetchConfirmedPlan();
+  state.storeSettings = await fetchStoreSettingsRows(SCRIPT_URL).then(rows => parseStoreSettingsRows(rows).settings);
   await loadForSelectedDate();
+  // 「見込み」カードは判断の締め切り前後で表示を切り替えるため、入力が無くても
+  // 時間経過だけで反映されるよう1分おきに更新する
+  setInterval(() => {
+    if(state.selectedIso === isoDateLocal(new Date())) refreshRozenClosingEstimateCard(state.storeSettings);
+  }, 60000);
 }
 
 init();
