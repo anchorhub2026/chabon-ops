@@ -1341,6 +1341,94 @@ function handleGetAnalytics(ss) {
     .setMimeType(ContentService.MimeType.JSON);
 }
 
+// Zuidの気温調整%（店舗設定のTREND_TEMP_BINS、store-settings.js参照）の各気温帯について、
+// 実績データが何日分たまっているかを数える。admin.htmlの店舗設定画面で、「0〜5℃」「0℃以下」の
+// ように調整値が未確定な気温帯のデータが一定日数たまったことを知らせる表示に使う
+// （自動で調整値を変えることは一切しない。カウントのみ）。
+//
+// 気温の基準は、天気で自動計算・売れ行き＋天気の計算で使っている「11〜15時平均気温」
+// （admin.html/index.htmlのcomputeSalesWeatherと同じ定義：11・12・13・14時の気温の平均）。
+// 時間帯別実績シートの「気温」列は保存時点の予報の最高気温（index.htmlのtemp:
+// Math.round(today.maxTemp)）で、ビンの基準である11-15時平均とは別の値のため使わず、
+// Open-Meteoの過去気象（archive-api.open-meteo.com）から該当日の11-15時平均を取得し直す。
+var ZUID_LAT_ = 52.3676, ZUID_LON_ = 4.9041;
+
+function tempBinKeyFor_(temp) {
+  if (temp <= 0) return "le0";
+  if (temp <= 5) return "b0_5";
+  if (temp <= 10) return "b5_10";
+  if (temp <= 15) return "b10_15";
+  if (temp <= 17) return "b16_17";
+  if (temp <= 24) return "b18_24";
+  if (temp <= 28) return "b25_28";
+  return "ge29";
+}
+
+function countZuidTempBinDays_(ss) {
+  var counts = { le0: 0, b0_5: 0, b5_10: 0, b10_15: 0, b16_17: 0, b18_24: 0, b25_28: 0, ge29: 0 };
+
+  // Zuidが実際に営業した日付（時間帯別実績シートに記録がある日）を重複無く集める
+  var rows = getHourlySheetRows(ss, null, null);
+  var seen = {};
+  var zuidDates = [];
+  rows.forEach(function(r) {
+    if (r.store !== "Zuid" || !r.date || seen[r.date]) return;
+    seen[r.date] = true;
+    zuidDates.push(r.date);
+  });
+  if (zuidDates.length === 0) return { counts: counts, totalDays: 0 };
+  zuidDates.sort();
+
+  // 過去気象はまだ無い未来日・今日を除き、昨日までに制限する
+  var yesterday = new Date();
+  yesterday.setDate(yesterday.getDate() - 1);
+  var yesterdayIso = Utilities.formatDate(yesterday, Session.getScriptTimeZone(), "yyyy-MM-dd");
+  var startDate = zuidDates[0];
+  var endDate = zuidDates[zuidDates.length - 1];
+  if (endDate > yesterdayIso) endDate = yesterdayIso;
+  if (startDate > endDate) return { counts: counts, totalDays: 0 };
+
+  var url = "https://archive-api.open-meteo.com/v1/archive?latitude=" + ZUID_LAT_ + "&longitude=" + ZUID_LON_ +
+    "&start_date=" + startDate + "&end_date=" + endDate +
+    "&hourly=temperature_2m&timezone=Europe%2FAmsterdam";
+  var resp = UrlFetchApp.fetch(url, { muteHttpExceptions: true });
+  if (resp.getResponseCode() !== 200) return { counts: counts, totalDays: 0, error: "archive-api.open-meteo.comの取得に失敗しました" };
+  var data = JSON.parse(resp.getContentText());
+  var hourlyTime = (data.hourly && data.hourly.time) || [];
+  var hourlyTemp = (data.hourly && data.hourly.temperature_2m) || [];
+
+  // 日付 -> [11,12,13,14時の気温]
+  var tempsByDate = {};
+  for (var i = 0; i < hourlyTime.length; i++) {
+    var parts = hourlyTime[i].split("T");
+    var d = parts[0];
+    var hour = parseInt(parts[1].slice(0, 2), 10);
+    if (hour < 11 || hour > 14) continue;
+    if (hourlyTemp[i] === null || hourlyTemp[i] === undefined) continue;
+    if (!tempsByDate[d]) tempsByDate[d] = [];
+    tempsByDate[d].push(hourlyTemp[i]);
+  }
+
+  var totalDays = 0;
+  zuidDates.forEach(function(dateIso) {
+    if (dateIso > endDate) return;
+    var temps = tempsByDate[dateIso];
+    if (!temps || temps.length === 0) return;
+    var avg = temps.reduce(function(s, t) { return s + t; }, 0) / temps.length;
+    counts[tempBinKeyFor_(avg)]++;
+    totalDays++;
+  });
+  return { counts: counts, totalDays: totalDays };
+}
+
+// 過去気象の取得を伴うため、他のキャッシュより長め（6時間＝CacheServiceの上限）にキャッシュする
+function handleGetTempBinDayCounts(ss) {
+  var text = withCache_("tempBinDayCounts_v1", false, function() {
+    return JSON.stringify(countZuidTempBinDays_(ss));
+  }, 21600);
+  return ContentService.createTextOutput(text).setMimeType(ContentService.MimeType.JSON);
+}
+
 // チセさんの生産データ（「オーダー表」シート）を、gvizの型推定を経由せずに返す。
 // gvizはセルの値を列（日付）ごとに多数決で型推定し、少数派の型のセルをnullにする仕様があるため、
 // その列に数値が1個しか無く、曜日表記の文字セルと数が同数か少ないと、本来入っている数値が
@@ -1355,7 +1443,9 @@ function handleGetAnalytics(ss) {
 // 今月のおにぎり担当等）はキャッシュして2回目以降を速くする。
 // noCache=trueの場合はキャッシュを使わず読み直す（admin.htmlの「データを更新」ボタン用）。
 // textFn: キャッシュが無い場合に呼ぶ、JSON文字列を返す関数
-function withCache_(cacheKey, noCache, textFn) {
+// ttlSeconds省略時は300秒（5分）。外部APIを呼ぶ等、変化が少なく重い処理はより長く指定できる
+// （CacheServiceの上限は21600秒＝6時間）。
+function withCache_(cacheKey, noCache, textFn, ttlSeconds) {
   var cache = CacheService.getScriptCache();
   if (!noCache) {
     var cached = cache.get(cacheKey);
@@ -1365,7 +1455,7 @@ function withCache_(cacheKey, noCache, textFn) {
   try {
     // CacheServiceは1キー最大100KBまで。超えた場合はキャッシュ保存だけ失敗させ、
     // 読み込み自体は失敗させない
-    cache.put(cacheKey, text, 300);
+    cache.put(cacheKey, text, ttlSeconds || 300);
   } catch (cacheErr) {}
   return text;
 }
@@ -1480,6 +1570,10 @@ function doGetInner(e) {
 
   if (e.parameter && e.parameter.type === "smallSheets") {
     return handleGetSmallSheets(ss, e.parameter.noCache === "1");
+  }
+
+  if (e.parameter && e.parameter.type === "tempBinDayCounts") {
+    return handleGetTempBinDayCounts(ss);
   }
 
   if (e.parameter && e.parameter.type === "draft") {
