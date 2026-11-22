@@ -598,12 +598,9 @@ function handleSaveMonthlyOnigiriAssignment(ss, data) {
 // 行も正しく読み、かつその場で文字列として書き直す（以後の読み込みで自動変換の影響を
 // 受けなくなる＝実質的な一度きりの移行処理を兼ねる）。年月として読めない行は黙って捨てず
 // invalidRowsに積んで返し、admin.html側で警告表示に使う。
-function handleGetMonthlyOnigiri(ss) {
+function getMonthlyOnigiriDataRaw_(ss) {
   var sheet = ss.getSheetByName("今月のおにぎり担当");
-  if (!sheet) {
-    return ContentService.createTextOutput(JSON.stringify({ assignments: {}, invalidRows: [] }))
-      .setMimeType(ContentService.MimeType.JSON);
-  }
+  if (!sheet) return { assignments: {}, invalidRows: [] };
   var values = sheet.getDataRange().getValues();
   var assignments = {};
   var invalidRows = [];
@@ -624,8 +621,39 @@ function handleGetMonthlyOnigiri(ss) {
     // 同じ月の行が複数ある場合（過去のバグによる重複）は、シート上で後にある行を優先する
     assignments[normalized.month] = assignee;
   }
-  return ContentService.createTextOutput(JSON.stringify({ assignments: assignments, invalidRows: invalidRows }))
-    .setMimeType(ContentService.MimeType.JSON);
+  return { assignments: assignments, invalidRows: invalidRows };
+}
+
+function handleGetMonthlyOnigiri(ss, noCache) {
+  var text = withCache_("monthlyOnigiri_v1", noCache, function() {
+    return JSON.stringify(getMonthlyOnigiriDataRaw_(ss));
+  });
+  return ContentService.createTextOutput(text).setMimeType(ContentService.MimeType.JSON);
+}
+
+// admin.htmlの初期表示が遅い問題（type=X形式のApps Script Web App呼び出しは、スクリプト本体の
+// 処理が速くても、呼び出し自体に毎回1〜2秒程度かかる＝実測で確認済み）への対策の1つ。
+// チセさんシート（直近の日付列だけに絞る）・店舗設定・今月のおにぎり担当の3つの小さい
+// シートの読み込みを1回のApps Script呼び出しにまとめ、その「呼び出し自体の固定コスト」を
+// 3回分から1回分に減らす。
+// CacheService（5分）で結果をキャッシュし、続けて開いたときは速く返す。noCache=trueの
+// 場合はキャッシュを使わず読み直す（admin.htmlの「データを更新」ボタン用）。
+function handleGetSmallSheets(ss, noCache) {
+  var text = withCache_("smallSheets_v1", noCache, function() {
+    // チセさんシートは今日を基準に前後の日付列だけに絞って読む（1シーズンで200列を超える
+    // ことがあり、admin.htmlの初期表示では直近数週間分しか使わないため）。
+    // 過去30日・先40日分あれば、admin.htmlが表示する今週・来週・再来週（最大約21日先）に
+    // 十分足りる余裕を持たせている。
+    var chiseRows = getChiseSheetRowsWindowed_(30, 40);
+    var storeSettingsRows = getStoreSettingsRowsRaw_(ss);
+    var monthlyOnigiri = getMonthlyOnigiriDataRaw_(ss);
+    return JSON.stringify({
+      chiseSheet: { rows: chiseRows || [] },
+      storeSettings: { rows: storeSettingsRows },
+      monthlyOnigiri: monthlyOnigiri,
+    });
+  });
+  return ContentService.createTextOutput(text).setMimeType(ContentService.MimeType.JSON);
 }
 
 // 店舗（Zuid・UvA・Rozengracht等）ごとの営業期間・営業曜日・予測の方法（天気で自動計算／
@@ -724,15 +752,17 @@ function handleSaveStoreSettings(ss, data) {
 // store-settings.js（admin.html・index.html・uva.html・rozen.html・cooking.html・
 // production.htmlで共通利用）のparseStoreSettingsRows()が、ここで返した文字列の
 // 2次元配列（1行目はヘッダー）を解析する。
-function handleGetStoreSettings(ss) {
+function getStoreSettingsRowsRaw_(ss) {
   var sheet = ss.getSheetByName(STORE_SETTINGS_SHEET_NAME);
-  if (!sheet) {
-    return ContentService.createTextOutput(JSON.stringify({ rows: [] }))
-      .setMimeType(ContentService.MimeType.JSON);
-  }
-  var rows = sheet.getDataRange().getDisplayValues();
-  return ContentService.createTextOutput(JSON.stringify({ rows: rows }))
-    .setMimeType(ContentService.MimeType.JSON);
+  if (!sheet) return [];
+  return sheet.getDataRange().getDisplayValues();
+}
+
+function handleGetStoreSettings(ss, noCache) {
+  var text = withCache_("storeSettings_v1", noCache, function() {
+    return JSON.stringify({ rows: getStoreSettingsRowsRaw_(ss) });
+  });
+  return ContentService.createTextOutput(text).setMimeType(ContentService.MimeType.JSON);
 }
 
 // UvA学事暦（週開始日｜ISO週番号｜区分｜メモ）の初期データ。
@@ -1220,24 +1250,32 @@ function getHourlySheetRows(ss, dateFilter, sinceFilter) {
   var lastCol = Math.max(sheet.getLastColumn(), HOURLY_SHEET_HEADER.length);
 
   var dataRows;
-  if (dateFilter) {
+  if (dateFilter || sinceFilter) {
+    // A列（日付）だけをまず1回のbulk読み取りで取得し、該当する行番号の範囲（最小〜最大）を
+    // 特定してから、その範囲だけをもう1回のbulk読み取りで取得する（計2回のSpreadsheet
+    // サービス呼び出しで済ませる）。
+    // 以前は該当行ごとに個別にgetRange().getValues()を呼んでいたため、sinceFilterで
+    // 数百〜千行以上が該当する場合（Zuidの「売れ行き＋天気」で直近45日分を取得する用途）、
+    // 呼び出し回数が行数分に膨れ上がり、実測30秒以上かかる不具合があった。
     var dateCol = sheet.getRange(2, 1, lastRow - 1, 1).getValues();
-    var matchedRowNumbers = [];
+    var predicate = dateFilter
+      ? function(v) { return v && normalizeDateCell(v) === dateFilter; }
+      : function(v) { return v && normalizeDateCell(v) >= sinceFilter; };
+    var minIdx = -1, maxIdx = -1;
     for (var i = 0; i < dateCol.length; i++) {
-      if (dateCol[i][0] && normalizeDateCell(dateCol[i][0]) === dateFilter) matchedRowNumbers.push(i + 2);
+      if (predicate(dateCol[i][0])) {
+        if (minIdx === -1) minIdx = i;
+        maxIdx = i;
+      }
     }
-    dataRows = matchedRowNumbers.map(function(rowNum) {
-      return sheet.getRange(rowNum, 1, 1, lastCol).getValues()[0];
-    });
-  } else if (sinceFilter) {
-    var dateCol2 = sheet.getRange(2, 1, lastRow - 1, 1).getValues();
-    var matchedRowNumbers2 = [];
-    for (var j = 0; j < dateCol2.length; j++) {
-      if (dateCol2[j][0] && normalizeDateCell(dateCol2[j][0]) >= sinceFilter) matchedRowNumbers2.push(j + 2);
+    if (minIdx === -1) {
+      dataRows = [];
+    } else {
+      // 該当行が離れていても、最小〜最大行番号の範囲をまとめて1回で読み取り、
+      // その中から実際に条件に合う行だけをJavaScript側で絞り込む
+      var spanRows = sheet.getRange(minIdx + 2, 1, maxIdx - minIdx + 1, lastCol).getValues();
+      dataRows = spanRows.filter(function(r) { return predicate(r[0]); });
     }
-    dataRows = matchedRowNumbers2.map(function(rowNum) {
-      return sheet.getRange(rowNum, 1, 1, lastCol).getValues()[0];
-    });
   } else {
     dataRows = sheet.getRange(2, 1, lastRow - 1, lastCol).getValues();
   }
@@ -1311,16 +1349,97 @@ function handleGetAnalytics(ss) {
 // そのまま全セル取得できるため、この問題を避けられる。
 // admin.html・cooking.html側ではchise-sheet.jsのparseChiseSheetRows()が、ここで返した
 // 文字列の2次元配列を解析して具材別の個数（数値）に変換する。
-function handleGetChiseSheet() {
+// type=X形式のApps Script読み込みの結果をCacheService（スクリプト単位、5分）でキャッシュする
+// 共通ヘルパー。実測で、type=X呼び出しはスクリプト本体の処理が速くてもWeb App呼び出し自体に
+// 毎回1〜2秒程度かかることが分かったため、頻繁に変わらないデータ（チセさんシート・店舗設定・
+// 今月のおにぎり担当等）はキャッシュして2回目以降を速くする。
+// noCache=trueの場合はキャッシュを使わず読み直す（admin.htmlの「データを更新」ボタン用）。
+// textFn: キャッシュが無い場合に呼ぶ、JSON文字列を返す関数
+function withCache_(cacheKey, noCache, textFn) {
+  var cache = CacheService.getScriptCache();
+  if (!noCache) {
+    var cached = cache.get(cacheKey);
+    if (cached) return cached;
+  }
+  var text = textFn();
+  try {
+    // CacheServiceは1キー最大100KBまで。超えた場合はキャッシュ保存だけ失敗させ、
+    // 読み込み自体は失敗させない
+    cache.put(cacheKey, text, 300);
+  } catch (cacheErr) {}
+  return text;
+}
+
+function handleGetChiseSheet(noCache) {
+  var text = withCache_("chiseSheet_v1", noCache, function() {
+    var rows = getChiseSheetRowsAll_();
+    if (rows === null) return JSON.stringify({ error: "シート「オーダー表」が見つかりません", rows: [] });
+    return JSON.stringify({ rows: rows });
+  });
+  return ContentService.createTextOutput(text).setMimeType(ContentService.MimeType.JSON);
+}
+
+// 「オーダー表」シートの全列を取得する（従来の挙動。cooking.html等、広い期間が必要な
+// 呼び出し元向けに残す）。シートが無い場合はnullを返す。
+function getChiseSheetRowsAll_() {
   var ss = SpreadsheetApp.openById(CHISE_SHEET_ID);
   var sheet = ss.getSheetByName("オーダー表");
-  if (!sheet) {
-    return ContentService.createTextOutput(JSON.stringify({ error: "シート「オーダー表」が見つかりません", rows: [] }))
-      .setMimeType(ContentService.MimeType.JSON);
+  if (!sheet) return null;
+  return sheet.getDataRange().getDisplayValues();
+}
+
+// 「オーダー表」シートのうち、今日を基準に前後daysBack/daysForward日分の日付列だけを
+// 読む（具材名の列（0列目）は常に含める）。このシートは1シーズンで200列を超えることがあり、
+// admin.htmlの初期表示では直近数週間分の日付しか使わないため、必要な列だけに絞って
+// 読み取る（getHourlySheetRowsのsinceフィルタと同じ、呼び出し回数を増やさない方式：
+// 列0だけのbulk読み取り1回＋絞り込んだ列範囲のbulk読み取り1回の計2回で済ませる）。
+// シートが無い場合はnullを返す。
+function getChiseSheetRowsWindowed_(daysBack, daysForward) {
+  var ss = SpreadsheetApp.openById(CHISE_SHEET_ID);
+  var sheet = ss.getSheetByName("オーダー表");
+  if (!sheet) return null;
+  var lastRow = sheet.getLastRow();
+  var lastCol = sheet.getLastColumn();
+  if (lastRow < 1 || lastCol < 1) return [];
+
+  var headerRow = sheet.getRange(1, 1, 1, lastCol).getDisplayValues()[0];
+  var today = new Date();
+  var todayMidnight = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+  var minDate = new Date(todayMidnight.getTime() - daysBack * 86400000);
+  var maxDate = new Date(todayMidnight.getTime() + daysForward * 86400000);
+
+  var minColIdx = -1, maxColIdx = -1; // 0始まり
+  for (var c = 0; c < headerRow.length; c++) {
+    var m = String(headerRow[c] || "").match(/^(\d{1,2})\/(\d{1,2})/);
+    if (!m) continue;
+    var mo = parseInt(m[1], 10), da = parseInt(m[2], 10);
+    // 年情報が無いため、今日に最も近い年を推測する（admin.html等、他の日付推測と同じ考え方）
+    var candidate = new Date(todayMidnight.getFullYear(), mo - 1, da);
+    var diffDays = (candidate - todayMidnight) / 86400000;
+    if (diffDays < -180) candidate = new Date(todayMidnight.getFullYear() + 1, mo - 1, da);
+    else if (diffDays > 180) candidate = new Date(todayMidnight.getFullYear() - 1, mo - 1, da);
+    if (candidate >= minDate && candidate <= maxDate) {
+      if (minColIdx === -1) minColIdx = c;
+      maxColIdx = c;
+    }
   }
-  var rows = sheet.getDataRange().getDisplayValues();
-  return ContentService.createTextOutput(JSON.stringify({ rows: rows }))
-    .setMimeType(ContentService.MimeType.JSON);
+
+  // 具材名の列（0列目）は全行、1回のbulk読み取りで取得する
+  var labelCol = sheet.getRange(1, 1, lastRow, 1).getDisplayValues();
+  if (minColIdx === -1) {
+    // 窓の範囲に該当する日付列が無い場合は、具材名の列だけを返す（商品名の判定等は
+    // できるが、日付別のデータは無い＝呼び出し側ではその日付のデータ無しとして扱われる）
+    return labelCol;
+  }
+  // 該当する日付列の範囲（最小〜最大）をもう1回のbulk読み取りで取得し、具材名の列と
+  // 行ごとに連結する（絶対列位置がずれても、parseChiseSheetRows側は行0から相対的に
+  // 日付列を再検出するため問題ない）
+  var windowCols = sheet.getRange(1, minColIdx + 1, lastRow, maxColIdx - minColIdx + 1).getDisplayValues();
+  var merged = [];
+  for (var r = 0; r < lastRow; r++) {
+    merged.push([labelCol[r][0]].concat(windowCols[r]));
+  }
+  return merged;
 }
 
 // doGet本体で例外が発生すると、Content-Typeが text/html のGoogleエラーページが
@@ -1342,7 +1461,7 @@ function doGetInner(e) {
   }
 
   if (e.parameter && e.parameter.type === "chiseSheet") {
-    return handleGetChiseSheet();
+    return handleGetChiseSheet(e.parameter.noCache === "1");
   }
 
   var ss = SpreadsheetApp.openById(SHEET_ID);
@@ -1352,11 +1471,15 @@ function doGetInner(e) {
   }
 
   if (e.parameter && e.parameter.type === "storeSettings") {
-    return handleGetStoreSettings(ss);
+    return handleGetStoreSettings(ss, e.parameter.noCache === "1");
   }
 
   if (e.parameter && e.parameter.type === "monthlyOnigiri") {
-    return handleGetMonthlyOnigiri(ss);
+    return handleGetMonthlyOnigiri(ss, e.parameter.noCache === "1");
+  }
+
+  if (e.parameter && e.parameter.type === "smallSheets") {
+    return handleGetSmallSheets(ss, e.parameter.noCache === "1");
   }
 
   if (e.parameter && e.parameter.type === "draft") {

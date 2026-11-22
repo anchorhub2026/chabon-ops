@@ -1561,6 +1561,12 @@ const SHIFT_SPREADSHEET_ID = "1PHf1o3smqIQdeFkhBHjBZUEub7VtRcynQLllmSR7w-s"; // 
 // TODO: シフト回答用スプレッドシートに紐づけたApps Script（Code.gs）のウェブアプリ公開URLに置き換えてください
 const SCRIPT_URL = "https://script.google.com/macros/s/AKfycbyxbKMgM4ZiowaJu3cQ4NdLhwSE9-Pet8DbYB3qvgEX2NS2h1Dosgfm62vu7-in52ZT/exec";
 
+// 1つの取得が止まったまま終わらないと、初期表示全体が止まって見えてしまうため、
+// 一定時間（既定15秒）で諦めて、そのデータだけ失敗として扱う（他の取得・表示はブロックしない）。
+// window.FETCH_TIMEOUT_MSが既に設定されていればそれを使う（テストがpage.addInitScript()で
+// このスクリプトの実行前に短い値を仕込めるようにするため。通常の利用では未設定なので15秒になる）
+var FETCH_TIMEOUT_MS = (typeof window !== "undefined" && window.FETCH_TIMEOUT_MS) || 15000;
+
 const DAY_NAMES = ["日","月","火","水","木","金","土"];
 const MEMBERS = ACTIVE_MEMBERS;
 // CHISE（チセさん）：土曜日等に本人が具材を自分で用意しておにぎりを作ってくれる特別な担当者。
@@ -1796,6 +1802,17 @@ function applyNsPenalty(result, minGuarantee){
   if(!result) return;
   result.total = Math.max(minGuarantee, result.total - NS_PENALTY);
   result.reasons.push(`NSスト -${NS_PENALTY}`);
+}
+
+// 指定ミリ秒（既定FETCH_TIMEOUT_MS）経っても完了しない場合はタイムアウトとして
+// reject する。元のpromise自体はキャンセルされないが、呼び出し側はこのタイムアウトを
+// 他の取得失敗と同じように扱えばよい（trackFetchResult等の既存の失敗処理に乗せられる）。
+function withTimeout(promise, label, ms){
+  const timeoutMs = ms || FETCH_TIMEOUT_MS;
+  return Promise.race([
+    promise,
+    new Promise((_, reject) => setTimeout(() => reject(new Error(`${label}: ${timeoutMs}ms以内に完了しませんでした`)), timeoutMs)),
+  ]);
 }
 
 /* ---------- スプレッドシート読み込み（gviz） ---------- */
@@ -4552,21 +4569,30 @@ function initShiftConfigSection(initialConfig){
 
 const MONTHLY_ONIGIRI_ASSIGNEE_OPTIONS = [...ACTIVE_MEMBERS, "本部"];
 
-// 「今月のおにぎり担当」シートを取得する。年月セルをGoogleスプレッドシートが日付として
+// 「今月のおにぎり担当」シートは、年月セルをGoogleスプレッドシートが日付として
 // 自動変換してしまい、gviz経由では正しく読み戻せない不具合があったため、Apps Script側の
-// type=monthlyOnigiriエンドポイント（Code.gsのhandleGetMonthlyOnigiri）で取得する
+// type=monthlyOnigiri/smallSheetsエンドポイント（Code.gsのhandleGetMonthlyOnigiri）で取得する
 // （チセさんシートの読み込みと同じ理由。日付に変換されてしまっていた行はサーバー側で
 // 文字列に書き直されるため、一度読み込めば以後は正常に戻る）。
 // 年月が読めなかった行はinvalidRowsに入り、画面に警告として表示する（黙って無視しない）。
-async function fetchMonthlyOnigiriData(){
-  try{
-    const res = await fetch(`${SCRIPT_URL}?type=monthlyOnigiri`, { cache: "no-store" });
-    const json = await res.json();
-    return { assignments: json.assignments || {}, invalidRows: json.invalidRows || [] };
-  }catch(e){
-    console.error("今月のおにぎり担当シート取得失敗", e);
-    return null;
-  }
+
+// type=smallSheetsで、チセさんシート（直近日付のみ）・店舗設定・今月のおにぎり担当の
+// 3つを1回のApps Script呼び出しにまとめて取得する（admin.htmlの初期表示が遅い問題への対策。
+// Apps Script Web Appへの呼び出し自体に毎回1〜2秒程度の固定コストがかかるため、
+// 3回別々に呼ぶより1回にまとめた方が速い）。Code.gs側で5分間CacheServiceにキャッシュされる。
+// noCache=trueの場合はキャッシュを使わず最新の値を読み直す（「データを更新」ボタン用）。
+async function fetchSmallSheets(scriptUrl, noCache){
+  const url = `${scriptUrl}?type=smallSheets${noCache ? "&noCache=1" : ""}`;
+  const res = await fetch(url, { cache: "no-store" });
+  const json = await res.json();
+  return {
+    chiseRows: (json.chiseSheet && json.chiseSheet.rows) || [],
+    storeSettingsRows: (json.storeSettings && json.storeSettings.rows) || [],
+    monthlyOnigiriData: {
+      assignments: (json.monthlyOnigiri && json.monthlyOnigiri.assignments) || {},
+      invalidRows: (json.monthlyOnigiri && json.monthlyOnigiri.invalidRows) || [],
+    },
+  };
 }
 
 async function saveMonthlyOnigiriAssignment(month, assignee){
@@ -5693,32 +5719,41 @@ async function refreshAllData(){
     const thisYear = new Date().getFullYear();
     state.cellStatus = {};
     resetFetchFailureTracking();
-    const [weatherRes, chiseRows, shiftJson, holidaysByIso, nsDisruptionsByDate, bootstrap, monthlyOnigiriData, uvaCalendarJson, uvaCoefficientsJson, confirmedPlanJson, storeSettingsRows, hourlyHistoryRows] = await Promise.all([
-      fetch(weatherUrl).then(r => r.json()),
-      fetchChiseSheetRows(SCRIPT_URL).catch(e => { console.error("チセさんシート取得失敗", e); return null; }).then(v => trackFetchResult("チセさんシート", true, v)),
-      fetchSheetJson("シフト回答", SHIFT_SPREADSHEET_ID).catch(e => { console.error("シフト回答シート取得失敗", e); return null; }).then(v => trackFetchResult("シフト回答", true, v)),
-      fetchDutchHolidays([thisYear, thisYear + 1]),
-      fetchNsDisruptions(),
+
+    // 祝日・NSストライキ情報は表示に必須ではないため、ここで直ちに（awaitせず）取得を開始し、
+    // 下の必須データ取得（Promise.all）とは完全に切り離して並行に走らせる
+    const holidaysPromise = fetchDutchHolidays([thisYear, thisYear + 1]);
+    const nsDisruptionsPromise = fetchNsDisruptions();
+
+    const [weatherRes, smallSheets, shiftJson, bootstrap, uvaCalendarJson, uvaCoefficientsJson, confirmedPlanJson, hourlyHistoryRows] = await Promise.all([
+      withTimeout(fetch(weatherUrl).then(r => r.json()), "天気予報"),
+      // チセさんシート（直近日付のみ）・店舗設定・今月のおにぎり担当を1回のApps Script呼び出しに
+      // まとめて取得する。「データを更新」ボタンでの再取得のため、noCache=trueでCacheServiceの
+      // 5分キャッシュを使わず最新の値を読み直す
+      withTimeout(fetchSmallSheets(SCRIPT_URL, true), "チセさんシート・店舗設定・今月のおにぎり担当")
+        .catch(e => { console.error("チセさんシート・店舗設定・今月のおにぎり担当の取得失敗", e); return null; })
+        .then(v => trackFetchResult("チセさんシート・店舗設定・今月のおにぎり担当", true, v)),
+      withTimeout(fetchSheetJson("シフト回答", SHIFT_SPREADSHEET_ID), "シフト回答")
+        .catch(e => { console.error("シフト回答シート取得失敗", e); return null; }).then(v => trackFetchResult("シフト回答", true, v)),
       // 作業中プラン・具材ステータスをまとめて1回のリクエストで取得する
-      fetchBootstrap().then(v => { trackFetchResult("作業中プラン・具材ステータス", true, v && v.drafts ? v.drafts : null); return v; }),
-      fetchMonthlyOnigiriData().then(v => trackFetchResult("今月のおにぎり担当", true, v)),
-      fetchOptionalSheetJson("UvA学事暦", SHIFT_SPREADSHEET_ID).catch(() => null).then(v => trackFetchResult("UvA学事暦", true, v)),
-      fetchOptionalSheetJson("UvA学事暦設定", SHIFT_SPREADSHEET_ID).catch(() => null).then(v => trackFetchResult("UvA学事暦設定", true, v)),
-      fetchSheetJson("確定プラン", SHIFT_SPREADSHEET_ID).catch(e => { console.error("確定プラン取得失敗", e); return null; }).then(v => trackFetchResult("確定プラン", true, v)),
-      // 「店舗設定」シートはまだ一度も保存されていない場合は存在しないため、
-      // 取得失敗時もfetchStoreSettingsRows側で空配列（＝全店舗「期間制限なし」）として扱う
-      fetchStoreSettingsRows(SCRIPT_URL),
+      withTimeout(fetchBootstrap(), "作業中プラン・具材ステータス")
+        .catch(e => { console.error("作業中プラン・具材ステータス取得失敗", e); return { drafts: null, statuses: [], shiftConfig: null }; })
+        .then(v => { trackFetchResult("作業中プラン・具材ステータス", true, v && v.drafts ? v.drafts : null); return v; }),
+      withTimeout(fetchOptionalSheetJson("UvA学事暦", SHIFT_SPREADSHEET_ID), "UvA学事暦").catch(() => null).then(v => trackFetchResult("UvA学事暦", true, v)),
+      withTimeout(fetchOptionalSheetJson("UvA学事暦設定", SHIFT_SPREADSHEET_ID), "UvA学事暦設定").catch(() => null).then(v => trackFetchResult("UvA学事暦設定", true, v)),
+      withTimeout(fetchSheetJson("確定プラン", SHIFT_SPREADSHEET_ID), "確定プラン")
+        .catch(e => { console.error("確定プラン取得失敗", e); return null; }).then(v => trackFetchResult("確定プラン", true, v)),
       // Zuidの「売れ行き＋天気」でL（直近営業日の14時累計の中央値）を計算するための、
       // 直近45日分の時間帯別実績（全件取得だと実績が増えるほど重くなるため、Apps Script側で
       // 絞り込んでもらう。45日あれば、Zuidが週4営業日(月〜木)でも直近4営業日に十分足りる）
-      fetchHourlyData(SCRIPT_URL, null, isoDate(new Date(Date.now() - 45 * 86400000))).catch(e => { console.error("時間帯別実績（直近分）取得失敗", e); return []; }),
+      withTimeout(fetchHourlyData(SCRIPT_URL, null, isoDate(new Date(Date.now() - 45 * 86400000))), "時間帯別実績(直近45日)")
+        .catch(e => { console.error("時間帯別実績（直近分）取得失敗", e); return []; }),
     ]);
     const draftData = bootstrap.drafts;
     state.draftData = draftData;
     applyStatusesToState(bootstrap.statuses);
 
-    state.holidaysByIso = holidaysByIso;
-    state.nsDisruptionsByDate = nsDisruptionsByDate;
+    const { chiseRows, storeSettingsRows, monthlyOnigiriData } = smallSheets || { chiseRows: null, storeSettingsRows: [], monthlyOnigiriData: null };
     // 確定済みかどうか・確定内容は、スプレッドシートの「確定プラン」を正とする
     // （localStorageには依存しない。どの端末で開いても同じ表示になる）
     state.confirmedPlansByDate = parseConfirmedPlansSheet(confirmedPlanJson);
@@ -5792,6 +5827,14 @@ async function refreshAllData(){
     renderMonthlyOnigiriRecalcNotice();
 
     if(btn){ btn.textContent = "✓ 更新しました"; }
+
+    // 祝日・NSストライキ情報は、表示開始時点から並行して取得済み（上のholidaysPromise/
+    // nsDisruptionsPromise）。取得できたら反映して再計算・再描画する（更新ボタンの表示完了は待たない）
+    Promise.all([holidaysPromise, nsDisruptionsPromise]).then(([resolvedHolidaysByIso, resolvedNsDisruptionsByDate]) => {
+      state.holidaysByIso = resolvedHolidaysByIso;
+      state.nsDisruptionsByDate = resolvedNsDisruptionsByDate;
+      rebuildDaysAndRender();
+    });
   }catch(e){
     console.error("データ更新失敗", e);
     if(btn){ btn.textContent = "✕ 失敗しました"; }
@@ -6020,11 +6063,15 @@ function downloadPaymentCsv(monthly, monthKey){
 /* ---------- 初期化 ---------- */
 
 // 初期読み込みの進捗を #combinedArea に反映する（各データ取得が並列で走るため、
-// 「何件取得完了したか」のカウンター表示で実際の進捗が分かるようにする）
-let initProgressDone = 0;
-function setInitProgress(done, total){
+// 「何件取得完了したか」のカウンター表示に加えて、まだ取得中のものの名前も表示する
+// （「11/12で長時間止まって見える」場合に、具体的に何が止まっているか分かるようにする）
+function setInitProgress(pendingLabels, total){
   const el = document.getElementById("combinedArea");
-  if(el) el.innerHTML = `<p class="loading">データを取得中... (${done}/${total})</p>`;
+  if(!el) return;
+  const done = total - pendingLabels.length;
+  const pendingText = pendingLabels.length > 0
+    ? `<br><small>取得中: ${pendingLabels.join("、")}</small>` : "";
+  el.innerHTML = `<p class="loading">データを取得中... (${done}/${total})${pendingText}</p>`;
 }
 
 async function init(){
@@ -6035,42 +6082,77 @@ async function init(){
       `&forecast_days=16&timezone=Europe%2FAmsterdam`;
 
     const thisYear = new Date().getFullYear();
-    initProgressDone = 0;
-    setInitProgress(0, 12);
-    const track = p => p.then(v => { setInitProgress(++initProgressDone, 12); return v; });
     state.cellStatus = {};
     resetFetchFailureTracking();
-    const [weatherRes, chiseRows, shiftJson, holidaysByIso, nsDisruptionsByDate, bootstrap, paymentPlanJson, monthlyOnigiriData, uvaCalendarJson, uvaCoefficientsJson, storeSettingsRows, hourlyHistoryRows] = await Promise.all([
-      track(fetch(weatherUrl).then(r => r.json())),
-      track(fetchChiseSheetRows(SCRIPT_URL).catch(e => { console.error("チセさんシート取得失敗", e); return null; }).then(v => trackFetchResult("チセさんシート", true, v))),
-      track(fetchSheetJson("シフト回答", SHIFT_SPREADSHEET_ID).catch(e => { console.error("シフト回答シート取得失敗", e); return null; }).then(v => trackFetchResult("シフト回答", true, v))),
-      track(fetchDutchHolidays([thisYear, thisYear + 1])),
-      track(fetchNsDisruptions()),
+
+    // 祝日・NSストライキ情報は表示に必須ではないため、ここで直ちに（awaitせず）取得を開始し、
+    // 下の必須データ取得（Promise.all）とは完全に切り離して並行に走らせる。
+    // 初期表示の完了はこの2つの完了を一切待たない（index.htmlの非ブロッキング取得と同じ考え方）。
+    state.holidaysByIso = {};
+    state.nsDisruptionsByDate = {};
+    const holidaysPromise = fetchDutchHolidays([thisYear, thisYear + 1]);
+    const nsDisruptionsPromise = fetchNsDisruptions();
+
+    // 各取得にどんな名前を付けて進捗表示するか（まだ取得中のものの名前が分かるようにする）
+    const pendingLabels = new Set([
+      "天気予報", "チセさんシート・店舗設定・今月のおにぎり担当", "シフト回答",
+      "作業中プラン・具材ステータス", "確定プラン", "UvA学事暦", "UvA学事暦設定",
+      "時間帯別実績(直近45日)",
+    ]);
+    const totalTasks = pendingLabels.size;
+    setInitProgress([...pendingLabels], totalTasks);
+    // 進捗表示に加えて、1つの取得がFETCH_TIMEOUT_MS（既定15秒）以内に終わらない場合は、
+    // そのデータだけ失敗として扱い（withTimeout）、残りの取得・表示をブロックしない
+    const track = (p, label) => p.then(v => {
+      pendingLabels.delete(label);
+      setInitProgress([...pendingLabels], totalTasks);
+      return v;
+    });
+    const [weatherRes, smallSheets, shiftJson, bootstrap, confirmedPlanJson, uvaCalendarJson, uvaCoefficientsJson, hourlyHistoryRows] = await Promise.all([
+      track(withTimeout(fetch(weatherUrl).then(r => r.json()), "天気予報"), "天気予報"),
+      // チセさんシート（直近日付のみ）・店舗設定・今月のおにぎり担当を1回のApps Script呼び出しに
+      // まとめて取得する（個別に3回呼ぶより、呼び出し自体の固定コスト分だけ速くなる）
+      track(withTimeout(fetchSmallSheets(SCRIPT_URL, false), "チセさんシート・店舗設定・今月のおにぎり担当")
+        .catch(e => { console.error("チセさんシート・店舗設定・今月のおにぎり担当の取得失敗", e); return null; })
+        .then(v => trackFetchResult("チセさんシート・店舗設定・今月のおにぎり担当", true, v)),
+        "チセさんシート・店舗設定・今月のおにぎり担当"),
+      track(withTimeout(fetchSheetJson("シフト回答", SHIFT_SPREADSHEET_ID), "シフト回答")
+        .catch(e => { console.error("シフト回答シート取得失敗", e); return null; })
+        .then(v => trackFetchResult("シフト回答", true, v)),
+        "シフト回答"),
       // 作業中プラン・具材ステータス・シフト設定をまとめて1回のリクエストで取得する
       // （個別にtype=draft/status/shiftConfigを叩くとApps Script側の
       // 　SpreadsheetApp.openById()コストが呼び出し回数分だけ重複するため統合した）
-      track(fetchBootstrap().then(v => { trackFetchResult("作業中プラン・具材ステータス", true, v && v.drafts ? v.drafts : null); return v; })),
+      track(withTimeout(fetchBootstrap(), "作業中プラン・具材ステータス")
+        .catch(e => { console.error("作業中プラン・具材ステータス取得失敗", e); return { drafts: null, statuses: [], shiftConfig: null }; })
+        .then(v => { trackFetchResult("作業中プラン・具材ステータス", true, v && v.drafts ? v.drafts : null); return v; }),
+        "作業中プラン・具材ステータス"),
       // 月次支払いセクション用の確定プランも、ここで他の取得と並列fetchしておく
       // （従来は描画後に別途fetchしていたため、その分だけ表示完了が遅れていた）
       // 確定済みかどうか・確定内容の判定にも使うため、取得失敗はcriticalとして扱う
-      track(fetchSheetJson("確定プラン", SHIFT_SPREADSHEET_ID).catch(e => { console.error("確定プラン取得失敗", e); return null; }).then(v => trackFetchResult("確定プラン", true, v))),
-      track(fetchMonthlyOnigiriData().then(v => trackFetchResult("今月のおにぎり担当", true, v))),
-      track(fetchOptionalSheetJson("UvA学事暦", SHIFT_SPREADSHEET_ID).catch(() => null).then(v => trackFetchResult("UvA学事暦", true, v))),
-      track(fetchOptionalSheetJson("UvA学事暦設定", SHIFT_SPREADSHEET_ID).catch(() => null).then(v => trackFetchResult("UvA学事暦設定", true, v))),
-      // 「店舗設定」シートはまだ一度も保存されていない場合は存在しないため、
-      // 取得失敗時もfetchStoreSettingsRows側で空配列（＝全店舗「期間制限なし」）として扱う
-      track(fetchStoreSettingsRows(SCRIPT_URL)),
+      track(withTimeout(fetchSheetJson("確定プラン", SHIFT_SPREADSHEET_ID), "確定プラン")
+        .catch(e => { console.error("確定プラン取得失敗", e); return null; })
+        .then(v => trackFetchResult("確定プラン", true, v)),
+        "確定プラン"),
+      track(withTimeout(fetchOptionalSheetJson("UvA学事暦", SHIFT_SPREADSHEET_ID), "UvA学事暦")
+        .catch(() => null).then(v => trackFetchResult("UvA学事暦", true, v)),
+        "UvA学事暦"),
+      track(withTimeout(fetchOptionalSheetJson("UvA学事暦設定", SHIFT_SPREADSHEET_ID), "UvA学事暦設定")
+        .catch(() => null).then(v => trackFetchResult("UvA学事暦設定", true, v)),
+        "UvA学事暦設定"),
       // Zuidの「売れ行き＋天気」でL（直近営業日の14時累計の中央値）を計算するための、
       // 直近45日分の時間帯別実績
-      track(fetchHourlyData(SCRIPT_URL, null, isoDate(new Date(Date.now() - 45 * 86400000))).catch(e => { console.error("時間帯別実績（直近分）取得失敗", e); return []; })),
+      track(withTimeout(fetchHourlyData(SCRIPT_URL, null, isoDate(new Date(Date.now() - 45 * 86400000))), "時間帯別実績(直近45日)")
+        .catch(e => { console.error("時間帯別実績（直近分）取得失敗", e); return []; }),
+        "時間帯別実績(直近45日)"),
     ]);
     const draftData = bootstrap.drafts;
     state.draftData = draftData;
     applyStatusesToState(bootstrap.statuses);
     const shiftConfig = bootstrap.shiftConfig;
 
-    state.holidaysByIso = holidaysByIso;
-    state.nsDisruptionsByDate = nsDisruptionsByDate;
+    const paymentPlanJson = confirmedPlanJson;
+    const { chiseRows, storeSettingsRows, monthlyOnigiriData } = smallSheets || { chiseRows: null, storeSettingsRows: [], monthlyOnigiriData: null };
     // 確定済みかどうか・確定内容は、スプレッドシートの「確定プラン」を正とする
     // （localStorageには依存しない。どの端末で開いても同じ表示になる）
     state.confirmedPlansByDate = parseConfirmedPlansSheet(paymentPlanJson);
@@ -6140,6 +6222,14 @@ async function init(){
 
     const headerRefreshBtn = document.getElementById("headerRefreshBtn");
     if(headerRefreshBtn) headerRefreshBtn.addEventListener("click", refreshAllData);
+
+    // 祝日・NSストライキ情報は、表示開始時点から並行して取得済み（上のholidaysPromise/
+    // nsDisruptionsPromise）。取得できたら反映して再計算・再描画する（初期表示は待たない）
+    Promise.all([holidaysPromise, nsDisruptionsPromise]).then(([resolvedHolidaysByIso, resolvedNsDisruptionsByDate]) => {
+      state.holidaysByIso = resolvedHolidaysByIso;
+      state.nsDisruptionsByDate = resolvedNsDisruptionsByDate;
+      rebuildDaysAndRender();
+    });
   }catch(e){
     console.error(e);
     document.getElementById("combinedArea").innerHTML = "<p class='off-note'>データの取得に失敗しました。</p>";
