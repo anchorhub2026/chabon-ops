@@ -509,16 +509,23 @@ function tempBucket(temp){
 // （Code.gsのcalcHourlySoldAndCumulativeと同じロジックをクライアント側でも使用）
 // givens[i] が渡された場合、その時間帯の「あげた数」分を売れた数から除外する。
 // receiveds[i] が渡された場合、その時間帯にUvAからZuidへ合流した分を残数の増加要因として
-// 加算してから差分を取る（Zuid以外の店舗はreceivedsを渡さないため常に0扱いになる）
+// 加算してから差分を取る（Zuid以外の店舗はreceivedsを渡さないため常に0扱いになる）。
+// remains[i]・prevが数値として読み取れない値（空文字・null・undefined、または
+// Number()でNaNになる値）の場合は、その時間帯を「販売なし（未記録）」としてnullを返す
+// （NaNを計算結果に混入させない。過去に時間帯別実績シートの新しい列（19時系列）が
+// セル書式の不具合で日付型として保存され、Number()がNaNになる値が来た事例があった。
+// その不具合自体はCode.gs側（getHourlySheetRows）で読み込み時に数値へ復元しているが、
+// ここでも二重に防御する）。
 function calcSoldFromRemains(made, remains, givens, receiveds){
   const sold = [];
   let prev = made;
   remains.forEach((curr, i) => {
-    const hasCurr = curr !== "" && curr !== null && curr !== undefined;
-    const hasPrev = prev !== "" && prev !== null && prev !== undefined;
+    const prevNum = (prev !== "" && prev !== null && prev !== undefined) ? Number(prev) : NaN;
+    const currNum = (curr !== "" && curr !== null && curr !== undefined) ? Number(curr) : NaN;
     const deduction = (givens && givens[i]) || 0;
     const received = (receiveds && receiveds[i]) || 0;
-    sold.push(hasCurr && hasPrev ? (Number(prev) + received - Number(curr) - deduction) : null);
+    const computed = prevNum + received - currNum - deduction;
+    sold.push(Number.isFinite(computed) ? computed : null);
     prev = curr;
   });
   return sold;
@@ -757,13 +764,17 @@ function computeRowSold(row){
   return calcSoldFromRemains(row.total, remains, givens, receiveds);
 }
 
-// 行のr12〜r18のうち、最後に実際に記録されている残数（＝営業終了時点の売れ残り）を返す。
-// 全て未記録ならnull
+// 行のr12〜r19のうち、最後に実際に記録されている残数（＝営業終了時点の売れ残り）を返す。
+// 全て未記録ならnull。数値として読み取れない値（NaNになる値）は記録なしとして無視する
+// （NaNをfinalRemainTotal・leftoverTotalに混入させないための防御）
 function lastKnownRemain(row){
   let last = null;
   HOURLY_SLOTS.forEach(h => {
     const v = row[`r${h}`];
-    if(v !== "" && v !== null && v !== undefined) last = Number(v);
+    if(v !== "" && v !== null && v !== undefined){
+      const n = Number(v);
+      if(Number.isFinite(n)) last = n;
+    }
   });
   return last;
 }

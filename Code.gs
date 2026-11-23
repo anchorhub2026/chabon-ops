@@ -1115,6 +1115,21 @@ function hourlyHeaderIndex_() {
   return idx;
 }
 
+// Googleスプレッドシートの日付シリアル値（1899-12-30を0とする）に変換する。
+// 【直していた不具合】19時残り〜19時受取の列（直前のラウンドで新しく追加した列）に
+// 初めて値（0・1・2等の小さい整数）が書き込まれた際、その列のセル書式がまだ一度も
+// 設定されていなかったため、Googleスプレッドシートが「日付」として自動解釈してしまい、
+// その後getValues()で読むとその列の値がJS Dateオブジェクトとして返ってきていた
+// （例：19時残り=1 のはずが 1899-12-31 00:00:00 UTCとして返る）。
+// ContentService側でJSON化するとDateは自動的にISO文字列になり、クライアント側で
+// Number()をかけるとNaNになる（analytics.htmlで「19時: NaN（累計:NaN）」と表示される
+// 不具合の直接の原因）。セルの書式自体は変わらないため、読み込み時にDateを元の
+// シリアル値（整数）に復元することで、保存し直さなくても正しい数値として読める。
+function hourlySheetsSerialFromDate_(d) {
+  var epoch = Date.UTC(1899, 11, 30);
+  return Math.round((d.getTime() - epoch) / 86400000);
+}
+
 // 各時間帯残数と、その時間帯の「あげた数」「受け取った数」から、時間帯ごとの売れた数・
 // 累計売上を算出する。あげた数はその時間帯で実際に減った分から除外し、受け取った数
 // （UvAからZuidへの合流分）は見かけ上残数が増える要因のため加算してから、
@@ -1409,11 +1424,15 @@ function getHourlySheetRows(ss, dateFilter, sinceFilter) {
 
   var idx = hourlyHeaderIndex_();
   // 見出し名で列を探す。その見出しの列自体が無い（古いシート、または19時専用列の
-  // ように後から追加した列が、まだヘッダーを拡張していないシートに無い）場合は""を返す
+  // ように後から追加した列が、まだヘッダーを拡張していないシートに無い）場合は""を返す。
+  // セルの書式が（本来は数値のはずの列なのに）日付になってしまっている場合、
+  // getValues()はJS Dateオブジェクトを返す。その場合は元のシリアル値（整数）に
+  // 復元してから返す（hourlySheetsSerialFromDate_参照。NaNの原因となる不具合の対策）。
   function at(r, name) {
     var i = idx[name];
     if (i === undefined) return "";
     var val = r[i];
+    if (val instanceof Date) return hourlySheetsSerialFromDate_(val);
     return val !== "" && val !== null && val !== undefined ? val : "";
   }
 
