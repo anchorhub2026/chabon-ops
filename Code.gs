@@ -684,6 +684,7 @@ var STORE_SETTINGS_HEADER = ["店舗名", "開始日", "終了日", "月", "火"
   "閉店時刻(平日)", "閉店時刻(土日)", "炊飯時間(分)", "下準備時間(分)", "判断締切時刻", "1合あたりの個数",
   "見込み係数(平日)12時", "見込み係数(平日)13時", "見込み係数(平日)14時", "見込み係数(平日)15時", "見込み係数(平日)16時", "見込み係数(平日)17時",
   "見込み係数(土日)12時", "見込み係数(土日)13時", "見込み係数(土日)14時", "見込み係数(土日)15時", "見込み係数(土日)16時", "見込み係数(土日)17時",
+  "時間帯開始時刻", "時間帯終了時刻",
   "更新日時"];
 // 「売れ行き係数」〜「保証最低数」（19〜29列目）は、「売れ行き＋天気」予測方式
 // （store-settings.jsのresolveStoreForecast/calcSalesTrendForecast参照）のために追加した列。
@@ -698,6 +699,9 @@ var STORE_SETTINGS_HEADER = ["店舗名", "開始日", "終了日", "月", "火"
 // 見込み係数は、実績データが少ない間は入力せず空欄（0扱い）のままにしておく運用を想定している
 // （自動では計算しない。管理画面に表示される「データ蓄積」の通知を見て、admin.htmlの
 // 　店舗設定画面で管理者が手入力する）。
+// 「時間帯開始時刻」「時間帯終了時刻」（43〜44列目）は、店舗ごとに時間帯別実績で記録できる
+// 時間の範囲（例：開始12時・終了19時）を設定するための列（store-settings.jsの
+// resolveHourlySlots参照）。空欄の場合は既定値（12時〜19時、全店舗共通）にフォールバックする。
 
 function storeSettingsRowValues(store, data) {
   var weekdays = data.weekdays || {};
@@ -740,6 +744,8 @@ function storeSettingsRowValues(store, data) {
     coefStr(riceCoefWeekday, 15), coefStr(riceCoefWeekday, 16), coefStr(riceCoefWeekday, 17),
     coefStr(riceCoefWeekend, 12), coefStr(riceCoefWeekend, 13), coefStr(riceCoefWeekend, 14),
     coefStr(riceCoefWeekend, 15), coefStr(riceCoefWeekend, 16), coefStr(riceCoefWeekend, 17),
+    numStr(data.hourlyStartHour),
+    numStr(data.hourlyEndHour),
     updatedAtStr
   ];
 }
@@ -990,6 +996,13 @@ function handleSaveActual(ss, data) {
   });
 }
 
+// 時間帯別実績シートが扱う全ての時間帯（店舗ごとに実際に使う範囲は「店舗設定」シートの
+// 時間帯開始時刻・時間帯終了時刻で絞り込む。store-settings.jsのresolveHourlySlots参照）。
+// 新しい時間帯を追加する場合は、この配列に追加し、HOURLY_SHEET_HEADERの末尾に
+// 「〇時残り」「〇時売上」「〇時累計」「〇時あげた数」「〇時受取」の5列を追加すること
+// （旧「〇時ランチ」「〇時スタンプ」は12〜18時専用の廃止済み列のため、新しい時間帯には作らない）。
+var HOURLY_HOURS = [12, 13, 14, 15, 16, 17, 18, 19];
+
 var HOURLY_SHEET_HEADER = ["日付", "曜日", "天気", "気温", "店舗", "場所名", "具材名", "作った数",
   "12時残り", "13時残り", "14時残り", "15時残り", "16時残り", "17時残り", "18時残り",
   "12時売上", "13時売上", "14時売上", "15時売上", "16時売上", "17時売上", "18時売上",
@@ -1000,7 +1013,8 @@ var HOURLY_SHEET_HEADER = ["日付", "曜日", "天気", "気温", "店舗", "�
   "18時ランチ", "18時スタンプ",
   "12時あげた数", "13時あげた数", "14時あげた数", "15時あげた数", "16時あげた数", "17時あげた数", "18時あげた数",
   "12時受取", "13時受取", "14時受取", "15時受取", "16時受取", "17時受取", "18時受取",
-  "Zuidへ移動", "Rozengrachtへ移動", "更新日時", "UvAへ移動"];
+  "Zuidへ移動", "Rozengrachtへ移動", "更新日時", "UvAへ移動",
+  "19時残り", "19時売上", "19時累計", "19時あげた数", "19時受取"];
 // 「更新日時」（列63、1始まり）は楽観的ロックの基準として列番号を固定で参照している
 // （HOURLY_UPDATED_AT_COL）。この列より後に新しい列を追加しても「更新日時」の位置は
 // 変わらないようにするため、新しい列は必ず「更新日時」より後ろに追加すること。
@@ -1011,13 +1025,25 @@ var HOURLY_UPDATED_AT_COL = 63;
 // 　新列が空なら旧ランチ・スタンプ列の合計にフォールバックする）
 // 「〇時受取」（他店舗からの合流分。現在はZuid・UvA・Rozengrachtが使用）・「Zuidへ移動」
 // （UvA・Rozengracht。1日1回）・「Rozengrachtへ移動」（Zuid・UvA。1日1回）・「更新日時」・
-// 「UvAへ移動」（Rozengrachtのみ・1日1回）は末尾に追加した列。過去の行はこれらの列を
-// 持たないため、読み込み時は空欄=0（更新日時は空文字）として扱う（getHourlySheetRowsの
-// v()が""を返し、calcHourlySoldAndCumulative/analytics.html側でNumber("")=0相当に扱われる）。
+// 「UvAへ移動」（Rozengrachtのみ・1日1回）・「19時残り」〜「19時受取」は末尾に追加した列。
+// 過去の行はこれらの列を持たないため、読み込み時は空欄=0（更新日時は空文字）として扱う
+// （getHourlySheetRowsのat()が""を返し、calcHourlySoldAndCumulative/analytics.html側で
+// Number("")=0相当に扱われる）。
 // 「Zuidへ移動」「Rozengrachtへ移動」は、どの店舗からの移動かに関わらず同じ列を使い回す
 // （行＝店舗ごとに値を持つため、列の意味は「その行の店舗から見た移動先」で一意に決まる）。
 // 「更新日時」は、uva.html/rozen.html（スタッフ用の店舗別入力ページ）とindex.htmlが
 // 同じ日・同じ店舗を同時に編集した場合の楽観的ロックに使う（handleSaveHourly参照）。
+//
+// getHourlySheetRows・handleSaveHourlyは、時間帯の列（〇時残り等）を含む全ての列を
+// HOURLY_SHEET_HEADERの見出し名で探して読み書きする（配列の位置を直接指定しない）。
+// これにより、新しい時間帯を末尾に追加しても既存列の読み書きがずれない。
+function hourlyHeaderIndex_() {
+  var idx = {};
+  for (var i = 0; i < HOURLY_SHEET_HEADER.length; i++) {
+    if (idx[HOURLY_SHEET_HEADER[i]] === undefined) idx[HOURLY_SHEET_HEADER[i]] = i;
+  }
+  return idx;
+}
 
 // 各時間帯残数と、その時間帯の「あげた数」「受け取った数」から、時間帯ごとの売れた数・
 // 累計売上を算出する。あげた数はその時間帯で実際に減った分から除外し、受け取った数
@@ -1059,6 +1085,7 @@ function handleSaveHourly(ss, data) {
   }
   var lastRow = sheet.getLastRow();
   var lastCol = Math.max(sheet.getLastColumn(), HOURLY_SHEET_HEADER.length);
+  var idx = hourlyHeaderIndex_();
   // 実績シートの行数が増えても保存処理が遅くならないよう、まず日付・店舗・具材名の
   // 3列（A・E・G列）だけを読み取って該当行を特定し、既存値の保持が必要な行だけを
   // 全列読み取る（getHourlySheetRowsの読み取り範囲限定と同じ方針）。
@@ -1123,62 +1150,59 @@ function handleSaveHourly(ss, data) {
       }
       var existing = foundRow > 0 ? sheet.getRange(foundRow, 1, 1, lastCol).getValues()[0] : null;
 
-      var remains = [item.r12, item.r13, item.r14, item.r15, item.r16, item.r17, item.r18]
-        .map(function(v) { return v === "" ? "" : v; });
-      var givens = [item.given12, item.given13, item.given14, item.given15, item.given16, item.given17, item.given18]
-        .map(function(v) { return Number(v || 0); });
-      var receiveds = [item.received12, item.received13, item.received14, item.received15, item.received16, item.received17, item.received18]
-        .map(function(v) { return Number(v || 0); });
+      // 未入力（""や未指定）の場合は、保存済みの既存値をそのまま保持する（明示的な0は尊重する）。
+      // Zuidへ移動・Rozengrachtへ移動・UvAへ移動（いずれも1日1回の値）で共通して使う。
+      function resolveMovedValue_(submitted, existingIdxName) {
+        if (submitted === "" || submitted === null || submitted === undefined) {
+          var existingIdx = idx[existingIdxName];
+          return (existing && existingIdx !== undefined) ? (Number(existing[existingIdx]) || 0) : 0;
+        }
+        return Number(submitted) || 0;
+      }
 
-      // 既存行がある場合、今回の送信で空欄（未入力）になっているスロットは
-      // 保存済みデータの復元がまだ完了していないタイミングで保存ボタンが押された
-      // 可能性がある。その場合でも過去に保存済みの実績を空欄で上書きして消してしまわないよう、
-      // 送信側が空欄のスロットに限りシート上の既存値を保持する（あげた数・受け取った数も同様）。
-      if (existing) {
-        for (var k = 0; k < remains.length; k++) {
-          if (remains[k] === "") {
-            var existingRemain = existing[8 + k];
-            if (existingRemain !== "" && existingRemain !== null && existingRemain !== undefined) {
-              remains[k] = existingRemain;
-              givens[k] = givenOrLegacySum(existing[46 + k], existing[32 + k * 2], existing[33 + k * 2]) || 0;
-              var existingReceived = existing[53 + k];
-              receiveds[k] = (existingReceived !== "" && existingReceived !== null && existingReceived !== undefined) ? Number(existingReceived) : 0;
-            }
+      // 時間帯ごとの残数・あげた数・受け取った数をHOURLY_HOURS（12〜19時）の順で組み立てる。
+      // 既存行がある場合、今回の送信で空欄（未入力）になっているスロットは、保存済みデータの
+      // 復元がまだ完了していないタイミングで保存ボタンが押された可能性があるため、過去に
+      // 保存済みの実績を空欄で上書きして消してしまわないよう、シート上の既存値を保持する
+      // （あげた数・受け取った数も同様。見出し名で既存値の列を探すため、新しい時間帯を
+      // 末尾に追加しても既存の12〜18時分の読み書きはずれない）。
+      var remains = [], givens = [], receiveds = [];
+      HOURLY_HOURS.forEach(function(h) {
+        var rv = item["r" + h];
+        var gv = Number(item["given" + h] || 0);
+        var cv = Number(item["received" + h] || 0);
+        if ((rv === "" || rv === null || rv === undefined) && existing) {
+          var remainIdx = idx[h + "時残り"];
+          var existingRemain = remainIdx !== undefined ? existing[remainIdx] : "";
+          if (existingRemain !== "" && existingRemain !== null && existingRemain !== undefined) {
+            rv = existingRemain;
+            var givenIdx = idx[h + "時あげた数"];
+            var lunchIdx = idx[h + "時ランチ"];
+            var stampIdx = idx[h + "時スタンプ"];
+            gv = givenOrLegacySum(
+              givenIdx !== undefined ? existing[givenIdx] : "",
+              lunchIdx !== undefined ? existing[lunchIdx] : "",
+              stampIdx !== undefined ? existing[stampIdx] : ""
+            ) || 0;
+            var receivedIdx = idx[h + "時受取"];
+            var existingReceived = receivedIdx !== undefined ? existing[receivedIdx] : "";
+            cv = (existingReceived !== "" && existingReceived !== null && existingReceived !== undefined) ? Number(existingReceived) : 0;
           }
         }
-      }
+        remains.push(rv === "" || rv === null || rv === undefined ? "" : rv);
+        givens.push(gv);
+        receiveds.push(cv);
+      });
 
       var total = item.total;
       if ((total === "" || total === null || total === undefined || Number(total) === 0) &&
-          existing && Number(existing[7] || 0) > 0) {
-        total = existing[7];
+          existing && Number(existing[idx["作った数"]] || 0) > 0) {
+        total = existing[idx["作った数"]];
       }
 
-      // Zuidへ移動した数（UvAのみ・1日1回）。未入力（""や未指定）の場合は、保存済みの
-      // 既存値をそのまま保持する（受け取った数と同じ理由の保護）。明示的な0は尊重する。
-      var moved;
-      if (item.movedToZuid === "" || item.movedToZuid === null || item.movedToZuid === undefined) {
-        moved = existing ? (Number(existing[60]) || 0) : 0;
-      } else {
-        moved = Number(item.movedToZuid) || 0;
-      }
-
-      // Rozengrachtへ移動した数（Zuid・UvAのみ・1日1回）。保護ロジックは上記と同じ。
-      var movedRozen;
-      if (item.movedToRozengracht === "" || item.movedToRozengracht === null || item.movedToRozengracht === undefined) {
-        movedRozen = existing ? (Number(existing[61]) || 0) : 0;
-      } else {
-        movedRozen = Number(item.movedToRozengracht) || 0;
-      }
-
-      // UvAへ移動した数（Rozengrachtのみ・1日1回）。保護ロジックは上記と同じ。
-      // 列はHOURLY_SHEET_HEADERの末尾（「更新日時」より後ろ）にあるため、既存値はindex 63。
-      var movedUva;
-      if (item.movedToUva === "" || item.movedToUva === null || item.movedToUva === undefined) {
-        movedUva = existing ? (Number(existing[63]) || 0) : 0;
-      } else {
-        movedUva = Number(item.movedToUva) || 0;
-      }
+      var moved = resolveMovedValue_(item.movedToZuid, "Zuidへ移動");
+      var movedRozen = resolveMovedValue_(item.movedToRozengracht, "Rozengrachtへ移動");
+      var movedUva = resolveMovedValue_(item.movedToUva, "UvAへ移動");
 
       // 販売終了時間・備考：uva.html/rozen.html（スタッフ用の店舗別入力ページ）はこれらの
       // 入力欄を持たないため、キー自体を送ってこない（undefined）。その場合は空文字で
@@ -1187,29 +1211,41 @@ function handleSaveHourly(ss, data) {
       // （index.htmlでメモ等を意図的に空にして保存するケースと区別するため）。
       var soldOutTime = (storeData.soldOutTime !== undefined)
         ? (storeData.soldOutTime || "")
-        : (existing ? String(existing[29] || "") : "");
+        : (existing ? String(existing[idx["販売終了時間"]] || "") : "");
       var note = (storeData.note !== undefined)
         ? (storeData.note || "")
-        : (existing ? String(existing[30] || "") : "");
+        : (existing ? String(existing[idx["備考"]] || "") : "");
 
       var calc = calcHourlySoldAndCumulative(total, remains, givens, receiveds);
-      var row = [
-        data.date, effectiveWeekday, effectiveWeather, effectiveTemp,
-        storeData.store, storeData.location,
-        item.filling, total,
-        remains[0], remains[1], remains[2], remains[3], remains[4], remains[5], remains[6],
-        calc.sold[0], calc.sold[1], calc.sold[2], calc.sold[3], calc.sold[4], calc.sold[5], calc.sold[6],
-        calc.cumulative[0], calc.cumulative[1], calc.cumulative[2], calc.cumulative[3], calc.cumulative[4], calc.cumulative[5], calc.cumulative[6],
-        soldOutTime,
-        note,
-        "", // あげた数（単一・廃止、後方互換のため列のみ維持）
-        "", "", "", "", "", "", "", "", "", "", "", "", "", "", // 〇時ランチ・〇時スタンプ（廃止、後方互換のため列のみ維持）
-        givens[0], givens[1], givens[2], givens[3], givens[4], givens[5], givens[6],
-        receiveds[0], receiveds[1], receiveds[2], receiveds[3], receiveds[4], receiveds[5], receiveds[6],
-        moved, movedRozen,
-        new Date(), // 更新日時（列63固定。この位置は変えない）
-        movedUva    // UvAへ移動（今回追加した列。末尾＝列64）
-      ];
+
+      var row = new Array(HOURLY_SHEET_HEADER.length).fill("");
+      row[idx["日付"]] = data.date;
+      row[idx["曜日"]] = effectiveWeekday;
+      row[idx["天気"]] = effectiveWeather;
+      row[idx["気温"]] = effectiveTemp;
+      row[idx["店舗"]] = storeData.store;
+      row[idx["場所名"]] = storeData.location;
+      row[idx["具材名"]] = item.filling;
+      row[idx["作った数"]] = total;
+      HOURLY_HOURS.forEach(function(h, hi) {
+        row[idx[h + "時残り"]] = remains[hi];
+        row[idx[h + "時売上"]] = calc.sold[hi];
+        row[idx[h + "時累計"]] = calc.cumulative[hi];
+        row[idx[h + "時あげた数"]] = givens[hi];
+        row[idx[h + "時受取"]] = receiveds[hi];
+        // 旧「〇時ランチ」「〇時スタンプ」（12〜18時のみ存在）は、以後書き込まない
+        // 廃止済み列のため、保存するたびに常に空にする（既存動作と同じ）
+        if (idx[h + "時ランチ"] !== undefined) row[idx[h + "時ランチ"]] = "";
+        if (idx[h + "時スタンプ"] !== undefined) row[idx[h + "時スタンプ"]] = "";
+      });
+      row[idx["販売終了時間"]] = soldOutTime;
+      row[idx["備考"]] = note;
+      row[idx["あげた数"]] = ""; // 単一・廃止、後方互換のため列のみ維持
+      row[idx["Zuidへ移動"]] = moved;
+      row[idx["Rozengrachtへ移動"]] = movedRozen;
+      row[idx["更新日時"]] = new Date(); // この位置（列63固定）は変えない
+      row[idx["UvAへ移動"]] = movedUva;
+
       if (foundRow > 0) {
         sheet.getRange(foundRow, 1, 1, row.length).setValues([row]);
       } else {
@@ -1301,51 +1337,56 @@ function getHourlySheetRows(ss, dateFilter, sinceFilter) {
     dataRows = sheet.getRange(2, 1, lastRow - 1, lastCol).getValues();
   }
 
+  var idx = hourlyHeaderIndex_();
+  // 見出し名で列を探す。その見出しの列自体が無い（古いシート、または19時専用列の
+  // ように後から追加した列が、まだヘッダーを拡張していないシートに無い）場合は""を返す
+  function at(r, name) {
+    var i = idx[name];
+    if (i === undefined) return "";
+    var val = r[i];
+    return val !== "" && val !== null && val !== undefined ? val : "";
+  }
+
   var result = [];
   for (var j = 0; j < dataRows.length; j++) {
     if (!dataRows[j][0]) continue;
     var r = dataRows[j];
-    var v = function(idx) { return r[idx] !== "" && r[idx] !== null && r[idx] !== undefined ? r[idx] : ""; };
-    result.push({
-      date:        normalizeDateCell(r[0]),
-      weekday:     String(r[1] || ""),
-      weather:     String(r[2] || ""),
-      temp:        v(3),
-      store:       String(r[4] || ""),
-      location:    String(r[5] || ""),
-      filling:     String(r[6] || ""),
-      total:       v(7),
-      r12:         v(8),  r13: v(9),  r14: v(10), r15: v(11), r16: v(12), r17: v(13), r18: v(14),
-      sold12:      v(15), sold13: v(16), sold14: v(17), sold15: v(18), sold16: v(19), sold17: v(20), sold18: v(21),
-      cum12:       v(22), cum13:  v(23), cum14:  v(24), cum15:  v(25), cum16:  v(26), cum17:  v(27), cum18:  v(28),
-      soldOutTime: normalizeTimeCell(r[29]),
-      note:        String(r[30] || ""),
-      given:       v(31),
-      lunch12:     v(32), stamp12: v(33), lunch13: v(34), stamp13: v(35),
-      lunch14:     v(36), stamp14: v(37), lunch15: v(38), stamp15: v(39),
-      lunch16:     v(40), stamp16: v(41), lunch17: v(42), stamp17: v(43),
-      lunch18:     v(44), stamp18: v(45),
-      // 新形式の「〇時あげた数」（v(46)〜v(52)）が空の古い行は、
-      // 旧形式の「〇時ランチ」＋「〇時スタンプ」の合計にフォールバックする
-      given12: givenOrLegacySum(v(46), r[32], r[33]),
-      given13: givenOrLegacySum(v(47), r[34], r[35]),
-      given14: givenOrLegacySum(v(48), r[36], r[37]),
-      given15: givenOrLegacySum(v(49), r[38], r[39]),
-      given16: givenOrLegacySum(v(50), r[40], r[41]),
-      given17: givenOrLegacySum(v(51), r[42], r[43]),
-      given18: givenOrLegacySum(v(52), r[44], r[45]),
+    var row = {
+      date:        normalizeDateCell(r[idx["日付"]]),
+      weekday:     String(r[idx["曜日"]] || ""),
+      weather:     String(r[idx["天気"]] || ""),
+      temp:        at(r, "気温"),
+      store:       String(r[idx["店舗"]] || ""),
+      location:    String(r[idx["場所名"]] || ""),
+      filling:     String(r[idx["具材名"]] || ""),
+      total:       at(r, "作った数"),
+      soldOutTime: normalizeTimeCell(r[idx["販売終了時間"]]),
+      note:        String(r[idx["備考"]] || ""),
+      given:       at(r, "あげた数"),
       // 「〇時受取」「Zuidへ移動」「Rozengrachtへ移動」「UvAへ移動」は後から追加した
       // 列のため、それより前に保存された行では空文字になる（0として扱われる）
-      received12: v(53), received13: v(54), received14: v(55), received15: v(56),
-      received16: v(57), received17: v(58), received18: v(59),
-      movedToZuid: v(60),
-      movedToRozengracht: v(61),
+      movedToZuid: at(r, "Zuidへ移動"),
+      movedToRozengracht: at(r, "Rozengrachtへ移動"),
+      movedToUva: at(r, "UvAへ移動"),
       // 楽観的ロック用。epochミリ秒の数値（文字列化して比較する）で返す。
       // タイムゾーンや表示形式の差異を気にせず単純比較できるようにするため。
-      updatedAt: r[62] instanceof Date ? r[62].getTime() : "",
-      // 「更新日時」より後ろ（末尾）に追加した列。位置を固定するため、更新日時の後に置いている
-      movedToUva: v(63),
+      updatedAt: r[idx["更新日時"]] instanceof Date ? r[idx["更新日時"]].getTime() : "",
+    };
+    HOURLY_HOURS.forEach(function(h) {
+      var legacyLunch = at(r, h + "時ランチ");
+      var legacyStamp = at(r, h + "時スタンプ");
+      row["r" + h] = at(r, h + "時残り");
+      row["sold" + h] = at(r, h + "時売上");
+      row["cum" + h] = at(r, h + "時累計");
+      row["lunch" + h] = legacyLunch;
+      row["stamp" + h] = legacyStamp;
+      // 新形式の「〇時あげた数」が空の古い行は、旧形式の「〇時ランチ」＋「〇時スタンプ」の
+      // 合計にフォールバックする（19時のように旧ランチ・スタンプ列を持たない時間帯は、
+      // legacyLunch/legacyStampが常に""のため、givenOrLegacySumは単にnewValをそのまま返す）
+      row["given" + h] = givenOrLegacySum(at(r, h + "時あげた数"), legacyLunch, legacyStamp);
+      row["received" + h] = at(r, h + "時受取");
     });
+    result.push(row);
   }
   return result;
 }

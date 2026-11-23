@@ -7,19 +7,28 @@
 // 保存・読み込みは常にCode.gsのtype=hourly（GET）・type=saveHourly（POST）経由で行い、
 // 「時間帯別実績」シートの同じ行・同じ列をindex.html/uva.html/rozen.htmlで共有する。
 
-// 時間帯の既定値。「店舗の営業設定」に営業時間の指定が無い場合はこれを使う
-// （現時点では「店舗の営業設定」シートに営業時間の列自体が無いため、常にこの既定値になる。
-// 将来営業時間の列が追加された場合に備えて、resolveHourlySlots()を呼び出し側に用意している）。
-const HOURLY_SLOTS = [12, 13, 14, 15, 16, 17, 18];
+// 時間帯の既定値（開始12時・終了19時、全店舗共通）。店舗ごとに異なる範囲を設定したい場合は
+// 「店舗の営業設定」の時間帯開始時刻・時間帯終了時刻を使う（resolveHourlySlots参照）。
+const HOURLY_SLOTS_DEFAULT_START = 12;
+const HOURLY_SLOTS_DEFAULT_END = 19;
+const HOURLY_SLOTS = (function(){
+  const arr = [];
+  for(let h = HOURLY_SLOTS_DEFAULT_START; h <= HOURLY_SLOTS_DEFAULT_END; h++) arr.push(h);
+  return arr;
+})();
 
-// 店舗ごとの時間帯スロットを決める。storeSettings（admin.htmlの「店舗の営業設定」相当、
-// 無ければ省略可）にその店舗の営業時間の指定があれば使い、無ければHOURLY_SLOTSを返す。
+// 店舗ごとの時間帯スロットを決める。storeSettings（admin.htmlの「店舗の営業設定」相当）に
+// その店舗の時間帯開始時刻・時間帯終了時刻の指定があれば使い、どちらか・両方が未設定の場合は
+// 既定値（12時・19時）にフォールバックする。時間帯別実績シート（Code.gs）が実際に記録できる
+// 時間帯はHOURLY_HOURS（12〜19時）の範囲のため、開始・終了ともその範囲に収まる値を想定している。
 function resolveHourlySlots(storeKey, storeSettings){
   const config = storeSettings && storeSettings[storeKey];
-  if(config && Array.isArray(config.hourlySlots) && config.hourlySlots.length > 0){
-    return config.hourlySlots;
-  }
-  return HOURLY_SLOTS;
+  const start = (config && Number.isFinite(config.hourlyStartHour)) ? config.hourlyStartHour : HOURLY_SLOTS_DEFAULT_START;
+  const end = (config && Number.isFinite(config.hourlyEndHour)) ? config.hourlyEndHour : HOURLY_SLOTS_DEFAULT_END;
+  if(end < start) return HOURLY_SLOTS;
+  const slots = [];
+  for(let h = start; h <= end; h++) slots.push(h);
+  return slots;
 }
 
 // 確定プラン（confirmed-plan.jsのparseConfirmedPlansSheet()が返すオブジェクト）から、
@@ -346,18 +355,31 @@ function maxUpdatedAtForStore(rows, storeKey){
   return max;
 }
 
-function restoreHourlyInputs(rows, todayIso, slots){
-  const hourlySlots = slots || HOURLY_SLOTS;
-  const slotKeys = hourlySlots.map(h => `r${h}`);
-  const givenKeys = hourlySlots.map(h => `given${h}`);
-  const receivedKeys = hourlySlots.map(h => `received${h}`);
-  const lunchKeys = hourlySlots.map(h => `lunch${h}`);
-  const stampKeys = hourlySlots.map(h => `stamp${h}`);
+// slotsByStore（{店舗名: 時間帯配列}。省略可）を指定すると、店舗ごとに異なる時間帯の範囲
+// （resolveHourlySlots参照）で復元できる。指定が無い店舗・slotsByStore自体を省略した場合は
+// slots（省略時はHOURLY_SLOTS）を使う（index.html/uva.html/rozen.htmlのいずれも、開始時刻は
+// 全店舗共通のため、同じ日付列インデックスが同じ時刻を指す前提で安全に動く）。
+function restoreHourlyInputs(rows, todayIso, slots, slotsByStore){
+  const keyCache = {};
+  function keysForStore(sk){
+    if(keyCache[sk]) return keyCache[sk];
+    const hourlySlots = (slotsByStore && slotsByStore[sk]) || slots || HOURLY_SLOTS;
+    const built = {
+      slotKeys: hourlySlots.map(h => `r${h}`),
+      givenKeys: hourlySlots.map(h => `given${h}`),
+      receivedKeys: hourlySlots.map(h => `received${h}`),
+      lunchKeys: hourlySlots.map(h => `lunch${h}`),
+      stampKeys: hourlySlots.map(h => `stamp${h}`),
+    };
+    keyCache[sk] = built;
+    return built;
+  }
   const noteRestored = {};
   const soldOutRestored = {};
   rows.filter(r => r.date === todayIso).forEach(row => {
     const sk = row.store;
     const f  = row.filling;
+    const { slotKeys, givenKeys, receivedKeys, lunchKeys, stampKeys } = keysForStore(sk);
     // 作った数を復元
     const madeEl = document.querySelector(`.made-input[data-store="${sk}"][data-filling="${f}"]`);
     if(madeEl && row.total !== "" && row.total !== null && row.total !== undefined)

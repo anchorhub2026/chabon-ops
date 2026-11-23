@@ -423,7 +423,10 @@ const SCRIPT_URL = "https://script.google.com/macros/s/AKfycbyxbKMgM4ZiowaJu3cQ4
 function escapeHtml(s){
   return String(s).replace(/[&<>"']/g, c => ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;", "'":"&#39;" }[c]));
 }
-const HOURLY_SLOTS = [12, 13, 14, 15, 16, 17, 18];
+// 店舗ごとの時間帯設定（店舗の営業設定の時間帯開始/終了時刻）は見ず、Code.gsが扱う
+// 時間帯の全範囲（12〜19時）を常に使う。19時を使わない店舗・日の行はその列が空になり、
+// 売上合計・完売時刻等の集計には影響しない（空の列は0相当として扱われる）。
+const HOURLY_SLOTS = [12, 13, 14, 15, 16, 17, 18, 19];
 const DAY_NAMES = ["日", "月", "火", "水", "木", "金", "土"];
 const WEEKDAY_COLOR_INDEX = { "日":0, "月":1, "火":2, "水":3, "木":4, "金":5, "土":6 };
 
@@ -791,8 +794,9 @@ function aggregateByDateAndStore(rows){
         weather: row.weather || "",
         temps: [],
         totalMade: 0,
-        soldSum: [0,0,0,0,0,0,0],
-        soldHasValue: [false,false,false,false,false,false,false],
+        // HOURLY_SLOTSの長さに合わせる（固定の7個ではない。時間帯が増減しても対応する）
+        soldSum: HOURLY_SLOTS.map(() => 0),
+        soldHasValue: HOURLY_SLOTS.map(() => false),
         soldOutTimes: [],
         movedTotal: 0,       // 他店舗へ移動した数の合計（Zuidへ移動＋UvAへ移動＋Rozengrachtへ移動。移動元の店舗のみ値を持つ）
         finalRemainTotal: 0, // 各具材の最終記録残数（＝移動前の売れ残り）の合計
@@ -853,7 +857,8 @@ function aggregateAllStoresByDate(dateStoreRows){
       map[r.date] = {
         date: r.date, dateObj: r.dateObj, weekday: r.weekday, weather: r.weather,
         temps: [], totalMade: 0,
-        soldSum: [0,0,0,0,0,0,0], soldHasValue: [false,false,false,false,false,false,false],
+        // HOURLY_SLOTSの長さに合わせる（固定の7個ではない。時間帯が増減しても対応する）
+        soldSum: HOURLY_SLOTS.map(() => 0), soldHasValue: HOURLY_SLOTS.map(() => false),
         soldOutTimes: [], // { store, time }
         movedTotal: 0, leftoverTotal: 0,
       };

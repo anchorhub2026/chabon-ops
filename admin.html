@@ -5012,6 +5012,16 @@ function renderStoreSettingsList(){
             営業終了日
             <input type="date" class="store-settings-end" value="${config.endDate || ""}">
           </label>
+          <label class="shift-config-field">
+            時間帯の範囲（開始）
+            <input type="number" class="store-settings-hourly-start" min="0" max="23"
+              placeholder="${HOURLY_SLOTS_DEFAULT_START}" value="${config.hourlyStartHour !== null && config.hourlyStartHour !== undefined ? config.hourlyStartHour : ""}">時
+          </label>
+          <label class="shift-config-field">
+            時間帯の範囲（終了）
+            <input type="number" class="store-settings-hourly-end" min="0" max="23"
+              placeholder="${HOURLY_SLOTS_DEFAULT_END}" value="${config.hourlyEndHour !== null && config.hourlyEndHour !== undefined ? config.hourlyEndHour : ""}">時
+          </label>
           ${methodFieldHtml}
         </div>
         <div class="store-settings-weekday-row">${weekdayChecks}</div>
@@ -5112,14 +5122,24 @@ function renderStoreSettingsList(){
         closingTimeWeekday, closingTimeWeekend, riceCookMinutes, prepMinutes, decisionDeadline, piecesPerGo,
         riceCoefWeekday, riceCoefWeekend,
       };
+
+      // 時間帯別実績で記録できる時間帯の範囲（全店舗共通の項目。未入力なら既定値
+      // （12時〜19時）にフォールバックするため、未入力のままnullで送る）
+      const hourlyStartInp = card.querySelector(".store-settings-hourly-start");
+      const hourlyEndInp = card.querySelector(".store-settings-hourly-end");
+      const hourlyStartHour = hourlyStartInp && hourlyStartInp.value !== "" ? Number(hourlyStartInp.value) : null;
+      const hourlyEndHour = hourlyEndInp && hourlyEndInp.value !== "" ? Number(hourlyEndInp.value) : null;
+
       const payload = {
         startDate: startVal, endDate: endVal, weekdays, forecastMethod, weekdayBase,
         salesTrendCoefficient, salesTrendStartDate, minGuarantee, rainAdjPct, tempAdjPct,
+        hourlyStartHour, hourlyEndHour,
         ...rozenFields,
       };
       const settingsEntry = {
         startDate: startVal, endDate: endVal, weekdays, forecastMethod, weekdayBase,
         salesTrendCoefficient, salesTrendStartDate, minGuarantee, rainAdjPct, tempAdjPct,
+        hourlyStartHour, hourlyEndHour,
         ...rozenFields,
       };
 

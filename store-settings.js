@@ -231,6 +231,11 @@ function parseStoreSettingsRows(rows){
       riceCoefWeekend[h] = numOrNull(cell(`見込み係数(土日)${h}時`), `見込み係数(土日)${h}時`);
     });
 
+    // 時間帯別実績で記録できる時間帯の範囲（店舗ごとに設定可能。未設定（空欄）の店舗は
+    // resolveHourlySlots()で既定値（12時〜19時、全店舗共通）にフォールバックする）
+    const hourlyStartHour = numOrNull(cell("時間帯開始時刻"), "時間帯開始時刻");
+    const hourlyEndHour = numOrNull(cell("時間帯終了時刻"), "時間帯終了時刻");
+
     settings[store] = {
       startDate: startDate || "",
       endDate: endDate || "",
@@ -250,6 +255,8 @@ function parseStoreSettingsRows(rows){
       piecesPerGo,
       riceCoefWeekday,
       riceCoefWeekend,
+      hourlyStartHour,
+      hourlyEndHour,
     };
   }
   return { settings, warnings };
