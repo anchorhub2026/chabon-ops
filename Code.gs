@@ -703,6 +703,72 @@ var STORE_SETTINGS_HEADER = ["店舗名", "開始日", "終了日", "月", "火"
 // 時間の範囲（例：開始12時・終了19時）を設定するための列（store-settings.jsの
 // resolveHourlySlots参照）。空欄の場合は既定値（12時〜19時、全店舗共通）にフォールバックする。
 
+// 見出し名 -> 列index（0始まり）のマップを作る（hourlyHeaderIndex_と同じ考え方）。
+function storeSettingsHeaderIndex_(header) {
+  var idx = {};
+  for (var i = 0; i < header.length; i++) {
+    var name = String(header[i]).trim();
+    if (name && idx[name] === undefined) idx[name] = i;
+  }
+  return idx;
+}
+
+function storeSettingsHeadersEqual_(a, b) {
+  if (a.length !== b.length) return false;
+  for (var i = 0; i < a.length; i++) {
+    if (String(a[i]).trim() !== String(b[i]).trim()) return false;
+  }
+  return true;
+}
+
+// 「店舗設定」シートの見出しを現在のSTORE_SETTINGS_HEADERに合わせ、既存の行を
+// 「見出し名が一致する値だけ」新しい並びに移す（移行する）。見出し名が現在の
+// STORE_SETTINGS_HEADERに無い古い列の値（例：旧「気温調整15℃以下%」1列だった頃の値）は
+// 捨てる。見出しが既に現在のSTORE_SETTINGS_HEADERと完全に一致している場合は何もしない
+// （余計な書き込みをしない。setValuesは見出しが違うときだけ実行する）。
+//
+// 【直していた不具合】設定項目（列）を追加・変更したとき、保存し直されなかった店舗の行は
+// 古い列幅のままシートに残る。このとき見出し（1行目）だけを新しい列数で上書きすると、
+// 古い行の「更新日時」の値（例："2026-11-21 17:19:45"）が、新しい見出しでは別の設定項目
+// （例：新しく列が増えた分だけ右にずれた「気温調整29℃以上%」）の位置に来てしまい、
+// その項目の値として誤って読まれてしまう（「月曜基準値」のときと同じ不具合のパターン）。
+// 列の位置ではなく見出し名で値を移すことで、これを機械的に防ぐ。
+//
+// handleGetStoreSettings（読み込み時）・handleSaveStoreSettings（保存時）の両方から呼ぶ。
+// 読み込み時にも呼ぶことで、誰も保存し直さなくても次にシートを開いた時点で自動的に直る。
+function migrateStoreSettingsHeader_(sheet) {
+  var lastRow = sheet.getLastRow();
+  if (lastRow < 1) {
+    sheet.getRange(1, 1, 1, STORE_SETTINGS_HEADER.length).setNumberFormat("@").setValues([STORE_SETTINGS_HEADER]);
+    return;
+  }
+  var lastCol = Math.max(sheet.getLastColumn(), STORE_SETTINGS_HEADER.length);
+  var values = sheet.getRange(1, 1, lastRow, lastCol).getDisplayValues();
+  var oldHeader = values[0];
+  if (storeSettingsHeadersEqual_(oldHeader, STORE_SETTINGS_HEADER)) return;
+
+  var oldIdx = storeSettingsHeaderIndex_(oldHeader);
+  var migratedRows = [];
+  for (var r = 1; r < values.length; r++) {
+    var oldRow = values[r];
+    var newRow = [];
+    for (var c = 0; c < STORE_SETTINGS_HEADER.length; c++) {
+      var oldC = oldIdx[STORE_SETTINGS_HEADER[c]];
+      newRow.push((oldC !== undefined && oldRow[oldC] !== undefined) ? oldRow[oldC] : "");
+    }
+    migratedRows.push(newRow);
+  }
+
+  sheet.getRange(1, 1, 1, STORE_SETTINGS_HEADER.length).setNumberFormat("@").setValues([STORE_SETTINGS_HEADER]);
+  if (migratedRows.length > 0) {
+    sheet.getRange(2, 1, migratedRows.length, STORE_SETTINGS_HEADER.length).setNumberFormat("@").setValues(migratedRows);
+  }
+  // 列を減らした場合などに、新しい見出しより右側に古い列の値が残らないよう消す
+  if (lastCol > STORE_SETTINGS_HEADER.length) {
+    sheet.getRange(1, STORE_SETTINGS_HEADER.length + 1, lastRow, lastCol - STORE_SETTINGS_HEADER.length).clearContent();
+  }
+}
+
 function storeSettingsRowValues(store, data) {
   var weekdays = data.weekdays || {};
   var flagStr = function(key) { return weekdays[key] === false ? "FALSE" : "TRUE"; };
@@ -755,7 +821,9 @@ function handleSaveStoreSettings(ss, data) {
   if (!sheet) {
     sheet = ss.insertSheet(STORE_SETTINGS_SHEET_NAME);
   }
-  sheet.getRange(1, 1, 1, STORE_SETTINGS_HEADER.length).setNumberFormat("@").setValues([STORE_SETTINGS_HEADER]);
+  // 見出しを現在のSTORE_SETTINGS_HEADERに合わせ、他の店舗の行も含めて移行する
+  // （保存操作をするのはこの店舗だけでも、見出し・他の行のずれはここで一緒に直す）
+  migrateStoreSettingsHeader_(sheet);
 
   var store = String(data.store || "").trim();
   if (!store) return;
@@ -782,6 +850,8 @@ function handleSaveStoreSettings(ss, data) {
 function getStoreSettingsRowsRaw_(ss) {
   var sheet = ss.getSheetByName(STORE_SETTINGS_SHEET_NAME);
   if (!sheet) return [];
+  // 読み込み時にも見出し・既存行のずれを直す（誰も保存し直さなくても自動的に直る）
+  migrateStoreSettingsHeader_(sheet);
   return sheet.getDataRange().getDisplayValues();
 }
 

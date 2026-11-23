@@ -170,10 +170,17 @@ function parseStoreSettingsRows(rows){
     const store = cell("店舗名");
     if(!store) continue;
 
+    // 警告には、「その項目が今の設定で実際に使われているか」を示すused（真偽値）を
+    // 必ず持たせる。usedがfalse（その店舗では使われない項目）の読み取り失敗は、画面側で
+    // 赤い警告ではなく目立たない注意として表示する（例：Rozengrachtは「固定数」のため
+    // 気温調整・雨調整・保証最低数・売れ行き係数等は使わない。Rozengracht以外の店舗では
+    // 「見込み」（炊飯の目安）関連の列は使わない）。
+    const pushWarn = (used, message) => { warnings.push({ message, used }); };
+
     const startDate = parseStoreSettingsDateText(cell("開始日"));
-    if(startDate === null) warnings.push(`${store}の「開始日」の値を読み取れませんでした（店舗の営業設定を確認してください）`);
+    if(startDate === null) pushWarn(true, `${store}の「開始日」の値を読み取れませんでした（店舗の営業設定を確認してください）`);
     const endDate = parseStoreSettingsDateText(cell("終了日"));
-    if(endDate === null) warnings.push(`${store}の「終了日」の値を読み取れませんでした（店舗の営業設定を確認してください）`);
+    if(endDate === null) pushWarn(true, `${store}の「終了日」の値を読み取れませんでした（店舗の営業設定を確認してください）`);
 
     const weekdays = {};
     STORE_SETTINGS_WEEKDAYS.forEach(wd => {
@@ -182,11 +189,17 @@ function parseStoreSettingsRows(rows){
       weekdays[wd.key] = cell(wd.flagHeader).toUpperCase() !== "FALSE";
     });
 
-    const numOrNull = (text, label) => {
+    // unusedReasonを渡すとused:falseの注意（「〜のため、この項目は使われていません」）、
+    // 省略（null/undefined）すると通常のused:true警告になる。
+    const numOrNull = (text, label, unusedReason) => {
       if(text === "") return null;
       const n = Number(text);
       if(!Number.isFinite(n)){
-        warnings.push(`${store}の「${label}」の値（${text}）を数値として読み取れませんでした（店舗の営業設定を確認してください）`);
+        const used = !unusedReason;
+        const message = used
+          ? `${store}の「${label}」の値（${text}）を数値として読み取れませんでした（店舗の営業設定を確認してください）`
+          : `${store}の「${label}」の値（${text}）を数値として読み取れませんでした（${unusedReason}）`;
+        pushWarn(used, message);
         return null;
       }
       return n;
@@ -206,33 +219,56 @@ function parseStoreSettingsRows(rows){
       : methodText === "売れ行き＋天気" ? "trend"
       : "";
 
+    // 「売れ行き係数」〜「保証最低数」（気温調整・雨調整・保証最低数を含む）は、
+    // 「予測の方法」が「売れ行き＋天気」の店舗（現状Zuidのみ）でしか使われない
+    // （getStoreTrendSettings参照）。それ以外の方式の店舗では、この項目が読み取れなくても
+    // 実害が無いため、通常の赤い警告ではなく目立たない注意にする。
+    const resolvedMethodForWarnings = getStoreForecastMethod({ [store]: { forecastMethod } }, store);
+    const resolvedMethodLabel = resolvedMethodForWarnings === "fixed" ? "固定数"
+      : resolvedMethodForWarnings === "weather" ? "天気で自動計算" : "売れ行き＋天気";
+    const trendUnusedReason = resolvedMethodForWarnings === "trend"
+      ? null
+      : `${store}は${resolvedMethodLabel}のため、この項目は使われていません`;
+
     const salesTrendCoefficientText = cell("売れ行き係数");
-    const salesTrendCoefficient = salesTrendCoefficientText === "" ? null : numOrNull(salesTrendCoefficientText, "売れ行き係数");
+    const salesTrendCoefficient = salesTrendCoefficientText === "" ? null : numOrNull(salesTrendCoefficientText, "売れ行き係数", trendUnusedReason);
     const salesTrendStartDate = parseStoreSettingsDateText(cell("売れ行き開始日"));
-    if(salesTrendStartDate === null) warnings.push(`${store}の「売れ行き開始日」の値を読み取れませんでした（店舗の営業設定を確認してください）`);
+    if(salesTrendStartDate === null){
+      const used = !trendUnusedReason;
+      const message = used
+        ? `${store}の「売れ行き開始日」の値を読み取れませんでした（店舗の営業設定を確認してください）`
+        : `${store}の「売れ行き開始日」の値を読み取れませんでした（${trendUnusedReason}）`;
+      pushWarn(used, message);
+    }
 
     const tempAdjPct = {};
-    TREND_TEMP_BINS.forEach(b => { tempAdjPct[b.key] = numOrNull(cell(b.header), b.header); });
-    const rainAdjPct = numOrNull(cell("雨調整%"), "雨調整%");
-    const minGuarantee = numOrNull(cell("保証最低数"), "保証最低数");
+    TREND_TEMP_BINS.forEach(b => { tempAdjPct[b.key] = numOrNull(cell(b.header), b.header, trendUnusedReason); });
+    const rainAdjPct = numOrNull(cell("雨調整%"), "雨調整%", trendUnusedReason);
+    const minGuarantee = numOrNull(cell("保証最低数"), "保証最低数", trendUnusedReason);
 
     // Rozengrachtの「見込み」（炊飯の目安）用の列。他店舗の行では空欄のままになる
     // （getRozenClosingSettings()がDEFAULT_STORE_SETTINGS.Rozengrachtにフォールバックする）。
+    // Rozengracht以外の店舗ではこの項目群は一切使われないため、読み取れない場合も
+    // 目立たない注意にする。
+    const rozenUnusedReason = store === "Rozengracht"
+      ? null
+      : `この項目はRozengracht専用の設定のため、${store}では使われていません`;
     const closingTimeWeekday = cell("閉店時刻(平日)");
     const closingTimeWeekend = cell("閉店時刻(土日)");
-    const riceCookMinutes = numOrNull(cell("炊飯時間(分)"), "炊飯時間(分)");
-    const prepMinutes = numOrNull(cell("下準備時間(分)"), "下準備時間(分)");
+    const riceCookMinutes = numOrNull(cell("炊飯時間(分)"), "炊飯時間(分)", rozenUnusedReason);
+    const prepMinutes = numOrNull(cell("下準備時間(分)"), "下準備時間(分)", rozenUnusedReason);
     const decisionDeadline = cell("判断締切時刻");
-    const piecesPerGo = numOrNull(cell("1合あたりの個数"), "1合あたりの個数");
+    const piecesPerGo = numOrNull(cell("1合あたりの個数"), "1合あたりの個数", rozenUnusedReason);
     const riceCoefWeekday = {};
     const riceCoefWeekend = {};
     ROZEN_CLOSING_ESTIMATE_HOURS.forEach(h => {
-      riceCoefWeekday[h] = numOrNull(cell(`見込み係数(平日)${h}時`), `見込み係数(平日)${h}時`);
-      riceCoefWeekend[h] = numOrNull(cell(`見込み係数(土日)${h}時`), `見込み係数(土日)${h}時`);
+      riceCoefWeekday[h] = numOrNull(cell(`見込み係数(平日)${h}時`), `見込み係数(平日)${h}時`, rozenUnusedReason);
+      riceCoefWeekend[h] = numOrNull(cell(`見込み係数(土日)${h}時`), `見込み係数(土日)${h}時`, rozenUnusedReason);
     });
 
     // 時間帯別実績で記録できる時間帯の範囲（店舗ごとに設定可能。未設定（空欄）の店舗は
-    // resolveHourlySlots()で既定値（12時〜19時、全店舗共通）にフォールバックする）
+    // resolveHourlySlots()で既定値（12時〜19時、全店舗共通）にフォールバックする）。
+    // 全店舗共通で使われる項目のため、通常の警告のまま。
     const hourlyStartHour = numOrNull(cell("時間帯開始時刻"), "時間帯開始時刻");
     const hourlyEndHour = numOrNull(cell("時間帯終了時刻"), "時間帯終了時刻");
 

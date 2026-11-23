@@ -735,6 +735,15 @@
     font-size: 0.88rem;
     font-weight: bold;
   }
+  /* その店舗では使われていない項目の読み取り失敗だけの場合（本当の異常ではない）、
+     赤いfetch-failure-bannerではなく、こちらの目立たない見た目にする */
+  .notice-only-banner{
+    background: #f2f2f2;
+    border: 1px solid #ccc;
+    color: #777;
+    font-weight: normal;
+  }
+  .setting-notice{ color: #888; font-weight: normal; }
 
   /* 週折りたたみ */
   .toggle-week-btn{
@@ -4803,7 +4812,10 @@ async function saveStoreSettings(store, payload){
 }
 
 // 店舗設定シートの値が、入っているのに日付・数値として読み取れなかった場合の警告
-// （parseStoreSettingsRows()のwarnings）。空欄（未設定）は正常な状態のため警告しない。
+// （parseStoreSettingsRows()のwarnings。空欄（未設定）は正常な状態のため警告しない）。
+// 各警告はused（その項目が今の設定で実際に使われているか）を持つ。used:falseの項目
+// （例：Rozengrachtでの気温調整など、その店舗では使わない項目）は、赤い警告ではなく
+// 目立たない注意として表示する。used:trueの警告が1つも無ければ、バナー自体も赤くしない。
 function renderStoreSettingsWarning(){
   const el = document.getElementById("storeSettingsWarning");
   if(!el) return;
@@ -4811,9 +4823,16 @@ function renderStoreSettingsWarning(){
   if(warnings.length === 0){
     el.style.display = "none";
     el.innerHTML = "";
+    el.classList.remove("fetch-failure-banner", "notice-only-banner");
     return;
   }
-  el.innerHTML = warnings.map(w => `⚠️ ${w}`).join("<br>");
+  const hasRealWarning = warnings.some(w => w.used !== false);
+  el.classList.toggle("fetch-failure-banner", hasRealWarning);
+  el.classList.toggle("notice-only-banner", !hasRealWarning);
+  el.innerHTML = warnings.map(w => w.used === false
+    ? `<span class="setting-notice">ℹ️ ${w.message}</span>`
+    : `⚠️ ${w.message}`
+  ).join("<br>");
   el.style.display = "";
 }
 
