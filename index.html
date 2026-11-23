@@ -1317,10 +1317,18 @@ function renderActualSales(){
   const fillings = FILLINGS.filter(f => (zuidTotals[f] || 0) > 0 || (uvaTotals[f] || 0) > 0 || (rozenTotals[f] || 0) > 0);
   if(fillings.length === 0){ area.innerHTML = `<p class="off-note">具材の割り振りがありません。</p>`; return; }
 
+  // 店舗ごとの時間帯の範囲（店舗の営業設定。未設定なら既定の12〜19時）
+  const slotsByStore = {
+    Zuid: resolveHourlySlots("Zuid", state.storeSettings),
+    UvA: resolveHourlySlots("UvA", state.storeSettings),
+    Rozengracht: resolveHourlySlots("Rozengracht", state.storeSettings),
+  };
+  state.hourlySlotsByStore = slotsByStore;
+
   area.innerHTML = `
     <div class="store-section">
       <div class="store-heading">🏪 Zuid</div>
-      <div class="table-scroll table-scroll--bounded">${buildStoreTable("Zuid", fillings, zuidTotals)}</div>
+      <div class="table-scroll table-scroll--bounded">${buildStoreTable("Zuid", fillings, zuidTotals, slotsByStore.Zuid)}</div>
       <div class="soldout-time-row">
         販売終了時間：<input type="time" id="soldoutTime-Zuid">
         <span class="notes-label">（完売した場合はその時刻、完売しなかった場合は営業終了時刻）</span>
@@ -1333,7 +1341,7 @@ function renderActualSales(){
       <div class="location-input-row">
         販売場所：<input type="text" id="uvaLocationInput" value="UvA" placeholder="UvA" maxlength="20">
       </div>
-      <div class="table-scroll table-scroll--bounded">${buildStoreTable("UvA", fillings, uvaTotals)}</div>
+      <div class="table-scroll table-scroll--bounded">${buildStoreTable("UvA", fillings, uvaTotals, slotsByStore.UvA)}</div>
       <div class="soldout-time-row">
         販売終了時間：<input type="time" id="soldoutTime-UvA">
         <span class="notes-label">（完売した場合はその時刻、完売しなかった場合は営業終了時刻）</span>
@@ -1344,7 +1352,7 @@ function renderActualSales(){
     <div class="store-section">
       <div class="store-heading">🏪 Rozengracht</div>
       <div class="rozen-closing-estimate-card" id="rozenClosingEstimateCard"></div>
-      <div class="table-scroll table-scroll--bounded">${buildStoreTable("Rozengracht", fillings, rozenTotals)}</div>
+      <div class="table-scroll table-scroll--bounded">${buildStoreTable("Rozengracht", fillings, rozenTotals, slotsByStore.Rozengracht)}</div>
       <div class="soldout-time-row">
         販売終了時間：<input type="time" id="soldoutTime-Rozengracht">
         <span class="notes-label">（完売した場合はその時刻、完売しなかった場合は営業終了時刻）</span>
@@ -1356,8 +1364,8 @@ function renderActualSales(){
 
   area.querySelectorAll(".hourly-input, .made-input, .given-input, .received-input, .moved-input, .moved-uva-input, .moved-rozen-input").forEach(inp =>
     inp.addEventListener("input", () => {
-      updateSoldDisplay(["Zuid", "UvA", "Rozengracht"], fillings);
-      refreshRozenClosingEstimateCard(state.storeSettings);
+      updateSoldDisplay(["Zuid", "UvA", "Rozengracht"], fillings, slotsByStore);
+      refreshRozenClosingEstimateCard(state.storeSettings, slotsByStore.Rozengracht);
     })
   );
   ["Zuid", "UvA", "Rozengracht"].forEach(wireNoteLengthWarning);
@@ -1396,10 +1404,15 @@ async function refreshHourlyRecords(){
   const fillings = FILLINGS.filter(f => (zuidTotals[f] || 0) > 0 || (uvaTotals[f] || 0) > 0 || (rozenTotals[f] || 0) > 0);
   if(fillings.length === 0) return;
 
+  const slotsByStore = state.hourlySlotsByStore || {
+    Zuid: resolveHourlySlots("Zuid", state.storeSettings),
+    UvA: resolveHourlySlots("UvA", state.storeSettings),
+    Rozengracht: resolveHourlySlots("Rozengracht", state.storeSettings),
+  };
   const rows = await fetchHourlyData(SCRIPT_URL, today.dateStr);
-  restoreHourlyInputs(rows, today.dateStr);
-  updateSoldDisplay(["Zuid", "UvA", "Rozengracht"], fillings);
-  refreshRozenClosingEstimateCard(state.storeSettings);
+  restoreHourlyInputs(rows, today.dateStr, null, slotsByStore);
+  updateSoldDisplay(["Zuid", "UvA", "Rozengracht"], fillings, slotsByStore);
+  refreshRozenClosingEstimateCard(state.storeSettings, slotsByStore.Rozengracht);
 
   // 楽観的ロックの基準値（保存前チェック用）を、店舗ごとに最新の更新日時で更新しておく
   if(!state.hourlyUpdatedAtByStore) state.hourlyUpdatedAtByStore = {};
@@ -1445,6 +1458,7 @@ async function handleSaveStoreClick(storeKey){
 
   const result = await saveStoreActual({
     scriptUrl: SCRIPT_URL, storeKey, dateIso: today.dateStr, fillings,
+    hourlySlots: (state.hourlySlotsByStore && state.hourlySlotsByStore[storeKey]) || resolveHourlySlots(storeKey, state.storeSettings),
     weekday: DAY_NAMES[today.dow] + "曜", weather: w.text, temp: Math.round(today.maxTemp),
     location, note, soldOutTime,
     expectedUpdatedAt: state.hourlyUpdatedAtByStore && state.hourlyUpdatedAtByStore[storeKey],
@@ -1762,7 +1776,7 @@ document.getElementById("refreshHourlyBtn").addEventListener("click", handleRefr
 
 // Rozengrachtの「見込み」カードは判断の締め切り前後で表示を切り替えるため、
 // 入力が無くても時間経過だけで反映されるよう1分おきに更新する
-setInterval(() => refreshRozenClosingEstimateCard(state.storeSettings), 60000);
+setInterval(() => refreshRozenClosingEstimateCard(state.storeSettings, state.hourlySlotsByStore && state.hourlySlotsByStore.Rozengracht), 60000);
 
 renderFillings();
 loadWeather();

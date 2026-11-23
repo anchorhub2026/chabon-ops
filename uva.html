@@ -181,9 +181,13 @@ async function loadForSelectedDate(){
   state.fillings = fillings;
   state.totals = totals;
 
+  // この店舗の時間帯の範囲（店舗の営業設定。未設定なら既定の12〜19時）
+  const hourlySlots = resolveHourlySlots(STORE_KEY, state.storeSettings);
+  state.hourlySlots = hourlySlots;
+
   // location入力欄は無い（UvAは「あげた数」「移動」等はbuildStoreTable内の列で入力できる）
   area.innerHTML = `
-    <div class="table-scroll">${buildStoreTable(STORE_KEY, fillings, totals, HOURLY_SLOTS, true)}</div>
+    <div class="table-scroll">${buildStoreTable(STORE_KEY, fillings, totals, hourlySlots, true)}</div>
     ${buildNotesAreaHtml(STORE_KEY)}
   `;
 
@@ -193,7 +197,7 @@ async function loadForSelectedDate(){
   `);
 
   area.querySelectorAll(".hourly-input, .given-input, .received-input, .moved-input, .moved-uva-input, .moved-rozen-input").forEach(inp =>
-    inp.addEventListener("input", () => updateStoreSoldDisplay(STORE_KEY, fillings))
+    inp.addEventListener("input", () => updateStoreSoldDisplay(STORE_KEY, fillings, hourlySlots))
   );
   wireNoteLengthWarning(STORE_KEY);
 
@@ -201,8 +205,8 @@ async function loadForSelectedDate(){
 
   // 保存済みデータを復元する（復元完了まで保存ボタンは無効化し、空欄での誤上書きを防ぐ）
   const rows = await fetchHourlyData(SCRIPT_URL, state.selectedIso);
-  restoreHourlyInputs(rows, state.selectedIso);
-  updateStoreSoldDisplay(STORE_KEY, fillings);
+  restoreHourlyInputs(rows, state.selectedIso, hourlySlots);
+  updateStoreSoldDisplay(STORE_KEY, fillings, hourlySlots);
   state.expectedUpdatedAt = maxUpdatedAtForStore(rows, STORE_KEY);
 
   const btn = document.getElementById("saveBtn");
@@ -219,6 +223,7 @@ async function handleSaveClick(){
     storeKey: STORE_KEY,
     dateIso: state.selectedIso,
     fillings: state.fillings,
+    hourlySlots: state.hourlySlots,
     expectedUpdatedAt: state.expectedUpdatedAt,
     note: (document.getElementById(`notes-${STORE_KEY}`) || {value:""}).value.trim(),
   });
@@ -239,6 +244,7 @@ async function handleSaveClick(){
 async function init(){
   renderDateOptions();
   state.confirmedPlanByDate = await fetchConfirmedPlan();
+  state.storeSettings = await fetchStoreSettingsRows(SCRIPT_URL).then(rows => parseStoreSettingsRows(rows).settings);
   await loadForSelectedDate();
 }
 
